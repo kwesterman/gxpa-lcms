@@ -1,0 +1,180 @@
+# Preliminaries
+```{r}
+library(tidyverse)
+library(patchwork)
+
+if (!require(foreach)) install.packages("foreach")
+library(foreach)
+if (!require(iterators)) install.packages("iterators")
+library(iterators)
+if (!require(mediation)) install.packages("mediation")
+library(mediation)
+```
+
+```{r}
+ws_namespace <- Sys.getenv("WORKSPACE_NAMESPACE")
+ws_name <- Sys.getenv("WORKSPACE_NAME")
+ws_bucket <- Sys.getenv("WORKSPACE_BUCKET")
+```
+
+```{r}
+theme_set(theme_bw())
+```
+
+## Read in phenotypic, genotypic, and metabolomic data
+* Phenotype data come from integrating inputs from dbGaP (/PIC-SURE), MESA investigators, and metadata from metabolomic preprocessing.
+* Genotype data come from dbGaP (Freeze 9b TOPMed-wide genotype VCF files).
+* Metabolomic data come directly from MESA (originally) followed by an extensive QC and preprocessing effort led by Magdalena Sevilla-Gonzalez and Paul Hanson.
+```{r}
+analysis_df_lcms <- read_csv("analysis/analysis_df_lcms.csv", col_types=cols())
+names(analysis_df_lcms)
+```
+
+```{r}
+snp_info_df <- read_csv("genotypes/snp_info.csv", col_types=cols())
+snps <- c("rs295849", "rs2862183")
+exposures <- c("mod_vig_pa_bin", "smoking_current", "smoking_ever")
+```
+
+```{r}
+metabs <- readRDS("metabolites/analysis_metabolites.rds")
+```
+
+```{r}
+basic_covars <- c("site", "gender_f0m1", "age")
+covar_sets <- list(
+    no_gPC = c(basic_covars, "ses_score", "income_cat", 
+                              "drinks_per_week", "smoking", "ahei_score", "dash_score"),
+    all = c(basic_covars, "ses_score", "income_cat", 
+                              "drinks_per_week", "smoking", "ahei_score", "dash_score",
+                       paste0("gPC", 1:5))
+)
+covars <- covar_sets$all
+```
+
+### What about using a metabolomic E proxy instead?
+```{r}
+e_proxy_mwas_res <- read_csv("analysis/e_proxy_mwas_res.csv", show_col_types=FALSE)
+metabolite_info_df <- read_csv("PH_files/met_info_v12.csv", show_col_types=FALSE) %>%
+    dplyr::select(metabolite=Compound_Id_MESA, HMDB_Id, Name, Method)
+```
+
+```{r}
+sample_n(filter(metabolite_info_df, !is.na(Name)), 3)
+```
+
+```{r}
+n_eff_metabs <- scan("analysis/n_eff_metabolites.txt", what=double())
+
+pa_mwas_res <- read_csv("analysis/e_proxy_mwas_res.csv", show_col_types=FALSE) %>%
+    filter(exposure == "pa") %>%
+    arrange(p.value) %>%
+    left_join(metabolite_info_df, by="metabolite")
+
+top_pa_mwas_metabolites <- scan("analysis/top_pa_metabolites.txt", what=character())
+top_vig_pa_mwas_metabolites <- scan("analysis/top_vig_pa_metabolites.txt", what=character())
+# top_pa_mwas_metabolites <- pa_mwas_res$metabolite[1:100]
+```
+
+```{r}
+top_pa_mwas_metabolites
+```
+
+```{r}
+test_g_m_interaction <- function(snp,
+                                 m_name, 
+                                 df=analysis_df_lcms, 
+                                 covars=covar_sets$all,
+                                 filter_str=NA) {
+    df$m <- metabs[, m_name]
+    if (!is.na(filter_str)) df <- filter(df, !!rlang::parse_expr(filter_str))
+    form_str <- paste0("hdl_log ~ m * ", snp, " + ", paste(covars, collapse=" + "))
+    lm(as.formula(form_str), data=df) %>%
+    broom::tidy() %>%
+    filter(grepl(":", term))
+}
+
+m_int_res_df <- expand_grid(
+    metabolite = top_pa_mwas_metabolites,
+    snp = snps
+) %>%
+    rowwise() %>%
+    mutate(lm_fit = list(test_g_m_interaction(snp, metabolite))) %>%
+    unnest(lm_fit) %>%
+    arrange(p.value) %>%
+    mutate(q = p.adjust(p.value, method="BH")) %>%
+    inner_join(metabolite_info_df, by="metabolite")
+head(m_int_res_df, 6)
+
+m_int_res_df <- expand_grid(
+    metabolite = top_vig_pa_mwas_metabolites,
+    snp = snps
+) %>%
+    rowwise() %>%
+    mutate(lm_fit = list(test_g_m_interaction(snp, metabolite))) %>%
+    unnest(lm_fit) %>%
+    arrange(p.value) %>%
+    mutate(q = p.adjust(p.value, method="BH")) %>%
+    inner_join(metabolite_info_df, by="metabolite")
+head(m_int_res_df, 6)
+```
+
+```{r}
+0.05 / 8
+```
+
+```{r}
+m_int_res_df_female <- expand_grid(
+    metabolite = top_vig_pa_mwas_metabolites,
+    snp = snps
+) %>%
+    rowwise() %>%
+    mutate(lm_fit = list(test_g_m_interaction(snp, metabolite, 
+                                              filter_str="gender_f0m1 == 0"))) %>%
+    unnest(lm_fit) %>%
+    arrange(p.value) %>%
+    mutate(q = p.adjust(p.value, method="BH")) %>%
+    inner_join(metabolite_info_df, by="metabolite")
+head(m_int_res_df_female, 20)
+```
+
+```{r}
+a <- read_csv("PH_files/met_info_v12.csv", show_col_types=FALSE)
+# a %>% filter(Compound_Id_MESA == "QI1084_cp")
+# a %>% filter(MZ > 368, MZ < 369, !is.na(Name))
+
+# a %>% filter(Compound_Id_MESA == "QI8416_hp")
+# a %>% filter(MZ > 525, MZ < 535, !is.na(Name))
+
+
+a %>% filter(Compound_Id_MESA == "QI497_cp")
+a %>% filter(MZ > 243, MZ < 244, !is.na(Name))
+
+a %>% filter(Compound_Id_MESA == "QI6162_hp")
+a %>% filter(MZ > 330, MZ < 335, !is.na(Name))
+
+# a %>% filter(Compound_Id_MESA == "QI8416_hp")
+# a %>% filter(MZ > 525, MZ < 535, !is.na(Name))
+```
+
+# Test moderated mediation
+```{r}
+test_moderated_mediation <- function(x, m, y, w, covars) {
+    
+    # For now, w (the moderating variable) must be binary (0/1)
+    med_form_str <- paste0("m ~ x * w + ", paste(covars, collapse=" + "))
+    med_fit <- lm(as.formula(med_form_str), data=analysis_df_lcms)
+    out_form_str <- paste0("y ~ m * w + x * w + ", paste(covars, collapse=" + "))
+    out_fit <- lm(as.formula(out_form_str), data=analysis_df_lcms)
+    med_out <- mediate(med_fit, out_fit, 
+                       treat="x", mediator="m",
+                       robustSE=TRUE, sims=10)  # N_sims doesn't need to be high for this step
+    modmed_out <- test.modmed(med_out, list(w=0), list(w=1), sims=100)
+    modmed_out
+}
+```
+
+```{r}
+# test_moderated_mediation(analysis_df_lcms$pa, metabs[, 5], analysis_df_lcms$hdl_log, 
+#                          analysis_df_lcms$rs2862183, c("age", "gender_f0m1"))
+```

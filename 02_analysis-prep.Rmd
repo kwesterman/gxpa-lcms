@@ -1,0 +1,783 @@
+# Preliminaries
+
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+library(patchwork)
+```
+
+
+```{r}
+ws_namespace <- Sys.getenv("WORKSPACE_NAMESPACE")
+ws_name <- Sys.getenv("WORKSPACE_NAME")
+ws_bucket <- Sys.getenv("WORKSPACE_BUCKET")
+```
+
+
+```{r}
+theme_set(theme_bw())
+```
+
+# Read in and align datasets
+
+We will read in various data types to merge (phenotypes and genotypes) and align (with a separate metabolomic dataset).
+
+
+```{r}
+system(paste0("gsutil cp -R ", ws_bucket, "/phenotypes ."))
+```
+
+## Basic info: draw dates, study site, etc.
+
+
+```{r}
+basic_info_df <- readxl::read_excel("phenotypes/draw_dates_MESA_study_site.xlsx") %>%
+    mutate(sidno = as.integer(sidno),
+           site = paste0("s", site1c),
+           race = factor(race1c, levels=1:4, labels=c("white", "asian", "hispanic", "african-american")),
+           month = paste0("month", `exam1:month`),
+           season = paste0("season", `exam1:season`)) %>%
+    select(mesa_id=sidno, gender1, race, site, 
+           month, season)
+head(basic_info_df, 3)
+table(basic_info_df$race) / sum(table(basic_info_df$race))
+```
+
+## Batch info
+
+
+```{r}
+batch_info_df <- read_csv("phenotypes/sample_info.csv", col_types=cols())
+#     mutate(sidno = as.integer(sidno),
+#            site = paste0("s", site1c),
+#            race = paste0("r", race1c)) %>%
+#     select(mesa_id=sidno, gender1, race, site, 
+#            exam1mo=`exam1:month`, exam1season=`exam1:season`)
+# names(batch_info_df)
+head(batch_info_df, 3)
+```
+
+## Main phenotypes
+
+Retrieved using PIC-SURE
+
+
+```{r}
+fix_pheno_names <- function(pheno_names) {
+    
+    # Remove front matter and trailing backslashes from MESA phenotype names
+    
+    new_pheno_names <- unlist(lapply(pheno_names, function(nm) {
+        if (grepl("phs000209", nm)) {
+            capture_str <- ".*\\\\(.*)\\\\$"
+            nm <- str_match(nm, capture_str)[, 2]  # Extract real column name from front matter
+            nm
+        } else {
+            nm
+        }
+    }))
+    new_pheno_names
+}
+
+winsorize <- function(x, SDs=5) {
+  bounds <- mean(x, na.rm=TRUE) + c(-1, 1) * SDs * sd(x, na.rm=TRUE)
+  print(paste0(sum(x < bounds[1], na.rm=TRUE), " values winsorized at the lower bound."))
+  print(paste0(sum(x > bounds[2], na.rm=TRUE), " values winsorized at the upper bound."))
+  case_when(
+    x < bounds[1] ~ bounds[1],
+    x > bounds[2] ~ bounds[2],
+    TRUE ~ x
+  )
+}
+```
+
+
+```{r}
+basic_pheno_df <- read_csv("phenotypes/basic_phenotypes.csv", col_types=cols()) %>%
+    rename_with(fix_pheno_names, everything()) %>%
+    mutate(mesa_id = gsub("phs000209.v13_", "", 
+                          `\\_Parent Study Accession with Subject ID\\`),
+           mesa_id = as.integer(mesa_id),
+           gender_f0m1 = c(FEMALE=0, MALE=1)[gender1]) %>%
+    select(
+        mesa_id,
+        age=age1c, gender_f0m1, bmi=bmi1c,
+    )
+
+primary_pheno_df <- read_csv("phenotypes/primary_phenotypes.csv", col_types=cols()) %>%
+    rename_with(fix_pheno_names, everything()) %>%
+    mutate(mesa_id = gsub("phs000209.v13_", "", 
+                          `\\_Parent Study Accession with Subject ID\\`),
+           mesa_id = as.integer(mesa_id),
+           hdl_log = log(hdl1)) %>%
+    select(
+        mesa_id,
+        hdl=hdl1, hdl_log, ldl=ldl1, chol=chol1, tg=trig1,
+        pa=exercm1c, mod_pa=pamcm1c, vig_pa=pavcm1c, mvpa=pamvcm1c
+    ) %>%
+    mutate(across(c(pa, mod_pa, vig_pa, mvpa), ~ . / 60),
+           across(c(pa, mod_pa, vig_pa, mvpa), winsorize),
+           pa_bin = as.integer(pa > 3.75))
+
+covariate_df <- read_csv("phenotypes/covariates.csv", col_types=cols()) %>%
+    rename_with(fix_pheno_names, everything()) %>%
+    mutate(mesa_id = gsub("phs000209.v13_", "", 
+                          `\\_Parent Study Accession with Subject ID\\`),
+           mesa_id = as.integer(mesa_id)) %>%
+    select(
+        mesa_id,
+        ses_score=F1_PC2_1, income_cat=income1,
+        drinks_per_week=alcwkc1, smoking=cig1c,
+        ahei_score=ahei_2010_1, dash_score=dash_sodium1
+    ) %>%
+    mutate(across(c(ses_score, drinks_per_week, ahei_score, dash_score), winsorize))
+```
+
+## NMR data
+
+
+```{r}
+system("unzip phenotypes/SHARe_AncilMesaNMR_LP4_DS.zip -d phenotypes/")
+```
+
+
+```{r}
+nmr_df <- read_table("phenotypes/SHARe_AncilMesaNMR_LP4_DS.txt", col_types=cols()) %>%
+    select(
+        mesa_id = subject_id,
+        HDL_C = nhdlc1,
+        HDL_P = chdlp1, HDL_size = hdlz1,
+        L_HDL_P = l_chdlp1, M_HDL_P = m_chdlp1, S_HDL_P = s_chdlp1,
+        H1P = h1p1, H2P = h2p1, H3P = h3p1, H4P = h4p1, H5P = h5p1, H6P = h6p1, H7P = h7p1
+    )
+
+nmr_lp3_df <- read_csv("phenotypes/nmr_metabolites.csv", col_types=cols()) %>%
+    rename_with(fix_pheno_names, everything()) %>%
+    mutate(mesa_id = gsub("phs000209.v13_", "", 
+                          `\\_Parent Study Accession with Subject ID\\`),
+           mesa_id = as.integer(mesa_id)) %>%
+    select(
+        mesa_id,
+        HDL_C_lp3 = nhdlc31c,
+        HDL_P_lp3 = hdlp31c, HDL_size_lp3 = hz31,
+        L_HDL_P_lp3 = hl31, M_HDL_P_lp3 = hm31, S_HDL_P_lp3 = hs31
+    )
+```
+
+## Genetic principal components
+
+
+```{r}
+system(paste0("gsutil cp ", ws_bucket, "/freeze9b_sample_annot_2020-08-20.txt phenotypes/"))
+f9b_sample_map <- read_tsv("phenotypes/freeze9b_sample_annot_2020-08-20.txt",
+                       col_types=cols_only("sample.id"="c", "subject_id"="c", "study"="c")) %>%
+  filter(study == "MESA") %>%
+  rename(NWD_ID=sample.id, mesa_id=subject_id) %>%
+  mutate(mesa_id = as.integer(mesa_id))
+
+gPC_df <- read_tsv("phenotypes/freeze9_pcair_results.tsv", col_types=cols()) %>%
+    inner_join(f9b_sample_map, by=c("sample.id"="NWD_ID")) %>%
+    rename_with(~paste0("g", .), contains("PC")) %>%
+    select(mesa_id, NWD_ID=sample.id, contains("gPC"))
+
+# gPC_df <- read_tsv("phenotypes/freeze9_pcair_results.tsv", col_types=cols()) %>%
+#     inner_join(select(id_df, NWD_ID, mesa_id), by=c("sample.id"="NWD_ID")) %>%
+#     rename_with(~paste0("g", .), contains("PC")) %>%
+#     select(mesa_id, contains("gPC"))
+head(gPC_df, 3)
+```
+
+## Ancestry proportions
+
+
+```{r}
+ancestry_prop_fields <- c("African", "American", "East_Asian", "European")
+ancestry_prop_df <- read_csv("phenotypes/id_match_file.csv", col_types=cols()) %>%
+    mutate(mesa_id = as.integer(Cohort_Specific_Id)) %>%
+    filter(is.na(Exclusion_Reason)) %>%
+    select(mesa_id, all_of(ancestry_prop_fields)) %>%
+    rename_with(~paste0("prop_", .), -mesa_id)
+head(ancestry_prop_df, 3)
+```
+
+## Genotypes of interest
+
+## ID matching file
+
+
+```{r}
+id_df <- read_csv("phenotypes/id_match_file.csv", col_types=cols()) %>%
+    mutate(mesa_id = as.integer(Cohort_Specific_Id)) %>%
+    filter(is.na(Exclusion_Reason)) %>%
+    select(mesa_id, NWD_ID=NWD_Id, TOM_ID=TOM_Id)
+head(id_df, 3)
+```
+
+
+```{r}
+genos <- readRDS("genotypes/analysis_genotypes.rds")
+head(genos, 3)
+```
+
+# Create primary analysis dataset
+
+## Merge phenotype and genotype datasets
+
+
+```{r}
+dim(basic_info_df)
+dim(basic_pheno_df)
+dim(primary_pheno_df)
+dim(covariate_df)
+dim(nmr_df)
+dim(gPC_df)
+dim(ancestry_prop_df)
+dim(genos)
+dim(id_df)
+```
+
+
+```{r}
+# Full dataset without subsetting to LC/MS subgroup
+analysis_df <- basic_info_df %>%
+    inner_join(basic_pheno_df, by="mesa_id") %>%
+    inner_join(primary_pheno_df, by="mesa_id") %>%
+    inner_join(covariate_df, by="mesa_id") %>%
+    inner_join(nmr_df, by="mesa_id") %>%
+    inner_join(nmr_lp3_df, by="mesa_id") %>%
+    inner_join(gPC_df, by="mesa_id") %>%
+    inner_join(genos, by="NWD_ID") %>%
+    left_join(id_df, by=c("mesa_id", "NWD_ID"))  # Adds TOM_ID
+```
+
+
+```{r}
+str(analysis_df)
+```
+
+
+```{r}
+summarize_continuous <- function(x) {
+  m <- round(mean(x, na.rm=TRUE), 1)
+  s <- round(sd(x, na.rm=TRUE), 1)
+  paste0(m, " (", s, ")")
+}
+
+pop_description_tbl <- analysis_df %>%
+    rename(Race=race) %>%
+  group_by(Race) %>%
+  summarise(
+    N = n(),
+    Gender = paste(round(sum(gender_f0m1 == 0) / n() * 100, 1), "% female"),
+    Age = summarize_continuous(age),
+    BMI = summarize_continuous(bmi),
+    `Intentional PA` = paste0(round(sum(pa_bin == 1, na.rm=TRUE) / n() * 100, 1), "%"),
+    `Smoking (current)` = paste0(round(sum(smoking == "CURRENT", na.rm=TRUE) / n() * 100, 1), "%"),
+    `Smoking (former)` = paste0(round(sum(smoking == "FORMER", na.rm=TRUE) / n() * 100, 1), "%"),
+    `PCA-based measure of SES` = summarize_continuous(ses_score),
+    
+  ) %>%
+  arrange(desc(N))
+
+pop_description_tbl %>% t()
+```
+
+## Distributions
+
+
+```{r}
+plot_continuous <- function(cont_var) {
+    analysis_df %>%
+    filter(!is.na(!!sym(cont_var))) %>%
+    ggplot(aes_string(x=cont_var)) +
+    geom_histogram(bins=30) +
+    labs(title=cont_var)
+}
+
+plot_categorical <- function(cat_var) {
+    ggplot(analysis_df, aes(x=factor(!!sym(cat_var)))) +
+    geom_bar(stat="count") +
+    labs(title=cat_var) +
+    theme(axis.text.x=element_text(angle=30, hjust=0.9))
+}
+
+options(repr.plot.width=12, repr.plot.height=5)
+```
+
+
+```{r}
+# Basic biological variables
+age_plt <- plot_continuous("age")
+gender_plt <- plot_categorical("gender_f0m1")
+bmi_plt <- plot_continuous("bmi")
+age_plt + gender_plt + bmi_plt
+
+race_plt <- plot_categorical("race")
+race_plt
+```
+
+
+```{r}
+# Outcomes
+hdl_plt <- plot_continuous("hdl")
+hdl_log_plt <- plot_continuous("hdl_log")
+hdl_plt + hdl_log_plt
+
+hdl_p_plt <- plot_continuous("HDL_P")
+m_hdl_p_plt <- plot_continuous("M_HDL_P")
+l_hdl_p_plt <- plot_continuous("L_HDL_P")
+hdl_p_plt + m_hdl_p_plt + l_hdl_p_plt
+```
+
+
+```{r}
+# Exposures
+pa_plt <- plot_continuous("pa")
+pa_bin_plt <- plot_categorical("pa_bin")
+pa_plt + pa_bin_plt
+
+mvpa_plt <- plot_continuous("mvpa")
+mod_pa_plt <- plot_continuous("mod_pa")
+vig_pa_plt <- plot_continuous("vig_pa")
+mvpa_plt + mod_pa_plt + vig_pa_plt
+```
+
+
+```{r}
+analysis_df %>%
+    filter(!is.na(vig_pa)) %>%
+    ggplot(aes(x=vig_pa, group=gender_f0m1, fill=factor(gender_f0m1))) +
+#     geom_density() +
+geom_histogram(bins=100) +
+    labs(title="vig_pa by gender") +
+coord_cartesian(ylim=c(0, 200))
+```
+
+
+```{r}
+# Covariates
+ses_plt <- plot_continuous("ses_score")
+income_plt <- plot_categorical("income_cat")
+ses_plt + income_plt
+
+alc_plt <- plot_continuous("drinks_per_week")
+smk_plt <- plot_categorical("smoking")
+alc_plt + smk_plt
+
+ahei_plt <- plot_continuous("ahei_score")
+dash_plt <- plot_continuous("dash_score")
+ahei_plt + dash_plt
+```
+
+
+```{r}
+# Batch variables
+site_plt <- plot_categorical("site")
+month_plt <- plot_categorical("month") + theme(axis.text.x=element_text(angle=30, hjust=0.9))
+season_plt <- plot_categorical("season")
+site_plt + month_plt + season_plt
+```
+
+
+```{r}
+missingness_vars <- c(
+    "age", "gender_f0m1", "bmi", "race",
+    "hdl_log",
+    "pa",
+    "ses_score", "income_cat",
+    "drinks_per_week", "smoking", "ahei_score", "dash_score",
+    "site", "month", "season"
+)
+analysis_df %>%
+    select(all_of(missingness_vars)) %>%
+    mutate(across(everything(), is.na)) %>%
+    summarise(across(everything(), sum))
+```
+
+## Additional phenotype preprocessing
+
+We will include a few more preprocessing steps to prepare the data for analysis.
+
+* ___ of continuous PA variables to reduce the extreme skewness
+* Imputation of covariate values to retain sample size, using:
+    - Median value for continuous variables
+    - "Missing" indicator for categorical income
+    - "Never" for smoking
+
+
+```{r}
+analysis_df <- analysis_df %>%
+  mutate(income_cat = ifelse(is.na(income_cat), "Missing", income_cat),  # Add missing indicators to SES & HL covariates rather than drop them
+         smoking = ifelse(is.na(smoking), "NEVER", smoking),
+         across(all_of(c("ses_score", "drinks_per_week", "ahei_score", "dash_score")), 
+                ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+```
+
+# Incorporate LC/MS metabolomics
+
+## Preprocessed and QCed MESA metabolomics data
+
+
+```{r}
+system(paste0("gsutil cp -R ", ws_bucket, "/QCd ."))
+```
+
+
+```{r}
+mesa_metab_files <- c(
+    an = "an_MESA_QCd_l2.csv", 
+    cp = "cp_MESA_QCd_l2.csv", 
+    hp = "hp_MESA_QCd_l2.csv"
+#     proteo = "proteo_MESA_QCd_l2.csv"
+)
+mesa_metab_mat_list <- lapply(mesa_metab_files, function(f) {
+    tmp_df <- read_csv(paste0("QCd/l2/", f), col_types=cols())
+    metab_names <- tmp_df[[1]]  # First column are metabolite names
+    metab_mat <- as.matrix(t(tmp_df[, -1]))
+    colnames(metab_mat) <- metab_names
+    metab_mat
+})
+
+metabolite_types <- lapply(mesa_metab_mat_list, function(df) {
+    tibble(metabolite = colnames(df))
+}) %>%
+    bind_rows(.id="type")
+```
+
+## Merge and align primary and metabolomics datasets
+
+
+```{r}
+common_samples <- Reduce(intersect, lapply(mesa_metab_mat_list, rownames))
+
+mesa_metab_mat <- do.call(cbind, lapply(mesa_metab_mat_list, function(mat) mat[common_samples, ]))
+mesa_metab_mat <- mesa_metab_mat[rownames(mesa_metab_mat) %in% analysis_df$TOM_ID, ]
+                                        
+mesa_metabs <- colnames(mesa_metab_mat)                          
+```
+
+
+```{r}
+analysis_df_lcms <- analysis_df[match(rownames(mesa_metab_mat), 
+                                      analysis_df$TOM_ID), ]
+
+dim(analysis_df_lcms)
+```
+
+## PCA
+
+
+```{r}
+pc_res <- prcomp(mesa_metab_mat, center=TRUE, scale=TRUE)
+pc_df <- as_tibble(pc_res$x, rownames="TOM_ID") %>%
+    select(1:21) %>%
+    rename_with(~paste0("m", .), -TOM_ID)
+```
+
+
+```{r}
+options(repr.plot.width=8, repr.plot.height=6)
+
+screeplot(pc_res, npcs=20, main="Metabolite PCA Scree plot")
+```
+
+## PEER factors
+
+
+```{r}
+# system(paste0(
+#     "conda config --add channels bioconda &&",
+#     "conda install r-peer"
+# ))
+
+# system("wget https://github.com/downloads/PMBio/peer/R_peer_source_1.3.tgz", intern=T)
+# system("R CMD INSTALL R_peer_source_1.3.tgz")
+```
+
+
+```{r}
+# Chunk: create PEER factors
+```
+
+
+```{r}
+# Chunk: compare PEER factors to PCs
+```
+
+## Add metabolomic summary variables to analysis dataset
+
+
+```{r}
+analysis_df_lcms <- analysis_df_lcms %>%
+    left_join(pc_df, by="TOM_ID")
+```
+
+# Covariate associations with metabolomic PCs
+
+
+```{r}
+race_plt <- bind_cols(analysis_df_lcms, pc_res$x[, 1:5]) %>%
+    ggplot(aes(x=PC1, y=PC2)) +
+    geom_point(aes(color=race), alpha=0.5)
+
+site_plt <- bind_cols(analysis_df_lcms, pc_res$x[, 1:5]) %>%
+    ggplot(aes(x=PC1, y=PC2)) +
+    geom_point(aes(color=site), alpha=0.5)
+
+gender_plt <- bind_cols(analysis_df_lcms, pc_res$x[, 1:5]) %>%
+    ggplot(aes(x=PC1, y=PC2)) +
+    geom_point(aes(color=gender1), alpha=0.5)
+
+options(repr.plot.width=12, repr.plot.height=3)
+
+race_plt + site_plt + gender_plt
+```
+
+
+```{r}
+cont_vars <- c("age", "bmi", 
+#                paste0("prop_", ancestry_prop_fields), 
+               paste0("gPC", 1:11))
+bin_vars <- c("smoking", "gender_f0m1")
+cat_vars <- c("race", "site", "season", "month")
+
+pc_test <- function(pc_var, covariate) {
+    lm_res <- lm(pc_res$x[, pc_var] ~ analysis_df_lcms[[covariate]])
+    model_p <- anova(lm_res)[1, 5]
+    model_p
+}
+
+pc_test_res <- expand_grid(
+    pc = paste0("PC", 1:20),
+    covar = c(cont_vars, bin_vars, cat_vars)
+) %>%
+    rowwise() %>%
+    mutate(p = pc_test(pc, covar))
+```
+
+
+```{r}
+pc_test_plt_df <- pc_test_res %>%
+    mutate(nlp = -log10(p),
+           sig = ifelse(p < 0.05, "*", ""),
+           pc = factor(pc, levels=paste0("PC", 1:20)))
+
+options(repr.plot.width=12, repr.plot.height=6)
+
+pc_test_plt_df %>%
+    ggplot(aes(x=pc, y=covar, fill=nlp)) +
+    geom_tile() +
+    geom_text(aes(label=sig), color="white") +
+    scale_fill_continuous(name=expression(-log[10] * "(p)")) +
+    scale_size_area(max_size=1.5) +
+    labs(title="Covariate-mPC association p-values")
+
+pc_test_plt_df %>%
+    mutate(nlp=pmin(nlp, 10)) %>%
+    ggplot(aes(x=pc, y=covar, fill=nlp)) +
+    geom_tile() +
+    geom_text(aes(label=sig), color="white") +
+    scale_fill_continuous(name=expression(-log[10] * "(p)")) +
+    scale_size_area(max_size=1.5) +
+    labs(title="Covariate-mPC association p-values (capped below p<1e-10)")
+```
+
+# Assessment of the SNPs and exposures of interest
+
+
+```{r}
+snp_info_df <- read_csv("genotypes/snp_info.csv", col_types=cols())
+exposures <- c("pa_bin")
+```
+
+## Univariate SNP-mPC and exposure-mPC associations
+
+
+```{r}
+snp_mPC_assoc_df <- lapply(snp_info_df$rsID, function(rsID) {
+    g_dominant <- analysis_df_lcms[[rsID]] > 0
+    form_str <- paste0("g_dominant ~ ", paste0("mPC", 1:20, collapse=" + "))
+    glm(as.formula(form_str), data=analysis_df_lcms, family="binomial") %>%
+        broom::tidy()
+}) %>%
+    setNames(snp_info_df$rsID) %>%
+    bind_rows(.id="snp")
+
+exp_mPC_assoc_df <- lapply(exposures, function(e) {
+    e <- analysis_df_lcms[[e]]
+    form_str <- paste0("e ~ ", paste0("mPC", 1:20, collapse=" + "))
+    glm(as.formula(form_str), data=analysis_df_lcms, family="binomial") %>%
+        broom::tidy()
+}) %>%
+    setNames(exposures) %>%
+    bind_rows(.id="exposure")
+```
+
+
+```{r}
+options(repr.plot.width=12, repr.plot.height=3)
+
+snp_mPC_assoc_df %>%
+    filter(term != "(Intercept)") %>%
+    mutate(nlp = -log10(p.value),
+           term = factor(term, levels=paste0("mPC", 1:20))) %>%
+    ggplot(aes(x=term, y=snp, fill=nlp)) +
+    geom_tile() +
+    scale_fill_continuous(name=expression(-log[10] * "(p)"))
+
+exp_mPC_assoc_df %>%
+    filter(term != "(Intercept)") %>%
+    mutate(nlp = -log10(p.value),
+           term = factor(term, levels=paste0("mPC", 1:20))) %>%
+    ggplot(aes(x=term, y=exposure, fill=nlp)) +
+    geom_tile() +
+    scale_fill_continuous(name=expression(-log[10] * "(p)"))
+```
+
+## Incorporation of technical covariates
+
+
+```{r}
+technical_covar_sets <- list(
+    none = "",
+    add_site = c("gender_f0m1", "age", "site")
+)
+
+test_univariate <- function(y, x, covar_vec) {
+    form_str <- paste0(y, " ~ ", x)
+    if (!identical(covar_vec, "")) {
+        form_str <- paste0(form_str, " + ", paste(covar_vec, collapse=" + "))
+    }
+    lm(as.formula(form_str), data=analysis_df_lcms) %>%
+        broom::tidy() %>%
+        filter(term == x)
+}
+```
+
+
+```{r}
+snp_mPC_technical_covar_assoc_df <- expand_grid(
+    snp = snp_info_df$rsID,
+    mPC = paste0("mPC", 1:3),
+    covar_set = names(technical_covar_sets) 
+) %>%
+    rowwise() %>%
+    mutate(lm_res = list(test_univariate(mPC, snp, technical_covar_sets[[covar_set]]))) %>%
+    unnest(lm_res)
+
+exp_mPC_technical_covar_assoc_df <- expand_grid(
+    e = exposures,
+    mPC = paste0("mPC", 1:3),
+    covar_set = names(technical_covar_sets) 
+) %>%
+    rowwise() %>%
+    mutate(lm_res = list(test_univariate(mPC, e, technical_covar_sets[[covar_set]]))) %>%
+    unnest(lm_res)
+```
+
+
+```{r}
+options(repr.plot.width=8, repr.plot.height=6)
+
+snp_mPC_technical_covar_assoc_df %>%
+    mutate(l95 = estimate - 1.96 * std.error,
+           u95 = estimate + 1.96 * std.error,
+           covar_set = factor(covar_set, levels=names(technical_covar_sets))) %>%
+    ggplot(aes(x=snp, y=estimate, color=covar_set)) +
+    geom_point(position=position_dodge(width=0.2)) +
+    geom_errorbar(aes(ymin=l95, ymax=u95), 
+                  position=position_dodge(width=0.2), width=0.1) +
+    geom_hline(yintercept=0, color="gray") +
+    facet_wrap(~mPC, ncol=1, scales="free")
+
+exp_mPC_technical_covar_assoc_df %>%
+    mutate(l95 = estimate - 1.96 * std.error,
+           u95 = estimate + 1.96 * std.error,
+           covar_set = factor(covar_set, levels=names(technical_covar_sets))) %>%
+    ggplot(aes(x=e, y=estimate, color=covar_set)) +
+    geom_point(position=position_dodge(width=0.2)) +
+    geom_errorbar(aes(ymin=l95, ymax=u95), 
+                  position=position_dodge(width=0.2), width=0.1) +
+    geom_hline(yintercept=0, color="gray") +
+    facet_wrap(~mPC, ncol=1, scales="free")
+```
+
+## Incorporation of biological covariates
+
+
+```{r}
+biological_covar_sets <- list(
+    basic = "site",
+    add_gender_age = c("site", "gender_f0m1", "age"),
+    add_gender_age_race = c("site", "gender_f0m1", "age", "race"),
+    add_gender_age_ses = c("site", "gender_f0m1", "age", "ses_score", "income_cat"),
+    add_gender_age_ses_HL = c("site", "gender_f0m1", "age", "ses_score", "income_cat", 
+                              "drinks_per_week", "smoking", "ahei_score", "dash_score"),
+    add_gender_age_gPC = c("gender_f0m1", "age", paste0("gPC", 1:5)),
+    add_gender_age_race_gPC = c("site", "gender_f0m1", "age", "race", paste0("gPC", 1:5))
+)
+```
+
+
+```{r}
+snp_mPC_biological_covar_assoc_df <- expand_grid(
+    snp = snp_info_df$rsID,
+    mPC = paste0("mPC", 1:3),
+    covar_set = names(biological_covar_sets) 
+) %>%
+    rowwise() %>%
+    mutate(lm_res = list(test_univariate(snp, mPC, biological_covar_sets[[covar_set]]))) %>%
+    unnest(lm_res)
+
+exp_mPC_biological_covar_assoc_df <- expand_grid(
+    e = exposures,
+    mPC = paste0("mPC", 1:3),
+    covar_set = names(biological_covar_sets) 
+) %>%
+    rowwise() %>%
+    mutate(lm_res = list(test_univariate(e, mPC, biological_covar_sets[[covar_set]]))) %>%
+    unnest(lm_res)
+```
+
+
+```{r}
+options(repr.plot.width=12, repr.plot.height=6)
+
+snp_mPC_biological_covar_assoc_df %>%
+    mutate(l95 = estimate - 1.96 * std.error,
+           u95 = estimate + 1.96 * std.error,
+           covar_set = factor(covar_set, levels=names(biological_covar_sets))) %>%
+    ggplot(aes(x=snp, y=estimate, color=covar_set)) +
+    geom_point(position=position_dodge(width=0.2)) +
+    geom_errorbar(aes(ymin=l95, ymax=u95), 
+                  position=position_dodge(width=0.2), width=0.1) +
+    geom_hline(yintercept=0, color="gray") +
+    facet_wrap(~mPC, ncol=1, scales="free")
+
+exp_mPC_biological_covar_assoc_df %>%
+    mutate(l95 = estimate - 1.96 * std.error,
+           u95 = estimate + 1.96 * std.error,
+           covar_set = factor(covar_set, levels=names(biological_covar_sets))) %>%
+    ggplot(aes(x=e, y=estimate, color=covar_set)) +
+    geom_point(position=position_dodge(width=0.2)) +
+    geom_errorbar(aes(ymin=l95, ymax=u95), 
+                  position=position_dodge(width=0.2), width=0.1) +
+    geom_hline(yintercept=0, color="gray") +
+    facet_wrap(~mPC, ncol=1, scales="free")
+```
+
+# Conclusions
+
+* The most important covariates affecting top PCs are study site and race (highly correlated) as well as gender
+* It appears that most of the high-level metabolite associations can be captured with about 9 metabolite PCs (for both genotypes and exposures) 
+* So, we want to adjust for PEER factors, and we are OK knowing that they are representing expected variables.
+
+# Export final datasets for analysis
+
+
+```{r}
+write_csv(analysis_df, "analysis/analysis_df.csv")  # All individuals
+write_csv(analysis_df_lcms, "analysis/analysis_df_lcms.csv")  # Matched to the LC/MS dataset
+saveRDS(mesa_metab_mat, "metabolites/lcms_metabolites.rds")
+system(paste0("gsutil cp -R phenotypes analysis metabolites ", ws_bucket, "/"))
+```

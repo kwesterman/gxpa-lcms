@@ -1,0 +1,936 @@
+# Set up
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(patchwork, table1))
+```
+
+```{r}
+ws_namespace <- Sys.getenv("WORKSPACE_NAMESPACE")
+ws_name <- Sys.getenv("WORKSPACE_NAME")
+ws_bucket <- Sys.getenv("WORKSPACE_BUCKET")
+```
+
+```{r}
+theme_set(theme_bw())
+
+## ggplot specifications ----------
+ggplot_theme_standard_continuous <- theme_bw() + theme(
+    axis.text.x = element_text(size=12, vjust=0.65, color = "black"),
+    axis.text.y = element_text(size=12, color="black"), 
+    strip.text=element_text(size=14, face="bold"),
+    axis.title = element_text(size=14, color = "black")
+)
+
+ggplot_theme_standard_categorical <- theme_bw() + theme(
+    axis.text.x = element_text(size=12, color = "black", angle=30, hjust=0.9),
+    axis.text.y = element_text(size=12, color="black"), 
+    strip.text=element_text(size=14, face="bold"),
+    axis.title = element_text(size=14, color = "black")
+)
+
+## Color palettes
+proj_palettes <- list(
+    greens = paletteer::paletteer_dynamic("cartography::green.pal", 10),
+    blues = paletteer::paletteer_dynamic("cartography::blue.pal", 10),
+    oranges = paletteer::paletteer_dynamic("cartography::orange.pal", 10),
+    pretty_dark = paletteer::paletteer_d("PrettyCols::Dark", 5))
+  
+```
+
+## Build basic functions
+Function to remove outliers by SD
+```{r}
+remove_outliers.fun <- function(x, SDs=5) {
+    bounds <- mean(x, na.rm=T) + SDs * c(-1, 1) * sd(x, na.rm=T)
+    
+    print(paste0(sum(x < bounds[1], na.rm=TRUE), " outliers removed at <", SDs, " SDs"))
+    print(paste0(sum(x > bounds[2], na.rm=TRUE), " outliers removed at >", SDs, " SDs"))
+    
+    x <- ifelse(x>bounds[1] & x<bounds[2], x, NA) ; x    
+}
+```
+
+Functions for describing data
+```{r}
+# Print mean/sd
+mean_sd<-function(x, d=2) {
+  sprintf("%s \u00B1 %s", round(mean(x, na.rm=T), digits = d), 
+          round(sd(x, na.rm=T), digits = d))
+}
+
+# Print n_pct for categorical vars
+n_pct <- function(x, level=F) {
+  if(level==F) {
+  sapply(as.list(names(table(x))), function(lvl) {
+    paste0(lvl, ", ", sum(x == lvl, na.rm=T), " (", round(sum(x == lvl, na.rm=T)/n()*100,1), "%)") }) } 
+  else{paste0(sum(x == level, na.rm=T), " (", round(sum(x == level, na.rm=T)/n()*100,1), "%)")}
+}
+
+```
+
+# Read in and align datasets
+We will read in various phenotype datassets to align and eventually merge with genotypes.
+```{r}
+system(paste0("gsutil cp -R ", ws_bucket, "/phenotypes ./"))
+list.files("phenotypes")
+```
+
+## Basic phenotypes
+Retrieved using PIC-SURE
+```{r}
+phenos_basic.df <- read_csv("phenotypes/mesa5_phenos_basic.csv", col_types=cols())
+head(phenos_basic.df)
+
+phenos_diet.df <- read_csv("phenotypes/mesa5_phenos_diet.csv", col_types=cols())
+head(phenos_diet.df)
+```
+
+```{r}
+# Remove front matter and trailing backslashes from MESA phenotype names
+fix_pheno_names <- function(pheno_names) {
+    new_pheno_names <- unlist(lapply(pheno_names, function(nm) {
+        if (grepl("phs000209", nm)) {
+            capture_str <- ".*\\\\(.*)\\\\$"
+            nm <- str_match(nm, capture_str)[, 2]  # Extract real column name from front matter
+            nm
+        } else {
+            nm
+        }
+    }))
+    new_pheno_names
+}
+```
+
+```{r}
+# Basic demogrphic, behavioral & biomarker phenotypes
+phenos_basic.df <- read_csv("phenotypes/mesa5_phenos_basic.csv", col_types=cols()) %>%
+    rename_with(fix_pheno_names, everything()) %>%
+    mutate(mesa_id = gsub("phs000209.v13_", "", 
+                          `\\_Parent Study Accession with Subject ID\\`),
+           mesa_id = as.integer(mesa_id)) %>%
+    rename(Parent_Study_Accession='\\_Parent Study Accession with Subject ID\\',
+           TopMed_Study_Accesssion='\\_Topmed Study Accession with Subject ID\\',
+           consents='\\_consents\\') %>%
+    rename(site=site5c, season=season5,
+           age=age5c, age_cat=agecat5c, 
+           gender=gender1, sex=SEX, racethn=race1c, 
+           educ_lvl=educ1, educ_lvl_dad=dadschl2, educ_lvl_mom=momschl2,
+           income_lvl=income5, income_hhld=numhhld5,
+           smoke_stat=smkstat5, smoke_packyrs=pkyrs5c, 
+           alch_currdrnk=curalc5, physact_mvpa=pamvcm5c,
+           bmi=bmi5c, tg=trig5, ldl=ldl5, hdl=hdl5, 
+           glucose=glucose5, hba1c=hba1c5,
+           sbp=sbp5c, dbp=dbp5c,
+           med_t2d=diabhx5, med_t2d_type=dbhxtyp5,
+           med_lip=lipid5c, med_htn=htnmed5c,
+           energy_kcal=enrgyn5c) %>%
+    select(-c(Parent_Study_Accession, TopMed_Study_Accesssion, consents, 'Patient ID')) %>%
+    select(-c(energy_kcal)) %>%
+    as.data.frame()
+
+
+## Recode categorical vars from CAPS to lowercase
+phenos_basic.df <- phenos_basic.df %>% 
+    mutate(across(c("gender", "educ_lvl", "educ_lvl_dad", "educ_lvl_mom", "income_lvl", "racethn", 
+                    "season", "alch_currdrnk", "smoke_stat", "med_t2d", "med_htn", "med_lip"), tolower))
+
+head(phenos_basic.df)
+dim(phenos_basic.df)
+```
+
+Compare sex vs gender for missingness --> use gender
+```{r}
+print(phenos_basic.df %>% reframe(sex=n_pct(sex), gender=n_pct(gender)))
+
+phenos_basic.df <- phenos_basic.df %>% 
+    mutate(female=c(female=1, male=0)[gender], .before=educ_lvl) %>% 
+    select(-sex)
+```
+
+Recode Race/Ethnicity labels
+```{r}
+phenos_basic.df <- phenos_basic.df %>% 
+    mutate(RaceEthn = case_when(
+        racethn == "white, caucasian" ~ "White",
+        racethn == "black, african-american" ~ "African American",
+        racethn == "hispanic" ~ "Hispanic",
+        racethn == "chinese american" ~ "Chinese",
+        is.na(racethn) == TRUE ~ "Missing")) %>%
+    mutate(RaceEthn = factor(RaceEthn, levels = c("White", "African American", "Hispanic", "Chinese", "Missing")))
+
+
+phenos_basic.df %>% reframe(RaceEthn=n_pct(RaceEthn))
+```
+
+Recode & add education variables
+```{r}
+phenos_basic.df <- phenos_basic.df %>%
+    # Recode NA values as meanginful: Missing
+    mutate(educ_lvl.lab = ifelse(is.na(educ_lvl), "Missing", educ_lvl)) %>%
+    mutate(educ_lvl.lab = factor(educ_lvl.lab, levels = c("no schooling", "grades 1-8", "grades 9-11", 
+                                                "completed high school/ged", "some college but no degree", 
+                                                "technical school certificate","associate degree", 
+                                                "bachelor's degree", "graduate or professional school", "Missing"),
+                          labels=c("No school", "Grades 1-8", "Grades 9-11", "Completed HS/GED", 
+                                  "Some college", "Technical school", "Associate's degree", 
+                                   "Bachelor's degree", "Graduate or professional degree", "Missing"))) %>%
+    
+    mutate(educ_4lvl.lab = factor(
+        case_when(
+            educ_lvl.lab %in% c("No school", "Grades 1-8", "Grades 9-11") ~ "Less than HS",
+            educ_lvl.lab == "Completed HS/GED" ~ "Graduated HS",
+            educ_lvl.lab %in% c("Some college", "Technical school", "Associate's degree") ~ "Some college",
+            educ_lvl.lab %in% c("Bachelor's degree", "Graduate or professional degree") ~ "Graduated college or more",
+            as.numeric(NA) == TRUE ~ "Missing"))) %>%
+    mutate(educ_4lvl.lab = factor(educ_4lvl.lab, levels = c("Less than HS", "Graduated HS", 
+                                                            "Some college", "Graduated college or more", "Missing")) 
+)
+
+phenos_basic.df %>% reframe(Education_lvl=n_pct(educ_lvl.lab))
+phenos_basic.df %>% reframe(Education_4lvl=n_pct(educ_4lvl.lab))
+```
+
+Recode & add income variables
+```{r}
+phenos_basic.df <- phenos_basic.df %>% 
+    mutate(income_lvl.lab = ifelse(is.na(income_lvl), "Missing", income_lvl)) %>%
+    mutate(
+        income_lvl.lab = factor(
+            income_lvl.lab, levels = c("< $5000", "$5000 - $7999", "$8000 - $11999", "$12000 - $15999", 
+                                   "$16000 - $19999", "$20000 - $24999", "$25000 - $29999", "$30000 - $34999", 
+                                   "$35000 - $39999", "$40000 - $49999", "$50000 - $74999", "$75000 - $99999", 
+                                   "$100,000 - $124,999", "$125,000 - $149,999", "$150,000 or more", "Missing"),
+                labels = c("Less than $5,000", "$5,000 - $7,999", "$8,000 - $11,999", "$12,000 - $15,999", 
+                                   "$16,000 - $19,999", "$20,000 - $24,999", "$25,000 - $29,999", "$30,000 - $34,999", 
+                                   "$35,000 - $39,999", "$40,000 - $49,999", "$50,000 - $74,999", "$75,000 - $99,999", 
+                                   "$100,000 - $124,999", "$125,000 - $149,999", "$150,000 or more", "Missing")
+            )) %>%
+    mutate(
+        income_4lvl.lab = factor(
+            case_when(income_lvl.lab %in% c("Less than $5,000", "$5,000 - $7,999", "$8,000 - $11,999", "$12,000 - $15,999", 
+                                   "$16,000 - $19,999", "$20,000 - $24,999") ~ "<$25000",
+                      income_lvl.lab %in% c("$25,000 - $29,999", "$30,000 - $34,999", 
+                                   "$35,000 - $39,999", "$40,000 - $49,999") ~ "$25,000-$49,000",
+                      income_lvl.lab %in% c("$50,000 - $74,999", "$75,000 - $99,999") ~ "$50,000-$99,000",
+                      income_lvl.lab %in% c("$100,000 - $124,999", "$125,000 - $149,999", "$150,000 or more") ~ "≥$100,000",
+                      income_lvl.lab == "Missing" ~ "Missing")
+            ))
+
+phenos_basic.df %>% reframe(Income_lvl=n_pct(income_lvl.lab))
+phenos_basic.df %>% reframe(Income_4lvl=n_pct(income_4lvl.lab))
+```
+
+Add income:poverty ratio for 2010-2011
+```{r}
+#Resource: https://aspe.hhs.gov/topics/poverty-economic-mobility/poverty-guidelines/prior-hhs-poverty-guidelines-federal-register-references
+
+income_lvls <- phenos_basic.df %>% reframe(lvls=n_pct(income_lvl.lab)) 
+income_lvls$num <- c(median(c(0,5000)), median(c(5000, 7999)), median(c(8000, 11999)), median(c(12000,15999)), 
+                            median(c(16000,19999)), median(c(20000,24999)), median(c(25000,29999)), 
+                            median(c(30000,34999)), median(c(35000,39999)), median(c(40000, 49999)), 
+                            median(c(50000, 74999)), median(c(75000, 99999)), median(c(100000, 124999)), median(c(125000, 149000)),
+                            150000, NA)
+
+income_lvls
+
+phenos_basic.df <- phenos_basic.df %>% mutate(
+    income_num=case_when(income_lvl.lab == income_lvls[1,1] ~ income_lvls[1,2],
+                         income_lvl.lab == income_lvls[2,1] ~ income_lvls[2,2],
+                         income_lvl.lab == income_lvls[3,1] ~ income_lvls[3,2],
+                         income_lvl.lab == income_lvls[4,1] ~ income_lvls[4,2],
+                        income_lvl.lab == income_lvls[5,1] ~ income_lvls[5,2],
+                        income_lvl.lab == income_lvls[6,1] ~ income_lvls[6,2],
+                        income_lvl.lab == income_lvls[7,1] ~ income_lvls[7,2],
+                        income_lvl.lab == income_lvls[8,1] ~ income_lvls[8,2],
+                        income_lvl.lab == income_lvls[9,1] ~ income_lvls[9,2],
+                        income_lvl.lab == income_lvls[10,1] ~ income_lvls[10,2],
+                        income_lvl.lab == income_lvls[11,1] ~ income_lvls[11,2],
+                        income_lvl.lab == income_lvls[12,1] ~ income_lvls[12,2],
+                        income_lvl.lab == income_lvls[13,1] ~ income_lvls[13,2],
+                        income_lvl.lab == income_lvls[14,1] ~ income_lvls[14,2],
+                        income_lvl.lab == income_lvls[15,1] ~ income_lvls[15,2],
+                        income_lvl.lab == income_lvls[16,1] ~ income_lvls[16,2],
+                        ) ) %>% mutate(
+    income2poverty2011 = ifelse(income_hhld == 1, income_num / 10830, (income_num / (10830 + 3740*(income_hhld-1)))) )
+
+   
+```
+
+Recode smoking & alch vars
+```{r}
+phenos_basic.df <- phenos_basic.df %>%
+    mutate(smoke_stat.lab = ifelse(is.na(smoke_stat), "Missing", smoke_stat)) %>%
+    mutate(
+        factor(smoke_stat, levels = c("current smoker", "former smoker, quit less than one year",
+                                      "former smoker quit more than 1 year ago", "never smoked", "do not know"),
+        labels = c("Current", "Former, <1 yr", "Former, >1 yr", "Never", "Missing"))
+           ) %>%
+    mutate(alch_currdrnk.lab = ifelse(is.na(alch_currdrnk), "Missing", alch_currdrnk)) %>%
+    mutate(alch_currdrnk.lab = factor(alch_currdrnk, levels = c("no", "yes", "Missing"), 
+                                      labels = c("Non-drinker", "Drinker", "Missing")))
+                                   
+
+phenos_basic.df %>% reframe(smoke=n_pct(smoke_stat.lab))
+phenos_basic.df %>% reframe(current_drinker=n_pct(alch_currdrnk.lab))
+```
+
+Recode medication variables as 0/1
+```{r}
+phenos_basic.df <- phenos_basic.df %>%
+    mutate(med_t2d = factor(ifelse(med_t2d == "no" | is.na(med_t2d), 0, 1)),
+           med_htn = factor(ifelse(med_htn == "yes", 1, 0)),
+           med_lip = factor(ifelse(med_lip == "yes", 1, 0)))
+phenos_basic.df %>% reframe(med_t2d=n_pct(med_t2d))
+```
+
+## Basic diet phenotypes
+```{r}
+# Basic diet phenotypes
+phenos_diet.df <- read_csv("phenotypes/mesa5_phenos_diet.csv", col_types=cols()) %>%
+    rename_with(fix_pheno_names, everything()) %>%
+    mutate(mesa_id = gsub("phs000209.v13_", "", 
+                          `\\_Parent Study Accession with Subject ID\\`),
+           mesa_id = as.integer(mesa_id)) %>%
+    rename(Parent_Study_Accession='\\_Parent Study Accession with Subject ID\\',
+           TopMed_Study_Accesssion='\\_Topmed Study Accession with Subject ID\\',
+           consents='\\_consents\\') %>%
+    select(-c(Parent_Study_Accession, TopMed_Study_Accesssion, consents, 'Patient ID')) %>%
+
+    rename(energy_kcal=enrgyn5c,
+           nut_carb_g=tcarbn5c,
+           nut_prot_g=tprtnn5c,
+           nut_fat_g=tfatn5c,
+           nut_sfa_g=tsfan5c,
+           nut_mufa_g=tmufan5c,
+           nut_pufa_g=tpufan5c,
+           nut_fiber_g=tfibrn5c,
+           nut_fiber_sol_g=sfibrn5c,
+           nut_fiber_insol_g=isfbrn5c,
+           nut_fiber_cereal_g=cerealdf5c,
+           nut_fat_pct=pclftn5c,
+           nut_carb_pct=pclcbn5c,
+           nut_prot_pct=pcprtn5c,
+           nut_sfa_pct=pclsfn5c,
+           nut_mufa_pct=pclmfn5c,
+           nut_pufa_pct=pclpfn5c,
+           nut_alch_g=alcn5c) %>%
+
+    mutate(across(c(energy_kcal, nut_carb_g, nut_fat_g, nut_prot_g), remove_outliers.fun)) %>%
+    mutate(carb2fib = case_when(
+                nut_carb_g != 0 & nut_fiber_g != 0 ~ nut_carb_g / nut_fiber_g,
+                !is.na(nut_carb_g) & nut_fiber_g == 0 ~ 0,
+                is.na(nut_carb_g) | is.na(nut_fiber_g) ~ NA),
+           fib2carb = case_when(
+                nut_carb_g != 0 & nut_fiber_g != 0 ~ nut_fiber_g / nut_carb_g,
+                !is.na(nut_carb_g) & nut_fiber_g == 0 ~ 0,
+                is.na(nut_fiber_g) | is.na(nut_carb_g) ~ NA)
+          ) %>%
+    as.data.frame()
+
+head(phenos_diet.df)
+```
+
+## Genetic principal components - HOLD FOR LATER
+```{r}
+#system(paste0("gsutil cp ", ws_bucket, "/freeze9b_sample_annot_2020-08-20.txt phenotypes/"))
+#f9b_sample_map <- read_tsv("phenotypes/freeze9b_sample_annot_2020-08-20.txt",
+#                       col_types=cols_only("sample.id"="c", "subject_id"="c", "study"="c")) %>%
+#  filter(study == "MESA") %>%
+#  rename(NWD_ID=sample.id, mesa_id=subject_id) %>%
+#  mutate(mesa_id = as.integer(mesa_id))
+
+#gPC_df <- read_tsv("phenotypes/freeze9_pcair_results.tsv", col_types=cols()) %>%
+#    inner_join(f9b_sample_map, by=c("sample.id"="NWD_ID")) %>%
+#    rename_with(~paste0("g", .), contains("PC")) %>%
+#    select(mesa_id, NWD_ID=sample.id, contains("gPC"))
+
+# gPC_df <- read_tsv("phenotypes/freeze9_pcair_results.tsv", col_types=cols()) %>%
+#     inner_join(select(id_df, NWD_ID, mesa_id), by=c("sample.id"="NWD_ID")) %>%
+#     rename_with(~paste0("g", .), contains("PC")) %>%
+#     select(mesa_id, contains("gPC"))
+#head(gPC_df, 3)
+```
+
+## Ancestry proportions - HOLD FOR LATER
+```{r}
+#ancestry_prop_fields <- c("African", "American", "East_Asian", "European")
+#ancestry_prop_df <- read_csv("phenotypes/id_match_file.csv", col_types=cols()) %>%
+#    mutate(mesa_id = as.integer(Cohort_Specific_Id)) %>%
+#    filter(is.na(Exclusion_Reason)) %>%
+#    select(mesa_id, all_of(ancestry_prop_fields)) %>%
+#    rename_with(~paste0("prop_", .), -mesa_id)
+#head(ancestry_prop_df, 3)
+```
+
+## Genotypes of interest - HOLD FOR LATER
+## ID matching file
+```{r}
+#id_df <- read_csv("phenotypes/id_match_file.csv", col_types=cols()) %>%
+#    mutate(mesa_id = as.integer(Cohort_Specific_Id)) %>%
+#    filter(is.na(Exclusion_Reason)) %>%
+#    select(mesa_id, NWD_ID=NWD_Id, TOM_ID=TOM_Id)
+#head(id_df, 3)
+```
+
+```{r}
+#genos <- readRDS("genotypes/analysis_genotypes.rds")
+#head(genos, 3)
+```
+
+# Create primary analysis dataset
+## Merge phenotype and genotype datasets
+```{r}
+dim(phenos_basic.df) ; dim(phenos_diet.df)
+```
+
+```{r}
+# Full dataset BEFORE genotype data
+analysis.df <- phenos_basic.df %>%
+    inner_join(phenos_diet.df, by="mesa_id")
+```
+
+```{r}
+# Cohort basic descriptives
+pop_description_tbl <- analysis.df %>%
+    group_by(RaceEthn) %>%
+    reframe(
+        N = n(),
+        Age = mean_sd(age, d=1),
+        Female = n_pct(female, level=1),
+        BMI = mean_sd(bmi, d=1)) %>%
+  arrange(desc(N))
+
+pop_description_tbl %>% t()
+```
+
+## Distributions
+```{r}
+#plot_continuous <- function(cont_var) {
+#  analysis.df %>%
+#    select(var=all_of(cont_var)) %>% filter(!is.na(var)) %>%
+#    ggplot(aes(x=var)) + geom_histogram(bins=30) +
+#    labs(title=cont_var, x=cont_var, y="frequency") +
+#    geom_vline(xintercept = mean(var, na.rm=T), color = "red", linewidth=2) +
+#    ggplot_theme_standard_continuous
+#}
+
+plot_continuous <- function(cont_var) {
+  d_complete <- analysis.df %>% select(var=all_of(cont_var)) %>% filter(!is.na(var)) 
+  d_complete %>% 
+    ggplot(aes(x=var)) + geom_histogram(bins=30) +
+    labs(title=cont_var, x=cont_var, y="frequency") +
+    geom_vline(xintercept = mean(d_complete$var, na.rm=T), linewidth=1) +
+    geom_vline(xintercept = c(mean(d_complete$var)+c(1,-1)*sd(d_complete$var)), linewidth=1, linetype="dashed") + 
+    geom_vline(xintercept = median(d_complete$var, na.rm=T), linewidth=2, color = "red") +
+    ggplot_theme_standard_continuous
+}
+
+plot_categorical <- function(cat_var) {
+  analysis.df %>% 
+    select(var=all_of(cat_var)) %>% filter(!is.na(var)) %>%
+    ggplot(aes(x=factor(var))) + geom_bar(stat="count") +
+    labs(title=cat_var, x=cat_var) +
+    ggplot_theme_standard_categorical
+}
+
+plot_xyscatter <- function(x_var, y_var) {
+  d_complete <- analysis.df %>% select(xvar=x_var, yvar = y_var) %>% filter(complete.cases(.)) 
+  d_complete %>%
+    ggplot(aes(x=xvar, y=yvar)) + geom_point(size=4, color="#00000075") + 
+    labs(title=paste0(x_var, " by ", y_var, "\nr2 = ",
+                      round(cor(d_complete$xvar, d_complete$yvar), 3))) +
+    ylab(y_var) + xlab(x_var) +
+    ggplot_theme_standard_continuous
+}
+
+options(repr.plot.width=14, repr.plot.height=5)
+options(warn=-1)
+```
+
+### Basic descriptives 
+```{r}
+# Basic descriptives
+age_plt <- plot_continuous("age")
+gender_plt <- plot_categorical("female")
+bmi_plt <- plot_continuous("bmi")
+age_plt + gender_plt + bmi_plt
+
+racethn_plt <- plot_categorical("RaceEthn")
+racethn_plt
+```
+
+### SES phenotypes
+```{r}
+# Education & Income variables
+educ_plt <- plot_categorical("educ_lvl.lab")
+educ_4lvl_plt <- plot_categorical("educ_4lvl.lab")
+educ_plt + educ_4lvl_plt
+
+inc_plt <- plot_categorical("income_lvl.lab")
+inc_4lvl_plt <- plot_categorical("income_4lvl.lab")
+inc_plt + inc_4lvl_plt
+```
+
+#### Plot of education x race/ethnicity
+```{r}
+# make plot for Education levels by R/E
+as.data.frame(with(analysis.df, table(RaceEthn, educ_4lvl.lab))) %>% 
+    ggplot(aes(x=RaceEthn, y=Freq, group=educ_4lvl.lab, fill=educ_4lvl.lab)) + 
+    geom_bar(stat = "identity", position=position_dodge()) + 
+    scale_fill_manual(values = c(proj_palettes$pretty_dark[1:5])) + 
+    ggplot_theme_standard_categorical
+
+as.data.frame(with(analysis.df, table(RaceEthn, educ_4lvl.lab))) %>% 
+    ggplot(aes(x=educ_4lvl.lab, y=Freq, group=RaceEthn, fill=RaceEthn)) + 
+    geom_bar(stat = "identity", position=position_dodge()) + 
+    scale_fill_manual(values = c(proj_palettes$pretty_dark[1:5])) +
+    ggplot_theme_standard_categorical
+```
+
+#### Plot of education x income
+```{r}
+# Education x Income
+as.data.frame(with(analysis.df, table(educ_4lvl.lab, income_4lvl.lab))) %>% 
+    ggplot(aes(x=educ_4lvl.lab, y=Freq, group=income_4lvl.lab, fill=income_4lvl.lab)) + 
+    geom_bar(stat = "identity", position=position_stack()) + 
+    scale_fill_manual(values = c(proj_palettes$pretty_dark[1:5])) 
+```
+
+### Diet phenotypes
+Total energy
+```{r}
+energy_plt <- plot_continuous("energy_kcal")
+energy_plt
+```
+
+Macronutrients (g & %kcal)
+```{r}
+carb_plt <- plot_continuous("nut_carb_g")
+carb_pct_plt <- plot_continuous("nut_carb_pct")
+fat_plt <- plot_continuous("nut_fat_g")
+fat_pct_plt <- plot_continuous("nut_fat_pct")
+prot_plt <- plot_continuous("nut_prot_g")
+prot_pct_plt <- plot_continuous("nut_prot_pct")
+carb_plt + carb_pct_plt 
+fat_plt + fat_pct_plt
+prot_plt + prot_pct_plt
+```
+
+Fat types (g & %kcal)
+```{r}
+mufa_plt <- plot_continuous("nut_mufa_g")
+mufa_pct_plt <- plot_continuous("nut_mufa_pct")
+pufa_plt <- plot_continuous("nut_pufa_g")
+pufa_pct_plt <- plot_continuous("nut_pufa_pct")
+sfa_plt <- plot_continuous("nut_sfa_g")
+sfa_pct_plt <- plot_continuous("nut_sfa_pct")
+
+mufa_plt + mufa_pct_plt
+pufa_plt + pufa_pct_plt
+sfa_plt + sfa_pct_plt
+```
+
+### Carbohydrate quality
+```{r}
+fib_plt <- plot_continuous("nut_fiber_g")
+fibsol_plt <- plot_continuous("nut_fiber_sol_g")
+fibinsol_plt <- plot_continuous("nut_fiber_insol_g")
+fib_plt 
+fibsol_plt + fibinsol_plt
+
+# note: soluble + insoluble = total
+```
+
+**Carbohydrate-to-fiber ratio
+```{r}
+carb2fib_plt <- plot_continuous("carb2fib") 
+fib2carb_plt <- plot_continuous("fib2carb") 
+carb2fib_plt + fib2carb_plt
+```
+
+```{r}
+## Add ranges, means/sd, medians
+c("Carb-to-Fiber: ", round(quantile(analysis.df$carb2fib, na.rm=T, probs=seq(0,1,0.2), include.lowest=T), 1))
+c("Fiber-to-Carb: ", round(quantile(analysis.df$fib2carb, na.rm=T, probs=seq(0,1,0.2), include.lowest=T), 3))
+
+# Create boxplot to identify potential outliers
+carb2fib_boxplt <- analysis.df %>% select("carb2fib") %>%
+    filter(!is.na("carb2fib")) %>%
+    ggplot(aes(x=carb2fib)) + 
+    geom_boxplot(outlier.color="red") +
+    ggplot_theme_standard_continuous
+
+# Create boxplot to identify potential outliers
+fib2carb_boxplt <- analysis.df %>% select("fib2carb") %>%
+    filter(!is.na("fib2carb")) %>%
+    ggplot(aes(x=fib2carb)) + 
+    geom_boxplot(outlier.color="red") +
+    ggplot_theme_standard_continuous
+
+carb2fib_boxplt
+fib2carb_boxplt
+```
+
+```{r}
+#carb-to-fib
+bounds_5SD <- c(mean(analysis.df$carb2fib, na.rm=T)+c(-5,5)*sd(analysis.df$carb2fib, na.rm=T))
+bounds_5to95 <- quantile(analysis.df$carb2fib, na.rm=T, probs = c(0.05, 0.25, 0.5, 0.75, 0.95))
+
+analysis.df %>% 
+select("carb2fib") %>%
+    filter(!is.na("carb2fib")) %>%
+    mutate(gt5SD = ifelse(carb2fib < bounds_5SD[1] | carb2fib > bounds_5SD[2],">5 SD", "ok")) %>%
+    mutate(out5to95 = ifelse(carb2fib < bounds_5to95[1] | carb2fib > bounds_5to95[5],">5 to 95%", "ok")) %>%
+    reframe(Outliers_carb2fib_gt5SD=n_pct(gt5SD),
+           Outliers_carb2fib_out5to95=n_pct(out5to95))
+
+
+#fib-to-carb
+bounds_5SD <- c(mean(analysis.df$fib2carb, na.rm=T)+c(-5,5)*sd(analysis.df$fib2carb, na.rm=T))
+bounds_5to95 <- quantile(analysis.df$fib2carb, na.rm=T, probs = c(0.05, 0.25, 0.5, 0.75, 0.95))
+
+analysis.df %>% 
+select("fib2carb") %>%
+    filter(!is.na("fib2carb")) %>%
+    mutate(gt5SD = ifelse(fib2carb < bounds_5SD[1] | fib2carb > bounds_5SD[2],">5 SD", "ok")) %>%
+    mutate(out5to95 = ifelse(fib2carb < bounds_5to95[1] | fib2carb > bounds_5to95[5],">5 to 95%", "ok")) %>%
+    reframe(Outliers_fib2carb_gt5SD=n_pct(gt5SD),
+           Outliers_fib2carb_out5to95=n_pct(out5to95))
+
+```
+
+Note on outliers for Carbohydrate-to-fiber ratio: 
+* 13 (0.3%) values are outside mean+/- 5 SDs
+* 406 (10%) vauues are outside 5 to 95% of the data
+
+### Covariates
+Lifestyle factors
+```{r}
+smk_plt <- plot_categorical("smoke_stat.lab")
+smkyrs_plt <- plot_continuous("smoke_packyrs")
+alc_plt <- plot_categorical("alch_currdrnk.lab")
+pa_plt <- plot_continuous("physact_mvpa")
+smk_plt + smkyrs_plt
+alc_plt + pa_plt
+```
+
+Health status-related covariates
+```{r}
+med_t2d_plt <- plot_categorical("med_t2d")
+med_htn_plt <- plot_categorical("med_htn")
+med_lip_plt <- plot_categorical("med_lip")
+med_t2d_plt + med_htn_plt + med_lip_plt
+```
+
+```{r}
+# Batch variables
+#site_plt <- plot_categorical("site")
+#month_plt <- plot_categorical("month") + theme(axis.text.x=element_text(angle=30, hjust=0.9))
+#season_plt <- plot_categorical("season")
+#site_plt + month_plt + season_plt
+```
+
+```{r}
+missingness_vars <- c(
+    "age", "gender", "bmi", "RaceEthn",
+    "educ_4lvl.lab", "income_4lvl.lab",
+    "energy_kcal",
+    "nut_carb_g", "carb2fib", "nut_fat_g", "nut_prot_g",
+    "alch_currdrnk.lab", "smoke_stat.lab",
+    "med_t2d", "med_htn", "med_lip")
+
+analysis.df %>%
+    select(all_of(missingness_vars)) %>%
+    mutate(across(everything(), is.na)) %>%
+    summarise(across(everything(), sum)) %>% t()
+```
+
+Note the abnormally large amount of missingness for T2D medications
+## Additional phenotype preprocessing
+We will include a few more preprocessing steps to prepare the data for analysis.
+* Add log(x+1) sqrt transformation to continuous carbohydrate/carb2fib variables to reduce extreme skewness
+* Imputation of covariate values to retain sample size, using:
+    - Median value for continuous variables
+    - "Missing" indicator for categorical income
+    - "Never" for smoking
+```{r}
+#table(analysis.df$educ_4lvl.lab)
+#analysis.df <- analysis.df %>%
+#  mutate(
+#      educ_lvl.lab = case_when(is.na(educ_lvl.lab) == TRUE ~ "Missing",
+#                               !is.na(educ_lvl.lab) ~ educ_lvl.lab),
+#      educ_4lvl.lab = case_when(is.na(educ_4lvl.lab) == TRUE ~ "Missing",
+#                               !is.na(educ_4lvl.lab) ~ educ_4lvl.lab),
+#      
+#
+#      across(all_of(c("nut_carb_g", "nut_fat_g", "nut_prot_g", "nut_fiber_g", "carb2fib")), 
+#                ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+#
+#table(analysis_clean.df$educ_4lvl.lab)
+```
+
+```{r}
+# Re-run basic participant descriptives
+
+analysis.df %>%
+    group_by(RaceEthn) %>%
+    reframe(
+        N = n(),
+        Age = mean_sd(age, d=1),
+        Female = n_pct(female, level=1),
+        BMI = mean_sd(bmi, d=1)) %>%
+      arrange(desc(N)) %>% t()
+```
+
+# Run basic correlations among diet variables
+### Carbohydrate & macronutrients
+```{r}
+options(repr.plot.width=14, repr.plot.height=5)
+options(warn=-1)
+
+# Carbohydrates vs. macros
+carbfat_plt<-plot_xyscatter("nut_carb_g", "nut_fat_g")
+carbprot_plt<-plot_xyscatter("nut_carb_g", "nut_prot_g")
+carbengy_plot <- plot_xyscatter("nut_carb_g", "energy_kcal")
+carbfat_plt + carbprot_plt + carbengy_plot
+
+# Carbohydrates vs. types of fat
+carbmufa_plt<-plot_xyscatter("nut_carb_g", "nut_mufa_g")
+carbpufa_plt<-plot_xyscatter("nut_carb_g", "nut_pufa_g")
+carbsfa_plot <- plot_xyscatter("nut_carb_g", "nut_sfa_g")
+carbmufa_plt + carbpufa_plt + carbsfa_plot
+```
+
+### Carbohydrate & fiber sources
+```{r}
+carb2fib_plt <- plot_continuous("carb2fib")
+carbfib_plt<-plot_xyscatter("nut_carb_g", "nut_fiber_g")
+carb2fib_plt + carbfib_plt 
+
+carbfibsol_plt<-plot_xyscatter("nut_carb_g", "nut_fiber_sol_g")
+carbfibinsol_plt<-plot_xyscatter("nut_carb_g", "nut_fiber_insol_g")
+carbfibsol_plt + carbfibinsol_plt + carbfibcer_plt
+```
+
+## Merge and align primary and metabolomics datasets
+## PEER factors
+```{r}
+# system(paste0(
+#     "conda config --add channels bioconda &&",
+#     "conda install r-peer"
+# ))
+
+# system("wget https://github.com/downloads/PMBio/peer/R_peer_source_1.3.tgz", intern=T)
+# system("R CMD INSTALL R_peer_source_1.3.tgz")
+```
+
+# Covariate descriptions across education levels
+### Demographic, behavioral & lifestyle phenotypes
+```{r}
+analysis.df %>% 
+    group_by(educ_4lvl.lab) %>%
+    reframe(
+        N = n(),
+        Age = mean_sd(age, d=1),
+        Female = n_pct(female, level=1),
+        BMI = mean_sd(bmi, d=1),
+        Smoking_Current = n_pct(smoke_stat.lab, level="Current"),
+        Smoking_Former_lt1yr = n_pct(smoke_stat.lab, level="Former, <1 yr"),
+        Smoking_Former_gt1yr = n_pct(smoke_stat.lab, level="Former, >1 yr"),
+        Smoking_Never = n_pct(smoke_stat.lab, level="Never"),
+        PA_MVPA = mean_sd(physact_mvpa),
+        Alchohol_Drinker = n_pct(alch_currdrnk.lab, level="Drinker"),
+        Medication_t2d = n_pct(med_t2d, level=1),
+        Medication_htn = n_pct(med_htn, level=1),
+        Medication_lipid = n_pct(med_lip, level=1),
+        Fasting_Glucose= mean_sd(glucose),
+        HbA1c=mean_sd(hba1c),
+        Triglyceride=mean_sd(tg),
+        LDL=mean_sd(ldl),
+        HDL=mean_sd(hdl)
+    ) %>% t()
+
+
+```
+
+### Diet phenotypes
+Macronutrients
+```{r}
+analysis.df %>% 
+    group_by(educ_4lvl.lab) %>%
+    reframe(
+        N = n(),
+        Energy_kcal=mean_sd(energy_kcal),
+        Carb_g=mean_sd(nut_carb_g),
+        Protein_g=mean_sd(nut_prot_g),
+        Fat_g=mean_sd(nut_fat_g),
+        MUFA_g=mean_sd(nut_mufa_g),
+        PUFA_g=mean_sd(nut_pufa_g),
+        SFA_g=mean_sd(nut_sfa_g),
+        Carb_pct=mean_sd(nut_carb_pct),
+        Protein_pct=mean_sd(nut_prot_pct),
+        Fat_pct=mean_sd(nut_fat_pct),
+        MUFA_pct=mean_sd(nut_mufa_pct),
+        PUFA_pct=mean_sd(nut_pufa_pct),
+        SFA_pct=mean_sd(nut_sfa_pct)
+    ) %>% t()
+
+```
+
+Carbohydrate Quality
+```{r}
+analysis.df %>% 
+    group_by(educ_4lvl.lab) %>%
+    reframe(
+        N = n(),
+        Carb_to_Fiber=mean_sd(carb2fib),
+        Fiber_to_Carb=mean_sd(fib2carb, d=3),
+        Fiber_g=mean_sd(nut_fiber_g),
+        Fiber_soluble_g=mean_sd(nut_fiber_sol_g),
+        Fiber_insoluble_g=mean_sd(nut_fiber_insol_g)
+    ) %>% t()
+
+```
+
+# Assessment of the SNPs and exposures of interest
+```{r}
+snp_info_df <- read_csv("genotypes/snp_info.csv", col_types=cols())
+exposures <- c("pa_bin")
+```
+
+## Incorporation of technical covariates
+```{r}
+technical_covar_sets <- list(
+    none = "",
+    add_site = c("gender_f0m1", "age", "site")
+)
+
+test_univariate <- function(y, x, covar_vec) {
+    form_str <- paste0(y, " ~ ", x)
+    if (!identical(covar_vec, "")) {
+        form_str <- paste0(form_str, " + ", paste(covar_vec, collapse=" + "))
+    }
+    lm(as.formula(form_str), data=analysis_df_lcms) %>%
+        broom::tidy() %>%
+        filter(term == x)
+}
+```
+
+```{r}
+snp_mPC_technical_covar_assoc_df <- expand_grid(
+    snp = snp_info_df$rsID,
+    mPC = paste0("mPC", 1:3),
+    covar_set = names(technical_covar_sets) 
+) %>%
+    rowwise() %>%
+    mutate(lm_res = list(test_univariate(mPC, snp, technical_covar_sets[[covar_set]]))) %>%
+    unnest(lm_res)
+
+exp_mPC_technical_covar_assoc_df <- expand_grid(
+    e = exposures,
+    mPC = paste0("mPC", 1:3),
+    covar_set = names(technical_covar_sets) 
+) %>%
+    rowwise() %>%
+    mutate(lm_res = list(test_univariate(mPC, e, technical_covar_sets[[covar_set]]))) %>%
+    unnest(lm_res)
+```
+
+```{r}
+options(repr.plot.width=8, repr.plot.height=6)
+
+snp_mPC_technical_covar_assoc_df %>%
+    mutate(l95 = estimate - 1.96 * std.error,
+           u95 = estimate + 1.96 * std.error,
+           covar_set = factor(covar_set, levels=names(technical_covar_sets))) %>%
+    ggplot(aes(x=snp, y=estimate, color=covar_set)) +
+    geom_point(position=position_dodge(width=0.2)) +
+    geom_errorbar(aes(ymin=l95, ymax=u95), 
+                  position=position_dodge(width=0.2), width=0.1) +
+    geom_hline(yintercept=0, color="gray") +
+    facet_wrap(~mPC, ncol=1, scales="free")
+
+exp_mPC_technical_covar_assoc_df %>%
+    mutate(l95 = estimate - 1.96 * std.error,
+           u95 = estimate + 1.96 * std.error,
+           covar_set = factor(covar_set, levels=names(technical_covar_sets))) %>%
+    ggplot(aes(x=e, y=estimate, color=covar_set)) +
+    geom_point(position=position_dodge(width=0.2)) +
+    geom_errorbar(aes(ymin=l95, ymax=u95), 
+                  position=position_dodge(width=0.2), width=0.1) +
+    geom_hline(yintercept=0, color="gray") +
+    facet_wrap(~mPC, ncol=1, scales="free")
+```
+
+## Incorporation of biological covariates
+```{r}
+biological_covar_sets <- list(
+    basic = "site",
+    add_gender_age = c("site", "gender_f0m1", "age"),
+    add_gender_age_race = c("site", "gender_f0m1", "age", "race"),
+    add_gender_age_ses = c("site", "gender_f0m1", "age", "ses_score", "income_cat"),
+    add_gender_age_ses_HL = c("site", "gender_f0m1", "age", "ses_score", "income_cat", 
+                              "drinks_per_week", "smoking", "ahei_score", "dash_score"),
+    add_gender_age_gPC = c("gender_f0m1", "age", paste0("gPC", 1:5)),
+    add_gender_age_race_gPC = c("site", "gender_f0m1", "age", "race", paste0("gPC", 1:5))
+)
+```
+
+```{r}
+snp_mPC_biological_covar_assoc_df <- expand_grid(
+    snp = snp_info_df$rsID,
+    mPC = paste0("mPC", 1:3),
+    covar_set = names(biological_covar_sets) 
+) %>%
+    rowwise() %>%
+    mutate(lm_res = list(test_univariate(snp, mPC, biological_covar_sets[[covar_set]]))) %>%
+    unnest(lm_res)
+
+exp_mPC_biological_covar_assoc_df <- expand_grid(
+    e = exposures,
+    mPC = paste0("mPC", 1:3),
+    covar_set = names(biological_covar_sets) 
+) %>%
+    rowwise() %>%
+    mutate(lm_res = list(test_univariate(e, mPC, biological_covar_sets[[covar_set]]))) %>%
+    unnest(lm_res)
+```
+
+```{r}
+options(repr.plot.width=12, repr.plot.height=6)
+
+snp_mPC_biological_covar_assoc_df %>%
+    mutate(l95 = estimate - 1.96 * std.error,
+           u95 = estimate + 1.96 * std.error,
+           covar_set = factor(covar_set, levels=names(biological_covar_sets))) %>%
+    ggplot(aes(x=snp, y=estimate, color=covar_set)) +
+    geom_point(position=position_dodge(width=0.2)) +
+    geom_errorbar(aes(ymin=l95, ymax=u95), 
+                  position=position_dodge(width=0.2), width=0.1) +
+    geom_hline(yintercept=0, color="gray") +
+    facet_wrap(~mPC, ncol=1, scales="free")
+
+exp_mPC_biological_covar_assoc_df %>%
+    mutate(l95 = estimate - 1.96 * std.error,
+           u95 = estimate + 1.96 * std.error,
+           covar_set = factor(covar_set, levels=names(biological_covar_sets))) %>%
+    ggplot(aes(x=e, y=estimate, color=covar_set)) +
+    geom_point(position=position_dodge(width=0.2)) +
+    geom_errorbar(aes(ymin=l95, ymax=u95), 
+                  position=position_dodge(width=0.2), width=0.1) +
+    geom_hline(yintercept=0, color="gray") +
+    facet_wrap(~mPC, ncol=1, scales="free")
+```
+
+# Conclusions
+* The most important covariates affecting top PCs are study site and race (highly correlated) as well as gender
+* It appears that most of the high-level metabolite associations can be captured with about 9 metabolite PCs (for both genotypes and exposures) 
+* So, we want to adjust for PEER factors, and we are OK knowing that they are representing expected variables.
+
+# Export final datasets for analysis
+```{r}
+write_csv(analysis_df, "analysis/analysis_df.csv")  # All individuals
+write_csv(analysis_df_lcms, "analysis/analysis_df_lcms.csv")  # Matched to the LC/MS dataset
+saveRDS(mesa_metab_mat, "metabolites/lcms_metabolites.rds")
+system(paste0("gsutil cp -R phenotypes analysis metabolites ", ws_bucket, "/"))
+```

@@ -1,0 +1,967 @@
+# Import
+```{r}
+data_files <- c("19_0904_TOPMed_FHS_Broad_C18-neg_metabolomics_NONREDUNDANTonly_tabd.txt",
+                "19_1203_TOPMed_FHS_Broad_C8-pos_metabolomics_v2_NONREDUNDANTonly_tabd.txt",
+                "20_0213_TOPMed_FHS_Broad_HILIC-pos_metabolomics_NONREDUNDANTonly_tabd.txt",
+                "20_0226_TOPMed_FHS_BIDMC_Amide-neg_metabolomics_tabd.txt",
+
+                "19_1008_TOPMed_WHI_Broad_C18-neg_metabolomics_NONREDUNDANTonly_tabd.txt",
+                "19_1126_TOPMed_WHI_Broad_C8-pos_metabolomics_v2_NONREDUNDANTonly_tabd.txt",
+                "19_1211_TOPMed_WHI_Broad_HILIC-pos_metabolomics_NONREDUNDANTonly_tabd.txt",
+                "20_0226_TOPMed_WHI_BIDMC_Amide-neg_metabolomics_tabd.txt",
+                
+                "MESA_pilot_BroadInst_C8-pos_lipids_050517.csv",
+                "MESA_pilot_BroadInst_HIL-pos_polar_050517.csv",
+                # "amines_mesa_raw.txt", # April 28, 2022: where did this file go? :(
+                "an_MESA_clean.txt",
+                
+                "l_proapt_ex02_3_1117s_18.csv", # FHS proteomics
+                "WHI_proteomics_2021-05-25.csv",
+                "proteomics_MESA_april2021.csv",
+               
+                "MESA_amines_HMDBs.csv")
+
+data_paths <- paste0("gs://fc-secure-4b3e979d-ba8b-43c4-a5ec-b41ab42ce606/",data_files)
+```
+
+```{r}
+for(path in data_paths) { print(system(paste("gsutil cp",path,"./ 2>&1"))) } # Copy data files into working dir. 0==success
+```
+
+# Read
+```{r}
+library(data.table)
+options(stringsAsFactors=FALSE)
+```
+
+```{r}
+dts1 <- lapply(data_files[ 1:10], fread) # dts1 are all of a similar-ish format and can be handled together.
+dts2 <- lapply(data_files[11:14], fread) # dts2 are already mostly clean. Handled separately.
+names(dts1) <- c("cn_FHS", "cp_FHS", "hp_FHS", "an_FHS", "cn_WHI", "cp_WHI", "hp_WHI", "an_WHI", "cp_MESA", "hp_MESA")
+dts1_methods<- c("cn",     "cp",     "hp",     "an",     "cn",     "cp",     "hp",     "an",     "cp",      "hp")
+names(dts2) <- c("an_MESA", "proteo_FHS", "proteo_WHI", "proteo_MESA")
+```
+
+```{r}
+gc()
+```
+
+# dts1
+## Inspect
+```{r}
+lapply(dts1,dim)
+# lapply(dts1,head,n=12)
+```
+
+```{r}
+data_start_rows <- c(10,10,10,10,10,10,10,10, 6, 6)
+data_start_cols <- c( 8, 8, 8, 7, 8, 8, 8, 7, 7, 7)
+
+# Sample-related stuff all starts @ data_start_COL
+sample_id_rows <- c(9,9,9,9,9,9,9,9,5,5)
+extr_date_rows <- c(1,1,1,1,1,1,1,1,1,1)
+
+# Metabolite-related stuff all starts @ data_start_ROW
+method_cols      <- c(1,1,1,1,1,1,1,1,1,1)
+compound_id_cols <- c(2,2,2,5,2,2,2,5,2,2)
+mrm_cols <- c(NA,NA,NA, 2,NA,NA,NA, 2,NA,NA)
+mz_cols  <- c( 3, 3, 3,NA, 3, 3, 3,NA, 3, 3)
+rt_cols  <- c( 4, 4, 4, 3, 4, 4, 4, 3, 4, 4)
+hmdb_id_cols  <- c(5,5,5,5,5,5,5,5,5,5)
+met_name_cols <- c(7,7,7,6,7,7,7,6,6,6)
+```
+
+## Fix that one Compound_ID/HMDB_ID in an_WHI
+Compound_ID "C12271\xa0\xa0\xa0(KEGG)" with HMDB_ID "C12271\U{3e30613c}\U{3e30613c}\U{3e30613c}(KEGG)". The invisible special characters cause errors.
+```{r}
+# (dts1[[8]] is cp_WHI)
+cpd_id_tmp <- unlist( dts1[[8]][,compound_id_cols[8],with=F] )
+grep("C12271",cpd_id_tmp) # The row of the offending compound is 82
+
+set(dts1[[8]], i=82L, j=as.integer(compound_id_cols[8]), value="C12271")
+set(dts1[[8]], i=82L, j=as.integer(hmdb_id_cols    [8]), value="") # There is no HMDB id for this molecule (manually searched)
+```
+
+## Give an (arbitrary) id to WHI amines with none
+```{r}
+# # an_WHI = 8
+# tmp <- unlist(dts1[[8]][,hmdb_id_cols[8],with=F])
+# table(nchar(tmp))
+# tmp[nchar(tmp)!=11]
+# dts1[[8]][nchar(tmp)!=11,]
+```
+
+## Remove "redundant_ion"s
+A.K.A. the metabolites with names beginning with "NH4_".\
+They are only present in MESA c8.
+```{r}
+rows2keep <- unlist(dts1[[9]][,hmdb_id_cols[9],with=F])!="redundant_ion"
+dts1[[9]] <- dts1[[9]][rows2keep,]
+
+# You can use this commented code to make sure ~all~ the "redundant_ion"s are the "NH4_..." metabolites, and all the "NH4_..." metabolites are "redundant_ion"s.
+#lapply(seq_along(dts1), function(i) {
+#    tmp <- dts1[[i]][,c(hmdb_id_cols[i],met_name_cols[i]),with=F]
+#    names(tmp) <- c("hmdb","nm")
+#    print(tmp[hmdb=="redundant_ion",nm]) # All the "redundant_ion"s are "NH4_..." metabolites indeed
+#    print(tmp[grep("NH4_",nm),hmdb]) # All the "NH4_..." metabolites are "redundant_ion"s indeed
+#})
+```
+
+```{r}
+#intstd_row_indss <- lapply(1:length(dts1), function(i) { which(grepl("interna", unlist(dts1[[i]][,hmdb_id_cols[i],with=F]), ignore.case=T)) })
+#lapply(1:length(dts1), function(i) { print(names(dts1)[i]); dts1[[i]][intstd_row_indss[[i]],1:10,with=F]})
+```
+
+## Remove the '\*' suffix from HMDBs which have it
+E.g. "HMDB00001*" --> "HMDB00001"
+```{r}
+for(dti in 1:length(dts1)) {
+    hmdbs_col <- unlist(dts1[[dti]][,hmdb_id_cols[dti],with=F])
+    hmdbs_col <- sub("\\*","",hmdbs_col)
+    for(r in 1:nrow(dts1[[dti]]))
+        set(dts1[[dti]], i=r, j=as.integer(hmdb_id_cols[dti]), hmdbs_col[r])
+}
+```
+
+## Manually deal with duplications in the individual method datasets
+##### Function to delete data.table rows by reference, stolen from jarppiko's comment in https://github.com/Rdatatable/data.table/issues/635
+```{r}
+rmDtRows <- function(DT, del.idxs) {
+  keep.idxs <- setdiff(DT[, .I], del.idxs); # row indexes to keep
+  cols = names(DT);
+  DT.subset <- data.table(DT[[1]][keep.idxs]); # this is the subsetted table
+  setnames(DT.subset, cols[1]);
+  for (col in cols[2:length(cols)]) {
+    DT.subset[, (col) := DT[[col]][keep.idxs]];
+    DT[, (col) := NULL];  # delete
+  }
+   return(DT.subset);
+}
+```
+
+### Duplicated HMDBs
+```{r}
+names(dts1)
+lapply(seq_along(dts1), function(i) { tmp <- table(dts1[[i]][,hmdb_id_cols[i],with=F]); tmp[tmp>1][-1] })
+# The [-1] subset of tmp is meant to ignore the "" duplications at the top of the file.
+```
+
+```{r}
+# This code block does nothing, just looking at "internal standard" metabolites
+#tmp <- unlist(dts1[[1]][,hmdb_id_cols[1],with=F])
+#dts1[[1]][tmp=="Internal Standard"]
+```
+
+##### HMDB0000610 duplicated in FHS c8
+```{r}
+inds <- which(dts1[[2]][,hmdb_id_cols[2],with=F]=="HMDB0000610"); dts1[[2]][inds,]
+dts1[[2]] <- rmDtRows(dts1[[2]], inds[2]) # Just keep the first entry
+inds <- which(dts1[[2]][,hmdb_id_cols[2],with=F]=="HMDB0000610"); dts1[[2]][inds,]
+```
+
+##### HMDB0010393 and HMDB0011130 duplicated in FHS hilic
+```{r}
+inds <- which(dts1[[3]][,hmdb_id_cols[3],with=F]=="HMDB0010393"); dts1[[3]][inds,]
+dts1[[3]] <- rmDtRows(dts1[[3]], inds[2]) # Just keep the first entry
+inds <- which(dts1[[3]][,hmdb_id_cols[3],with=F]=="HMDB0010393"); dts1[[3]][inds,]
+```
+
+```{r}
+inds <- which(dts1[[3]][,hmdb_id_cols[3],with=F]=="HMDB0011130"); dts1[[3]][inds,]
+dts1[[3]] <- rmDtRows(dts1[[3]], inds[2]) # Just keep the first entry
+inds <- which(dts1[[3]][,hmdb_id_cols[3],with=F]=="HMDB0011130"); dts1[[3]][inds,]
+```
+
+##### HMDB0062641 duplicated in FHS amines
+```{r}
+inds <- which(dts1[[4]][,hmdb_id_cols[4],with=F]=="HMDB0062641"); dts1[[4]][inds,]
+dts1[[4]] <- rmDtRows(dts1[[4]], inds[1]) # Because the assignment certainty of the first appearance is worse, we remove that one.
+inds <- which(dts1[[4]][,hmdb_id_cols[4],with=F]=="HMDB0062641"); dts1[[4]][inds,]
+```
+
+##### HMDB0010393 and HMDB0013122 duplicated in WHI hilic
+```{r}
+inds <- which(dts1[[7]][,hmdb_id_cols[7],with=F]=="HMDB0010393"); dts1[[7]][inds,]
+dts1[[7]] <- rmDtRows(dts1[[7]], inds[2]) # Just keep the first entry
+inds <- which(dts1[[7]][,hmdb_id_cols[7],with=F]=="HMDB0010393"); dts1[[7]][inds,]
+```
+
+```{r}
+inds <- which(dts1[[7]][,hmdb_id_cols[7],with=F]=="HMDB0013122"); dts1[[7]][inds,]
+dts1[[7]] <- rmDtRows(dts1[[7]], inds[2]) # Just keep the first entry
+inds <- which(dts1[[7]][,hmdb_id_cols[7],with=F]=="HMDB0013122"); dts1[[7]][inds,]
+```
+
+##### HMDB0062641 duplicated in WHI amines
+```{r}
+inds <- which(dts1[[8]][,hmdb_id_cols[8],with=F]=="HMDB0062641"); dts1[[8]][inds,]
+dts1[[8]] <- rmDtRows(dts1[[8]], inds[1]) # Because the assignment certainty of the first appearance is worse, we remove that one.
+inds <- which(dts1[[8]][,hmdb_id_cols[8],with=F]=="HMDB0062641"); dts1[[8]][inds,]
+```
+
+##### HMDB00853, HMDB00991, HMDB01325, HMDB07973, HMDB12101, HMDB13122 duplicated in MESA hilic
+```{r}
+inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB00853" ); dts1[[10]][inds,]
+dts1[[10]] <- rmDtRows(dts1[[10]], inds[2]) # Just keep the first entry
+inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB00853" ); dts1[[10]][inds,]
+```
+
+```{r}
+inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB00991" ); dts1[[10]][inds,]
+dts1[[10]] <- rmDtRows(dts1[[10]], inds[2]) # Just keep the first entry
+inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB00991" ); dts1[[10]][inds,]
+```
+
+```{r}
+inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB01325" ); dts1[[10]][inds,]
+dts1[[10]] <- rmDtRows(dts1[[10]], inds[2]) # Just keep the first entry
+inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB01325" ); dts1[[10]][inds,]
+```
+
+```{r}
+inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB07973"); dts1[[10]][inds,]
+dts1[[10]] <- rmDtRows(dts1[[10]], inds[2]) # Just keep the first entry
+inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB07973"); dts1[[10]][inds,]
+```
+
+We choose the secodn row here because the first row used to have an asterisk next to the HMDB, meaning that the HMDB is not an exact match to the metabolite but close enough that to be a representative HMDB. However, we would rather choose the molecule with an exact match to the HMDB, i.e. the not-asterisk one.
+```{r}
+inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB12101" ); dts1[[10]][inds,]
+dts1[[10]] <- rmDtRows(dts1[[10]], inds[1]) # Just keep the second entry
+inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB12101" ); dts1[[10]][inds,]
+```
+
+```{r}
+inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB13122" ); dts1[[10]][inds,]
+dts1[[10]] <- rmDtRows(dts1[[10]], inds[2]) # Just keep the first entry
+inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB13122" ); dts1[[10]][inds,]
+```
+
+### Duplicated Known Metabolite Names
+```{r}
+names(dts1)
+lapply(seq_along(dts1), function(i) { tmp <- table(dts1[[i]][,met_name_cols[i],   with=F]); tmp[tmp>1][-1] })
+```
+
+##### "C34:1 DAG_or_TAG_fragment" and "C34:2 DAG_or_TAG_fragment" duplicated in MESA hilic
+```{r}
+inds1 <- which(dts1[[10]][,met_name_cols[10],with=F]=="C34:1 DAG_or_TAG_fragment"); dts1[[10]][inds1,]
+inds2 <- which(dts1[[10]][,met_name_cols[10],with=F]=="C34:2 DAG_or_TAG_fragment"); dts1[[10]][inds2,]
+dts1[[10]] <- rmDtRows(dts1[[10]], c(inds1,inds2)) # Just remove all 4 of these
+inds1 <- which(dts1[[10]][,met_name_cols[10],with=F]=="C34:1 DAG_or_TAG_fragment"); length(inds1)
+inds2 <- which(dts1[[10]][,met_name_cols[10],with=F]=="C34:2 DAG_or_TAG_fragment"); length(inds2)
+```
+
+### Duplicated Compound Ids and Sample Ids (there are none!)
+```{r}
+lapply(seq_along(dts1), function(i) { tmp <- table(dts1[[i]][,compound_id_cols[i],with=F]); tmp[tmp>1][-1] })
+lapply(seq_along(dts1), function(i) { tmp <- table(dts1[[i]][ sample_id_rows[i],        ]); tmp[tmp>1]     })
+```
+
+## Checking for Within-cohort Duplications?
+TL;DR yes, e.g. within MESA the HILIC+ and C8+ might pick up a bunch of the same knowns.\
+All the above were _within_-method duplications, now testing within-_cohort_ duplications (like if the methods were merged together without making the ids unique with a method suffix). Indeed if there were no method suffix, there would be many within-cohort duplicated HMDBs.
+```{r}
+#fhs_hmdbs <- unlist(sapply(1:4, function(i) {
+#    hmdbs <- unlist(dts1[[i]][,hmdb_id_cols[i],with=F])
+#    hmdbs <- hmdbs[!(hmdbs %in% c("Internal Standard","internal standard", "")) & !is.na(hmdbs)]
+#}))
+#fhs_hmdbs[duplicated(fhs_hmdbs)]
+#
+#whi_hmdbs <- unlist(sapply(5:8, function(i) {
+#    hmdbs <- unlist(dts1[[i]][,hmdb_id_cols[i],with=F])
+#    hmdbs <- hmdbs[!(hmdbs %in% c("Internal Standard","internal standard", "")) & !is.na(hmdbs)]
+#}))
+#whi_hmdbs[duplicated(whi_hmdbs)
+#
+#mesa_hmdbs <- unlist(sapply(9:10, function(i) {
+#    hmdbs <- unlist(dts1[[i]][,hmdb_id_cols[i],with=F])
+#    hmdbs <- hmdbs[!(hmdbs %in% c("Internal Standard","internal standard", "", "redundant_ion", "n/a")) & !is.na(hmdbs)]
+#}))
+#mesa_hmdbs[duplicated(mesa_hmdbs)]
+```
+
+## Clean
+Just the sample IDs as rows, metabolite compound IDs as columns, and measurement data in the middle.\
+The dictionaries we made map these sample/metabolite IDs to the additional information if we ever need it later.
+```{r}
+dts1_clean <- list()
+
+sample_idss <- lapply(seq_along(dts1), function(i) unlist(dts1[[i]][ sample_id_rows[i], data_start_cols[i]:ncol(dts1[[i]]) ]))
+
+# Use compound id w/ method suffix, but for amines must use HMDB id.
+met_idss <- lapply(seq_along(dts1), function(i) {
+    tmp <- if(is.na(compound_id_cols[i])) {unlist( dts1[[i]][data_start_rows[i]:nrow(dts1[[i]]), hmdb_id_cols[i]    , with=F] )                      }
+           else                    {paste0(unlist( dts1[[i]][data_start_rows[i]:nrow(dts1[[i]]), compound_id_cols[i], with=F] ), '_',dts1_methods[i])}
+    tmp[duplicated(tmp)] <- paste0(tmp[duplicated(tmp)], "_dup") # If an ID is repeated
+    return(tmp)
+})
+```
+
+```{r}
+paste("Original total size:", object.size(dts1) / 10^9, "GB")
+
+for(i in seq_along(dts1)) {
+    dts1_clean[[i]] <- dts1[[i]][data_start_rows[i]:nrow(dts1[[i]]),
+                                 data_start_cols[i]:ncol(dts1[[i]])]
+
+    # Now data is numbers only, convert to numeric to save memory
+      # (but not integer, b/c some counts are > MAX_INT and also amine measurements are floats)
+    for(col in 1:ncol(dts1_clean[[i]])) set(dts1_clean[[i]], j=col, value=as.numeric(dts1_clean[[i]][[col]]))
+
+    # With the dictionaries and this, now nothing else we need from the raw data, might as well toss it, save memory.
+    # dts1[[i]] <- 0 
+
+    # T, and naming
+    dts1_clean[[i]] <- t(dts1_clean[[i]])
+
+    #rownames(dts1_clean[[i]]) <- sample_idss[[i]]
+    colnames(dts1_clean[[i]]) <- met_idss[[i]]
+    dts1_clean[[i]] <- data.table(sample_id=sample_idss[[i]], dts1_clean[[i]])
+}
+
+# c8_MESA has 4 full NA rows at the end.
+# all(is.na(tail(dts1_clean[[9]],n=4))) --> TRUE ¯\_('- ')_/¯
+dts1_clean[[9]] <- dts1_clean[[9]][!is.na(sample_id)]
+
+
+names(dts1_clean) <- names(dts1)#; rm(dts1)
+paste("Cleaned DTs total size:", object.size(dts1_clean) / 10^9, "GB")
+```
+
+```{r}
+lapply(dts1_clean, dim)
+# lapply(dts1_clean, tail, n=5)
+lapply(dts1_clean, function(dt) grep("_dup", colnames(dt))) # Check where duplicates are (should be none)
+```
+
+## Write
+```{r}
+colnames(dts1_clean[[8]])
+```
+
+```{r}
+dir.create(file.path("PH_files"), showWarnings=F)
+dir.create(file.path("PH_files/cleaned"), showWarnings=F)
+for(i in seq_along(dts1_clean)) { write.table(dts1_clean[[i]], paste0("PH_files/cleaned/",names(dts1_clean)[i],"_clean.txt"), row.names=F) }
+```
+
+```{r}
+system(paste("gsutil cp -R PH_files", Sys.getenv('WORKSPACE_BUCKET')))
+```
+
+# dts2
+```{r}
+# Inspect
+lapply(dts2,dim)
+# lapply(dts2,head,n=12)
+```
+
+```{r}
+# Clean
+
+# As of April 28 2022 the raw amines_mesa.txt file is gone, so just using the already cleaned one. Not much modification was made anyways.
+#dts2[["an_MESA"]] <- dts2[["an_MESA"]][,-c(1,2)]
+#colnames(dts2[["an_MESA"]])[2:ncol(dts2[["an_MESA"]])] <- paste0(colnames(dts2[["an_MESA"]])[2:ncol(dts2[["an_MESA"]])],"_an") # method suffix
+
+dts2[["proteo_FHS"]] <- dts2[["proteo_FHS"]][,-c(2,3)]
+dts2[["proteo_WHI"]] <- dts2[["proteo_WHI"]][,grep("^O",colnames(dts2[["proteo_WHI"]])), with=F]
+dts2[["proteo_MESA"]] <- dts2[["proteo_MESA"]]
+
+for(i in seq_along(dts2)) colnames(dts2[[i]])[1] <- "sample_id"
+```
+
+```{r}
+# Inspect again
+lapply(dts2,dim)
+# lapply(dts2,head,n=12)
+```
+
+## Write
+```{r}
+#dir.create(file.path("PH_files/cleaned/")) # Already done for dts1
+for(i in seq_along(dts2)) {write.table(dts2[[i]], paste0("PH_files/cleaned/",names(dts2)[i],"_clean.txt"), row.names=F) }
+```
+
+```{r}
+ws_bucket <- Sys.getenv('WORKSPACE_BUCKET')
+system(paste("gsutil cp -R PH_files", ws_bucket))
+```
+
+```{r}
+#dts1[["an_WHI"]]
+tmp <- unlist(dts1[["an_WHI"]][,5])
+table(nchar(tmp))
+as.data.frame(dts1[["an_WHI"]])[nchar(tmp)==0,]
+```
+
+# Make Maps/Dictonaries
+## Sample-batch map
+```{r}
+extr_datess <- lapply(seq_along(dts1), function(i) unlist(dts1[[i]][ extr_date_rows[i], data_start_cols[i]:ncol(dts1[[i]]) ]))
+sample_idss <- lapply(seq_along(dts1), function(i) unlist(dts1[[i]][ sample_id_rows[i], data_start_cols[i]:ncol(dts1[[i]]) ]))
+unique_ids <- unique(unlist(sample_idss))
+                                                                               # v sample id & cohort cols
+sample_info <- data.table(matrix( "", nrow=length(unique_ids), ncol=length(dts1)+2 ))
+colnames(sample_info) <- c("sample_id", "cohort", paste0(names(dts1),"_batch"))
+sample_info$sample_id <- unique_ids
+
+for(i in seq_along(extr_datess     )) {
+for(j in seq_along(extr_datess[[i]])) {
+    sample_info[sample_id==sample_idss[[i]][j], i+2] <- extr_datess[[i]][j]
+    sample_info[sample_id==sample_idss[[i]][j],   2] <- if(i%in%1:4) {"FHS"}
+                                                   else if(i%in%5:8) {"WHI"}
+                                                   else if(i%in%9:10){"MESA"}
+}}
+sample_info[, 3:12 := lapply(.SD, as.factor), .SDcols=3:12] # Convert those batch columns to factors
+# Note: careful about the empty "" entries. You should select one cohort at a time to avoid them.
+
+sample_info[, is_control := !grepl("TOM",sample_id)]
+sample_info <- sample_info[!is.na(sample_info$sample_id)]
+rm(extr_datess, unique_ids)
+```
+
+```{r}
+sample_info[runif(10,1,nrow(sample_info))] # Random selection of 10 rows
+```
+
+## Metabolite Info Map
+### Get Metabolite Info Maps from each Cohort
+```{r}
+# Convenience fn
+selectMetInfoCols  <- function(dts, col_inds)
+    lapply(seq_along(dts), function(i) {
+        if(is.na(col_inds[i])) { rep(NA,times=nrow(dts[[i]])-data_start_rows[i]+1) }
+        else                   { dts[[i]][data_start_rows[i]:nrow(dts[[i]]), col_inds[i], with=F] }
+})
+
+met_info_fhs <- data.table(
+    Compound_Id_FHS = unlist(selectMetInfoCols(dts1[1:4], compound_id_cols[1:4])),
+    Compound_Id_WHI = NA,
+    Compound_Id_MESA= NA,
+    HMDB_Id     = unlist(selectMetInfoCols(dts1[1:4],         hmdb_id_cols[1:4])) ,
+    Name        = unlist(selectMetInfoCols(dts1[1:4],        met_name_cols[1:4])) ,
+    MRM         = unlist(selectMetInfoCols(dts1[1:4],             mrm_cols[1:4])) ,
+    MZ          = as.numeric(unlist(selectMetInfoCols(dts1[1:4],   mz_cols[1:4]))),
+    RT          = as.numeric(unlist(selectMetInfoCols(dts1[1:4],   rt_cols[1:4]))),
+    Method      = unlist(selectMetInfoCols(dts1[1:4],          method_cols[1:4])) )
+met_info_whi <- data.table(
+    Compound_Id_FHS = NA,
+    Compound_Id_WHI = unlist(selectMetInfoCols(dts1[5:8], compound_id_cols[5:8])),
+    Compound_Id_MESA= NA,
+    HMDB_Id     = unlist(selectMetInfoCols(dts1[5:8],         hmdb_id_cols[5:8])) ,
+    Name        = unlist(selectMetInfoCols(dts1[5:8],        met_name_cols[5:8])) ,
+    MRM         = unlist(selectMetInfoCols(dts1[5:8],             mrm_cols[5:8])) ,
+    MZ          = as.numeric(unlist(selectMetInfoCols(dts1[5:8],   mz_cols[5:8]))),
+    RT          = as.numeric(unlist(selectMetInfoCols(dts1[5:8],   rt_cols[5:8]))),
+    Method      = unlist(selectMetInfoCols(dts1[5:8],          method_cols[5:8])) )
+met_info_mesa <- data.table(
+    Compound_Id_FHS = NA,
+    Compound_Id_WHI = NA,
+    Compound_Id_MESA= unlist(selectMetInfoCols(dts1[9:10], compound_id_cols[9:10])) ,
+    HMDB_Id     = unlist(selectMetInfoCols(dts1[9:10],         hmdb_id_cols[9:10])) ,
+    Name        = unlist(selectMetInfoCols(dts1[9:10],        met_name_cols[9:10])) ,
+    MRM         = unlist(selectMetInfoCols(dts1[9:10],             mrm_cols[9:10])) ,
+    MZ          = as.numeric(unlist(selectMetInfoCols(dts1[9:10],   mz_cols[9:10]))),
+    RT          = as.numeric(unlist(selectMetInfoCols(dts1[9:10],   rt_cols[9:10]))),
+    Method      = unlist(selectMetInfoCols(dts1[9:10],          method_cols[9:10])) )
+```
+
+```{r}
+met_info_fhs [met_info_fhs ==""] <- NA
+met_info_whi [met_info_whi ==""] <- NA
+met_info_mesa[met_info_mesa==""] <- NA
+
+met_info_fhs [grepl("tandard",HMDB_Id), HMDB_Id:=NA]
+met_info_whi [grepl("tandard",HMDB_Id), HMDB_Id:=NA]
+met_info_mesa[grepl("tandard",HMDB_Id), HMDB_Id:=NA]
+
+met_info_mesa[met_info_mesa=="n/a"] <- NA
+```
+
+```{r}
+met_info_fhs[runif(5,1,nrow(met_info_fhs))] # Inspect 5 random rows
+met_info_whi[runif(5,1,nrow(met_info_whi))]
+met_info_mesa[runif(5,1,nrow(met_info_mesa))]
+```
+
+### Add MESA amines to met_info_mesa
+Used [MetaboAnalyst webtool](https://www.metaboanalyst.ca/MetaboAnalyst/upload/ConvertView.xhtml) to match the colnames of amines_MESA to HMDB ids, with some manual work (not in code). The result was the file "MESA_amines_HMDBs.csv" loaded here.
+```{r}
+mesa_amines_info <- read.csv("MESA_amines_HMDBs.csv")
+head(mesa_amines_info)
+# Manually inpsect and ensure the names are aligned, so can just cbind
+# cbind(colnames(dts2[["amines_MESA"]])[-1], mesa_amines_info) # Yes
+
+to_rbind <- data.table(
+    Compound_Id_FHS = NA,
+    Compound_Id_WHI = NA,
+    Compound_Id_MESA= sub("_an","", colnames(dts2[["an_MESA"]])[-1]),
+    HMDB_Id     = mesa_amines_info$HMDB,
+    Name        = mesa_amines_info$Match,
+    MZ          = NA,
+    MRM         = NA,
+    RT          = NA,
+    Method      = "Amide-Negative-sMRM")
+
+met_info_mesa <- rbind(met_info_mesa, to_rbind)
+```
+
+```{r}
+met_info_mesa[runif(5,1,nrow(met_info_mesa))] # Inspect 5 random rows
+```
+
+### Standardize amount of 0s in padding of HMDBs
+MESA C8-pos and HIL-pos have 2 fewer 0s in the padding of their HMDB ids than the other datasets. E.g. HMDB02815 instead of HMDB0002815.\
+Standardizing these HMDBs to be 11 chars long like the rest of the data.
+```{r}
+# Run this commented code to explore if desired
+#table(nchar(met_info_fhs$HMDB_Id ))
+#table(nchar(met_info_whi$HMDB_Id ))
+#table(nchar(met_info_mesa$HMDB_Id))
+# 11 seems to be the standard HMDB length among most of the datasets
+#met_info_fhs[nchar(HMDB_Id)!=11]
+#met_info_whi[nchar(HMDB_Id)!=11]
+#met_info_mesa[nchar(HMDB_Id)!=11] # Indeed, MESA C8-pos & HIL-pos datasets have different padding
+```
+
+```{r}
+met_info_mesa[nchar(HMDB_Id)!=11, HMDB_Id := sub("HMDB","HMDB00", HMDB_Id)]
+```
+
+```{r}
+met_info_mesa[runif(5,1,nrow(met_info_mesa))] # Inspect 5 random rows
+```
+
+### Aligning Knowns: 1st Pass
+Merging knowns across cohorts where the `<HMDB>_<method>` matches _exactly_ (both HMDB and method). If there is such a match, it is guaranteed to be the only one since we manually removed all duplications from each individual method dataset.
+#### Add method suffix
+Add a suffix to the compound id depending on method; otherwise the ids may not be unique.
+```{r}
+addMethodSuffix <- function(compound_id_vec, method_vec) {
+    sapply(1:length(compound_id_vec), function(i) {
+        if(is.na(compound_id_vec[i])) return(NA)
+        if(is.na(method_vec[i])) return(compound_id_vec[i])
+
+        if(method_vec[i]=="C8-pos"   ) return(paste0(compound_id_vec[i],"_cp"))
+        if(method_vec[i]=="C18-neg"  ) return(paste0(compound_id_vec[i],"_cn"))
+        if(method_vec[i]=="HIL-pos"  ) return(paste0(compound_id_vec[i],"_hp"))
+        if(method_vec[i]=="HILIC-pos") return(paste0(compound_id_vec[i],"_hp"))
+        if(method_vec[i]=="Amide-Negative-sMRM") return(paste0(compound_id_vec[i],"_an"))
+})}
+
+met_info_fhs$Compound_Id_FHS   <- addMethodSuffix(met_info_fhs$Compound_Id_FHS,   met_info_fhs$Method )
+met_info_whi$Compound_Id_WHI   <- addMethodSuffix(met_info_whi$Compound_Id_WHI,   met_info_whi$Method )
+met_info_mesa$Compound_Id_MESA <- addMethodSuffix(met_info_mesa$Compound_Id_MESA, met_info_mesa$Method)
+met_info_fhs$HMDB_Id           <- addMethodSuffix(met_info_fhs$HMDB_Id,           met_info_fhs$Method )
+met_info_whi$HMDB_Id           <- addMethodSuffix(met_info_whi$HMDB_Id,           met_info_whi$Method )
+met_info_mesa$HMDB_Id          <- addMethodSuffix(met_info_mesa$HMDB_Id,          met_info_mesa$Method)
+```
+
+Additionally, change bulky (and inconsistent in the case of HILIC+) method names in the Method column.
+```{r}
+renameMethods <- function(method_vec) {
+    ifelse(method_vec=="C8-pos", "cp",
+     ifelse(method_vec=="C18-neg", "cn",
+      ifelse(method_vec=="Amide-Negative-sMRM", "an",
+       ifelse(method_vec=="HIL-pos" | method_vec=="HILIC-pos", "hp", NA))))
+}
+
+met_info_fhs$Method  <- renameMethods(met_info_fhs$Method )
+met_info_whi$Method  <- renameMethods(met_info_whi$Method )
+met_info_mesa$Method <- renameMethods(met_info_mesa$Method)
+
+table(met_info_fhs$Method); table(met_info_whi$Method); table(met_info_mesa$Method) # Inspect
+```
+
+#### Merge if HMDB and method match
+```{r}
+#Finding perfect HMDB _and_ method matches.
+#Shorthand for variable names examples (imagine a 3-circle venn diagram):
+  # "f" == all HMDBs in FHS
+  # "fw_i" == all FHS & WHI  perfect matches, Including possible triple perfect matches between FHS & WHI & MESA.
+  # "wm_e" ==     WHI & MESA perfect matches, Excluding the triple perfect matches
+  # "f_e" == FHS HMDBS, Excluding HMDBs which perfectly matched anywhere else. I.e. FHS exclusive <HMDB>_<method>s.
+`%!in%` <- Negate(`%in%`)
+f <- met_info_fhs[!is.na(HMDB_Id)]$HMDB_Id
+w <- met_info_whi[!is.na(HMDB_Id)]$HMDB_Id
+m <- met_info_mesa[!is.na(HMDB_Id)]$HMDB_Id
+
+fw_i <- intersect(f,w)
+fm_i <- intersect(f,m)
+wm_i <- intersect(w,m)
+
+fwm <- intersect(fw_i, fm_i) # triple perfect matches!
+
+fw_e <- fw_i[fw_i %!in% fwm]
+fm_e <- fm_i[fm_i %!in% fwm]
+wm_e <- wm_i[wm_i %!in% fwm]
+
+f_e <- f[(f %!in% w) & (f %!in% m)]
+w_e <- w[(w %!in% f) & (w %!in% m)]
+m_e <- m[(m %!in% f) & (m %!in% w)]
+
+lengths(list(fw_i,fm_i,wm_i, fwm, fw_e,fm_e,wm_e))
+lengths(list(f_e,w_e,m_e))
+```
+
+```{r}
+# Making the parts to rbind together
+myFn <- function(hmdbs) {
+    # Metabolites Names. Doesn't matter which cohort it's from, just pick one which is not NA if possible.
+    nms <- ifelse(!is.na(met_info_fhs[match(hmdbs,HMDB_Id),]$Name),
+                         met_info_fhs[match(hmdbs,HMDB_Id),]$Name ,
+                         met_info_whi[match(hmdbs,HMDB_Id),]$Name )
+    nms <- ifelse(!is.na(nms),
+                         nms ,
+                         met_info_mesa[match(hmdbs,HMDB_Id),]$Name)
+    
+    # MZ and RT & MRM. Just average them. For MRM, average the two numbers in the "X -> Y" separately...
+      # If there are NAs, then the average will just be between the non-NA ones.
+    mzs <- rowMeans(as.matrix(data.frame(mz_fhs  = met_info_fhs [match(hmdbs,HMDB_Id),]$MZ,
+                                         mz_whi  = met_info_whi [match(hmdbs,HMDB_Id),]$MZ,
+                                         mz_mesa = met_info_mesa[match(hmdbs,HMDB_Id),]$MZ)), na.rm=T)
+    rts <- rowMeans(as.matrix(data.frame(mz_fhs  = met_info_fhs [match(hmdbs,HMDB_Id),]$RT,
+                                         mz_whi  = met_info_whi [match(hmdbs,HMDB_Id),]$RT,
+                                         mz_mesa = met_info_mesa[match(hmdbs,HMDB_Id),]$RT)), na.rm=T)
+      # Average the first MRM numbers, before the arrow. Then the second, after the arrow.
+      # Then paste those two averaged numbers back together with an arrow in between again.
+      # MESA has no MRMs. Its amines file just had names and no other metabolite information.
+    mrms1 <- rowMeans(as.matrix(data.frame(mrm1_fhs  = as.numeric(sub("->.*","", met_info_fhs [match(hmdbs,HMDB_Id),]$MRM)),
+                                           mrm1_whi  = as.numeric(sub("->.*","", met_info_whi [match(hmdbs,HMDB_Id),]$MRM)))), na.rm=T)
+    mrms2 <- rowMeans(as.matrix(data.frame(mrm2_fhs  = as.numeric(sub(".*->","", met_info_fhs [match(hmdbs,HMDB_Id),]$MRM)),
+                                           mrm2_whi  = as.numeric(sub(".*->","", met_info_whi [match(hmdbs,HMDB_Id),]$MRM)))), na.rm=T)
+    mrms <- mapply(function(mrm1,mrm2) { if(is.na(mrm1)) return(NA); paste0(mrm1,"->",mrm2) }, mrms1,mrms2)
+    
+    # Metabolites Names. As these are perfect matches, methods will all be the same, so just pick whichever is not NA.
+      # Only need to check two cohorts since method is never NA (unlike name, even when has HMDB), and b/c pigeonhole principle etc. etc. 
+    mthds <- ifelse(!is.na(met_info_fhs[match(hmdbs,HMDB_Id),]$Method),
+                         met_info_fhs[match(hmdbs,HMDB_Id),]$Method ,
+                         met_info_whi[match(hmdbs,HMDB_Id),]$Method )
+
+    data.frame(
+        Compound_Id_FHS = met_info_fhs [match(hmdbs,HMDB_Id),]$Compound_Id_FHS,
+        Compound_Id_WHI = met_info_whi [match(hmdbs,HMDB_Id),]$Compound_Id_WHI,
+        Compound_Id_MESA= met_info_mesa[match(hmdbs,HMDB_Id),]$Compound_Id_MESA,
+        HMDB_Id = hmdbs,
+        Name = nms,
+        MZ = mzs,
+        MRM = mrms,
+        RT = rts,
+        Method = mthds
+    )
+}
+
+met_info_knowns <- setDT(do.call(rbind, list(myFn(fwm), myFn(fw_e), myFn(fm_e), myFn(wm_e))))
+
+# The NA coercion warnings are just NA_character_'s getting converted to NA_integer_'s.
+  # You can try the commented code below to double-check this is what's happening.
+#met_info_fhs[match(fw_e,met_info_fhs$HMDB_Id),] # fine
+#met_info_fhs[match(fw_e,HMDB_Id),] # fine
+#sub("->.*","", met_info_fhs[match(fw_e,HMDB_Id),]$MRM) # fine
+#as.numeric(sub("->.*","", met_info_fhs[match(fw_e,HMDB_Id),]$MRM)) # NA coercion warning
+```
+
+```{r}
+nrow(met_info_knowns)
+met_info_knowns[runif(5,1,nrow(met_info_knowns)),] # Inspect 5 random rows
+
+table(met_info_knowns[!is.na(Compound_Id_FHS) &
+                      !is.na(Compound_Id_WHI) &
+                      !is.na(Compound_Id_MESA)]$Method) # Just curious how many of the perfect matches are from which methods
+```
+
+```{r}
+met_info_knowns_firstpass <- met_info_knowns # Save copy b/c there are two different ways to do the 2nd pass
+```
+
+### Aligning Knowns: 2nd Pass (Conservative Approach)
+Merging the _remaining_ knowns across cohorts, and now only the HMDB has to match. If there is such a match, it is _not_ guaranteed to be the only one. If there is > 1 possible match, it will be assigned randomly.
+```{r}
+sum(duplicated(sub("_.*","",f  )))
+sum(duplicated(sub("_.*","",w  )))
+sum(duplicated(sub("_.*","",m  )))
+sum(duplicated(sub("_.*","",f_e)))
+sum(duplicated(sub("_.*","",w_e)))
+sum(duplicated(sub("_.*","",m_e)))
+# Seems in FHS and WHI all w/i-cohort dups were perfectly-matched away
+```
+
+```{r}
+# Making the parts to rbind together, 2nd pass
+# Essentially the same as above, except matching against HMDBs...:
+  # excluding HMDBs with perfect matches already.
+  # excluding the "_<method>" suffix.
+
+myFn <- function(hmdbs) {
+    # Consider only HMDBs which were not already perfectly matched (i.e. c(f_e,w_e,m_e))
+    met_info_fhs  <- met_info_fhs [HMDB_Id %in% c(f_e,w_e,m_e)]
+    met_info_whi  <- met_info_whi [HMDB_Id %in% c(f_e,w_e,m_e)]
+    met_info_mesa <- met_info_mesa[HMDB_Id %in% c(f_e,w_e,m_e)]
+    
+    # Consider only the HMDB when matching, doesn't need to be a perfect HMDB ~and~ method match anymore
+    hmdbs <- sub("_.*","",hmdbs)
+    met_info_fhs$HMDB_Id  <- sub("_.*","",met_info_fhs$HMDB_Id )
+    met_info_whi$HMDB_Id  <- sub("_.*","",met_info_whi$HMDB_Id )
+    met_info_mesa$HMDB_Id <- sub("_.*","",met_info_mesa$HMDB_Id)
+
+    # Metabolites Names. Doesn't matter which cohort it's from, just pick one which is not NA if possible.
+    nms <- ifelse(!is.na(met_info_fhs[match(hmdbs,HMDB_Id),]$Name),
+                         met_info_fhs[match(hmdbs,HMDB_Id),]$Name ,
+                         met_info_whi[match(hmdbs,HMDB_Id),]$Name )
+    nms <- ifelse(!is.na(nms),
+                         nms ,
+                         met_info_mesa[match(hmdbs,HMDB_Id),]$Name)
+    
+    # MZ and RT & MRM. Just average them. For MRM, average the two numbers in the "X -> Y" separately...
+      # If there are NAs, then the average will just be between the non-NA ones.
+    mzs <- rowMeans(as.matrix(data.frame(mz_fhs  = met_info_fhs [match(hmdbs,HMDB_Id),]$MZ,
+                                         mz_whi  = met_info_whi [match(hmdbs,HMDB_Id),]$MZ,
+                                         mz_mesa = met_info_mesa[match(hmdbs,HMDB_Id),]$MZ)), na.rm=T)
+    rts <- rowMeans(as.matrix(data.frame(mz_fhs  = met_info_fhs [match(hmdbs,HMDB_Id),]$RT,
+                                         mz_whi  = met_info_whi [match(hmdbs,HMDB_Id),]$RT,
+                                         mz_mesa = met_info_mesa[match(hmdbs,HMDB_Id),]$RT)), na.rm=T)
+      # Average the first MRM numbers, before the arrow. Then the second, after the arrow.
+      # Then paste those two averaged numbers back together with an arrow in between again.
+      # MESA has no MRMs. Its amines file just had names and no other metabolite information.
+    mrms1 <- rowMeans(as.matrix(data.frame(mrm1_fhs  = as.numeric(sub("->.*","", met_info_fhs [match(hmdbs,HMDB_Id),]$MRM)),
+                                           mrm1_whi  = as.numeric(sub("->.*","", met_info_whi [match(hmdbs,HMDB_Id),]$MRM)))), na.rm=T)
+    mrms2 <- rowMeans(as.matrix(data.frame(mrm2_fhs  = as.numeric(sub(".*->","", met_info_fhs [match(hmdbs,HMDB_Id),]$MRM)),
+                                           mrm2_whi  = as.numeric(sub(".*->","", met_info_whi [match(hmdbs,HMDB_Id),]$MRM)))), na.rm=T)
+    mrms <- mapply(function(mrm1,mrm2) { if(is.na(mrm1)) return(NA); paste0(mrm1,"->",mrm2) }, mrms1,mrms2)
+
+    data.frame(
+        Compound_Id_FHS = met_info_fhs [match(hmdbs,HMDB_Id),]$Compound_Id_FHS,
+        Compound_Id_WHI = met_info_whi [match(hmdbs,HMDB_Id),]$Compound_Id_WHI,
+        Compound_Id_MESA= met_info_mesa[match(hmdbs,HMDB_Id),]$Compound_Id_MESA,
+        HMDB_Id = hmdbs,
+        Name = nms,
+        MZ = mzs,
+        MRM = mrms,
+        RT = rts,
+        Method = paste(met_info_fhs [match(hmdbs,HMDB_Id)]$Method,
+                       met_info_whi [match(hmdbs,HMDB_Id)]$Method,
+                       met_info_mesa[match(hmdbs,HMDB_Id)]$Method, sep='_')
+    )
+}
+
+met_info_knowns <- do.call(rbind, list(met_info_knowns, myFn(f_e), myFn(w_e), myFn(m_e)))
+
+# TODO maybe useful later
+#for(hmdb_mthd in f_e) {
+#    hmdb <- sub("_.*","",hmdb_mthd)
+#    mthd <- sub(".*_","",hmdb_mthd)
+#}
+```
+
+```{r}
+nrow(met_info_knowns)
+met_info_knowns[runif(5,1,nrow(met_info_knowns)),] # Inspect 5 random rows
+```
+
+```{r}
+# wait, are there not even any imperfect matches left after the perfect matching? Or is the code block above bugged?
+  # b/c not seeing any mixed-method rows, only single-entry rows
+intersect(sub("_.*","",f_e), sub("_.*","",w_e))
+intersect(sub("_.*","",f_e), sub("_.*","",m_e))
+intersect(sub("_.*","",w_e), sub("_.*","",m_e))
+# :o there are not?! Then don't even have to consider as much of the imperfect-matching hullabaloo! Nice!!
+  # Still is the consideration of whether to "sully" some of 2-perfect match rows to get more 3-match rows.
+  # But at least knowing there is no matching left to do between the not-already-matched rows makes things a bit easier.
+    # I.e. that means that the "conservative approach" is already done, then, no more steps required.
+```
+```{r}
+# So Fix the method column then, because all the "mixed" matches are just one method and two NAs.
+met_info_knowns$Method <- gsub("N|A|_","",met_info_knowns$Method)
+
+# And give the HMDBs their suffixes back as well
+met_info_knowns$HMDB_Id <- sub("_.*","",met_info_knowns$HMDB_Id)
+met_info_knowns$HMDB_Id <- paste0(met_info_knowns$HMDB_Id,'_',met_info_knowns$Method)
+
+# (If I knew this before I could have made the code a bit more elegant and remove this code block,
+#  but I will leave it to show the complete thought process (and because I am lazy))
+```
+
+```{r}
+met_info_knowns[runif(5,1,nrow(met_info_knowns)),] # Inspect 5 random rows
+```
+
+### Aligning Knowns: 2nd Pass (Non-conservative Approach)
+In attempt to get more 3-matches (across all 3 cohorts), some perfect 2-matches could be converted to non-perfect 3-matches.
+```{r}
+nrow(met_info_knowns_firstpass[is.na(Compound_Id_FHS),]) # 20 rows of perfect 2-matches where FHS is NA. In other words, wm_e.
+tmp <- f[grep( paste(sub("_.*","",wm_e), collapse='|'), f)]
+# tmp # just two ways to make new (imperfect) 3-matches by filling the holes in these perfect matches, but...
+tmp[tmp %!in% fwm] # Actually no ways b/c one of the HMDBs is already part of a perfect 3-match, so should not be moved.
+
+nrow(met_info_knowns_firstpass[is.na(Compound_Id_WHI),]) # 20 rows of perfect 2-matches where FHS is NA. In other words, fm_e.
+tmp <- w[grep( paste(sub("_.*","",fm_e), collapse='|'), w)]
+tmp[tmp %!in% fwm] # Just one HMDB not already in a perfect 3-match which could be used to make an imperfect 3-match here. 
+
+nrow(met_info_knowns_firstpass[is.na(Compound_Id_MESA),]) # 176 rows of perfect 2-matches where FHS is NA. In other words, fw_e.
+tmp <- m[grep( paste(sub("_.*","",fw_e), collapse='|'), m)]
+tmp[tmp %!in% fwm] # Could make three more imperfect 3-matches with these
+
+# TODO: ask, decision to make
+# There are already 418 perfect 3-matches.
+# Is it worth mixing the methods of some metabolites to make 6 more 3-matches useable for the all-cohort analysis?
+# For easy reference, the 6 metabolties in question are:
+  # LysoPC(18:3(6Z,9Z,12Z)/0:0) (cp) hmdb.ca/metabolites/HMDB0010387
+  # Deoxyuridine (hp)                hmdb.ca/metabolites/HMDB0000012
+  # LysoPC again, but (hp)           hmdb.ca/metabolites/HMDB0010387
+  # Docosahexaenoic acid (an)        hmdb.ca/metabolites/HMDB0002183
+  # Salicylic acid (an)              hmdb.ca/metabolites/HMDB0001895
+  # Warfarin (an)                    hmdb.ca/metabolites/HMDB0001935
+# Decision: include them
+```
+
+```{r}
+#met_info_knowns[!is.na(HMDB_Id) & !grepl("HMDB",HMDB_Id)]
+met_info_knowns[sub("_.*","",HMDB_Id)=="HMDB0000012"]
+met_info_knowns[sub("_.*","",HMDB_Id)=="HMDB0002183"]
+met_info_knowns[sub("_.*","",HMDB_Id)=="HMDB0001895"]
+met_info_knowns[sub("_.*","",HMDB_Id)=="HMDB0001935"]
+```
+
+Manually hardcoding merging these rows b/c there are only 6 and I am lazy to write the general code
+```{r}
+met_info_knowns[HMDB_Id=="HMDB0000012_an", `:=`(HMDB_Id="HMDB0000012_an_hp_an", Compound_Id_WHI="QI17050_hp",              Method="Mixed")]
+met_info_knowns[HMDB_Id=="HMDB0002183_cn", `:=`(HMDB_Id="HMDB0002183_cn_cn_an", Compound_Id_MESA="Docosahexenoic_acid_an", Method="Mixed")]
+met_info_knowns[HMDB_Id=="HMDB0001895_cn", `:=`(HMDB_Id="HMDB0001895_cn_cn_an", Compound_Id_MESA="Salicylic_acid_an",      Method="Mixed")]
+met_info_knowns[HMDB_Id=="HMDB0001935_cn", `:=`(HMDB_Id="HMDB0001935_cn_cn_an", Compound_Id_MESA="Warfarin_an",            Method="Mixed")]
+```
+
+```{r}
+# Look at the merged rows
+met_info_knowns[sub("_.*","",HMDB_Id)=="HMDB0000012"]
+met_info_knowns[sub("_.*","",HMDB_Id)=="HMDB0002183"]
+met_info_knowns[sub("_.*","",HMDB_Id)=="HMDB0001895"]
+met_info_knowns[sub("_.*","",HMDB_Id)=="HMDB0001935"]
+```
+
+```{r}
+# Rm the now-redundant singleton rows which were used to make the imperfect matches
+met_info_knowns <- met_info_knowns[HMDB_Id %!in% c("HMDB0000012_hp", "HMDB0002183_an", "HMDB0001895_an", "HMDB0001935_an")]
+
+# Confirm they were removed
+met_info_knowns[sub("_.*","",HMDB_Id)=="HMDB0000012"]
+met_info_knowns[sub("_.*","",HMDB_Id)=="HMDB0002183"]
+met_info_knowns[sub("_.*","",HMDB_Id)=="HMDB0001895"]
+met_info_knowns[sub("_.*","",HMDB_Id)=="HMDB0001935"]
+```
+
+### Aligning _unknowns_
+#### Use MESA-WHI C8 & HILIC+ aligned unknowns files
+```{r}
+system('gsutil cp "gs://fc-secure-4b3e979d-ba8b-43c4-a5ec-b41ab42ce606/WHI_Aligned_to_MESA_HILIC-pos_export_file - WHI_Aligned_to_MESA_HILIC-pos_export_file.csv" . 2>&1')
+system("gsutil cp gs://fc-secure-4b3e979d-ba8b-43c4-a5ec-b41ab42ce606/WHI_Aligned_to_MESA_C8-pos_export_file.csv . 2>&1")
+```
+
+```{r}
+cp <- fread("WHI_Aligned_to_MESA_C8-pos_export_file.csv")
+hp <- fread("WHI_Aligned_to_MESA_HILIC-pos_export_file - WHI_Aligned_to_MESA_HILIC-pos_export_file.csv")
+```
+
+```{r}
+dim(cp); head(cp); dim(hp); head(hp);
+head(cp[,!grepl("\\.raw|TOM|QCPP",colnames(cp)),with=F]) # head excluding samples. Just info columns
+head(hp[,!grepl("\\.raw|TOM|QCPP",colnames(hp)),with=F])
+# Checked: the whole HMDB_ID column (and Assignemnt certainty and Raw_file_name columns) are all NA. So only unknowns.
+# Also, the nrows (# of metabolites) of these are much smaller than even the MESA or WHI file separately,
+  # so I guess these must be only the unknowns which the two had in common, which have now been aligned.
+# The columns named "TOM#####" match the MESA TOM ids.
+# The other long names (####_TOPMed5_####-51.raw) are from the "Raw_file_name" row of the WHI files.
+```
+
+```{r}
+# Showing that "Compound_ID" refers to WHI's compound ids, and "Compound_ID_2" refers to MESA
+nrow(cp)
+length(intersect(  unlist(dts1[["cp_WHI"]][,compound_id_cols[6],with=F]),
+                   cp$Compound_ID))
+length(intersect(  unlist(dts1[["cp_MESA"]][,compound_id_cols[9],with=F]),
+                   cp$Compound_ID_2))
+
+nrow(hp)
+length(intersect(  unlist(dts1[["hp_WHI"]][,compound_id_cols[7],with=F]),
+                   hp$Compound_ID))
+length(intersect(  unlist(dts1[["hp_MESA"]][,compound_id_cols[10],with=F]),
+                   hp$Compound_ID_2))
+```
+
+```{r}
+# Add compound id suffix to match met_info
+cp$Compound_ID   <- paste0(cp$Compound_ID,  "_cp")
+cp$Compound_ID_2 <- paste0(cp$Compound_ID_2,"_cp")
+hp$Compound_ID   <- paste0(hp$Compound_ID,  "_hp")
+hp$Compound_ID_2 <- paste0(hp$Compound_ID_2,"_hp")
+```
+
+#### Remove the mets already present in met_info_knowns?
+Actually there are none!
+```{r}
+met_info_knowns[Compound_Id_WHI  %in% c(cp$Compound_ID,  hp$Compound_ID  ),]
+met_info_knowns[Compound_Id_MESA %in% c(cp$Compound_ID_2,hp$Compound_ID_2),]
+```
+
+#### Make sure none of the aligned unknowns are actually known?
+Indeed there are no knowns
+```{r}
+inds <- which(unlist(dts1[[6]][,compound_id_cols[6],with=F]) %in% cp$Compound_ID)
+unlist(dts1[[6]][inds,hmdb_id_cols[6],with=F])
+
+inds <- which(unlist(dts1[[7]][,compound_id_cols[7],with=F]) %in% hp$Compound_ID)
+unlist(dts1[[7]][inds,compound_id_cols[7],with=F])
+
+inds <- which(unlist(dts1[[9]][,compound_id_cols[9],with=F]) %in% cp$Compound_ID_2)
+unlist(dts1[[9]][inds,hmdb_id_cols[9],with=F])
+
+inds <- which(unlist(dts1[[10]][,compound_id_cols[10],with=F]) %in% hp$Compound_ID_2)
+unlist(dts1[[10]][inds,hmdb_id_cols[10],with=F])
+```
+
+#### Merge aligned knowns met info with aligned unknowns met info
+```{r}
+met_info_aligned_unknowns <- data.table(Compound_Id_FHS = NA,
+                                        Compound_Id_WHI = c(cp$Compound_ID,   hp$Compound_ID  ),
+                                        Compound_Id_MESA= c(cp$Compound_ID_2, hp$Compound_ID_2),
+                                        HMDB_Id = NA,
+                                        Name = NA,
+                                        MZ = c(cp$MZ+cp$MZ_2, hp$MZ+hp$MZ_2) / 2,
+                                        MRM = NA,
+                                        RT = c(cp$RT+cp$RT_2, hp$RT+hp$RT_2) / 2,
+                                        Method = c(rep("cp",nrow(cp)),rep("hp",nrow(hp)))
+                                       )
+dim(met_info_aligned_unknowns); head(met_info_aligned_unknowns); tail(met_info_aligned_unknowns)
+```
+
+```{r}
+met_info <- rbind(met_info_knowns, met_info_aligned_unknowns)
+dim(met_info); head(met_info); tail(met_info)
+```
+
+#### Add the rest of (unaligned) unknowns to met_info
+Making sure not to duplicate unknowns which are already in met_info
+```{r}
+met_info_fhs2  <- met_info_fhs [Compound_Id_FHS  %!in% met_info$Compound_Id_FHS ,]
+met_info_whi2  <- met_info_whi [Compound_Id_WHI  %!in% met_info$Compound_Id_WHI ,]
+met_info_mesa2 <- met_info_mesa[Compound_Id_MESA %!in% met_info$Compound_Id_MESA,]
+
+paste(nrow(met_info_fhs), nrow(met_info_fhs2)); paste(nrow(met_info_whi), nrow(met_info_whi2)); paste(nrow(met_info_mesa), nrow(met_info_mesa2))
+
+met_info <- rbind(met_info, met_info_fhs2, met_info_whi2, met_info_mesa2)
+dim(met_info); head(met_info); tail(met_info)
+```
+
+#### Inspect random rows
+```{r}
+met_info[runif(10,1,nrow(met_info))] # Random selection of 10 rows
+table(met_info$Method)
+```
+
+## Write
+```{r}
+dir.create("PH_files", showWarnings=F)
+write.csv(sample_info, "PH_files/sample_info.csv",  row.names=F)
+write.csv(met_info,    "PH_files/met_info_v12.csv", row.names=F)
+system(paste("gsutil cp -R PH_files", Sys.getenv('WORKSPACE_BUCKET')))
+```

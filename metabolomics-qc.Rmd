@@ -1,0 +1,330 @@
+# Setup
+## Libs
+```{r}
+library(data.table)
+if(!require(GGally)) install.packages("GGally");           library("GGally")
+BiocManager::install("limma");                             library("limma")
+if(!require(matrixStats)) install.packages("matrixStats"); library("matrixStats")
+if(!require(ggplot2)) install.packages("ggplot2");         library("ggplot2")
+
+options(stringsAsFactors=F)
+```
+
+## Functions
+### T2
+Convenience function to transpose preserving dimnames
+```{r}
+t2 <- function(x) {
+  rn <- rownames(x); cn <- colnames(x)
+  x <- t(x)
+  rownames(x) <- cn; colnames(x) <- rn
+  return(x)
+}
+```
+
+### PCA Plot
+Limited to categorical variables for now
+```{r}
+PCAPlot <- function(df, color_var, n_PC, title="") {
+  pca <- prcomp(df, center=T, scale.=T)
+
+  var_explained <- scales::percent(summary(pca)$importance[2,], 0.1)
+  for(i in 1:n_PC) colnames(pca$x)[i] <- paste0("PC",i," (",var_explained[i],")")
+
+  ggpairs(data = data.frame(pca$x[,1:n_PC], check.names=F),
+          lower = list(continuous = wrap("points", alpha=0.5, size=0.5, pch=1)),
+          diag  = list(continuous = wrap("densityDiag", alpha=0.5)),
+          #upper= list(continuous = wrap("cor"),
+          axisLabels = "none",
+          mapping = aes(color = color_var),
+          legend  = c(2,1) ) + labs(color="legend_title") + ggtitle(title)
+}
+```
+
+### Rm 0 variance
+```{r}
+rm0VarRows <- function(df) {
+    rows2rm <- rowVars(df, na.rm=T) == 0
+    print(paste(sum(rows2rm),"rows will be removed for 0 variance"))
+    df[!rows2rm,]
+}
+```
+
+### Missingness Removal TODO: add print statements ("x # metabolites and y # of samples removed for high missingness")
+Note that high-missingness rows (signatures) are removed first
+```{r}
+rmHighMissingness <- function(df, thresh) {
+  rows2rm <- rowSums(is.na(df)) > thresh*ncol(df)
+  print(paste( sum(rows2rm),"rows will be removed for >",scales::percent(thresh),"missingness" ))
+  df <- df[!rows2rm,]
+
+  cols2rm <- colSums(is.na(df)) > thresh*nrow(df)
+  print(paste( sum(cols2rm),"cols will be removed for >",scales::percent(thresh),"missingness" ))
+  df <- df[,!cols2rm]
+}
+```
+
+### Winsorization
+```{r}
+winsorizeBySd <- function(df, n_sds) {
+  t2(apply(df,1, function(r) {
+    u <- mean(r) + sd(r)*n_sds
+    l <- mean(r) - sd(r)*n_sds
+    r <- sapply(r, function(x) {
+      if(x > u) {x <- u}
+      if(x < l) {x <- l}
+      else      {x}})}))
+}
+```
+
+### Z-score
+```{r}
+zScoreRows <- function(df) {
+    t2(apply(df,1, function(r) {
+        m <- mean(r)
+        s <- sd(r)
+        r <- sapply(r, function(x) (x-m)/s)
+}))}
+```
+
+### Skew vs. Kurtosis Plot
+```{r}
+plotSkewKurt <- function(df, title) {
+  n <- ncol(df)
+  ms <- rowMeans(df)
+  sds <- rowSds(df)
+  skews <- sapply(1:nrow(df), function(r) (sum((df[r,]-ms[r])^3)/sds[r]^3)/n   )
+  kurts <- sapply(1:nrow(df), function(r) (sum((df[r,]-ms[r])^4)/sds[r]^4)/n-3 )
+  sk <- data.frame(skews=skews, kurts=kurts)
+  
+  ggplot(sk, aes(x=skews, y=kurts)) +
+    geom_point(size=0.5) + ggtitle(title) +
+    geom_vline(xintercept = -0.5, linetype="dotted", color="blue", size=1) +
+    geom_vline(xintercept =  0.5, linetype="dotted", color="blue", size=1) + 
+    geom_hline(yintercept = -2.0, linetype="dotted", color="blue", size=1) +
+    geom_hline(yintercept =  2.0, linetype="dotted", color="blue", size=1)
+}
+```
+
+# Main
+## SET INPUT HERE
+### Import
+Note that the last 4 data files (amines_MESA, and proteo_\[FHS,WHI,MESA\]) will be handed differently, as they do not have batch information.
+Additionally, proteo_WHI already has log2 applied.
+```{r}
+data_files <- c("cp_FHS_clean.txt", "cn_FHS_clean.txt", "hp_FHS_clean.txt", "an_FHS_clean.txt",
+                "cp_WHI_clean.txt", "cn_WHI_clean.txt", "hp_WHI_clean.txt", "an_WHI_clean.txt",
+                "cp_MESA_clean.txt",                    "hp_MESA_clean.txt","an_MESA_clean.txt",
+                "proteo_FHS_clean.txt", "proteo_WHI_clean.txt", "proteo_MESA_clean.txt")
+dict_files <- c("met_info_v12.csv", "sample_info.csv")
+filepaths <- c(paste0("gs://fc-secure-4b3e979d-ba8b-43c4-a5ec-b41ab42ce606/PH_files/cleaned/", data_files),
+               paste0("gs://fc-secure-4b3e979d-ba8b-43c4-a5ec-b41ab42ce606/PH_files/"        , dict_files))
+```
+
+```{r}
+sapply(filepaths, function(filepath) system(paste("gsutil cp",filepath,"./ 2>&1")) )
+```
+
+### Load
+```{r}
+met_info <- fread(dict_files[1])
+sample_info <- fread(dict_files[2])
+
+batch_info_cols <- c("cp_FHS_batch", "cn_FHS_batch", "hp_FHS_batch", "an_FHS_batch",
+                     "cp_WHI_batch", "cn_WHI_batch", "hp_WHI_batch", "an_WHI_batch",
+                     "cp_MESA_batch",                "hp_MESA_batch")
+```
+
+```{r}
+dfs <- lapply(data_files, function(filename) {
+    df <- as.matrix(fread(filename))
+    rownames(df) <- df[,"sample_id"]; df <- df[,-1]
+    mode(df) <- "numeric"
+    df <- t2(df)
+    
+    non_control <- colnames(df) %in% sample_info$sample_id[!sample_info$is_control]
+    if(sum(non_control)>0) df <- df[,non_control] # only non-control samples
+    
+    return(df)
+})
+
+df_labels <- c("cp_FHS", "cn_FHS", "hp_FHS", "an_FHS",
+               "cp_WHI", "cn_WHI", "hp_WHI", "an_WHI",
+               "cp_MESA",          "hp_MESA","an_MESA",
+               "proteo_FHS", "proteo_WHI", "proteo_MESA")
+names(dfs) <- df_labels
+
+# Don't worry about the "NAs introduced by coercion" warning (from `mode(df) <- "numeric"`).
+# It is just due to "" being converted to NA from string. Only MESA amines & WHI proteo are affected.
+# You may use the code below to verify this is what's happening.
+#lapply(dfs,function(df) sum(is.na(df)))
+#tmp <- as.numeric(dfs[["proteo_WHI"]]); mode(tmp) <- "numeric"
+#dfs[["proteo_WHI"]][is.na(tmp)] # Show what in proteo_WHI becomes NA when converting it to numeric
+```
+
+```{r}
+# Fixing data entry errors
+table(sample_info$hp_WHI_batch)
+# One sample was taken ~90 years in the future, and one ~90 years ago!
+# Joking aside, even if changed to what the enterer maybe meant, these samples are still alone in their batches. So omit.
+
+incorrect_TOM_ids <- sample_info$sample_id[sample_info$hp_WHI_batch %in% c("11/12/2109","11/15/1929") & !sample_info$is_control]
+print(incorrect_TOM_ids)
+
+incorrect_TOM_ids %in% colnames(dfs[["hp_WHI"]]) # Confirm presence
+dfs[["hp_WHI"]] <- dfs[["hp_WHI"]][,which(colnames(dfs[["hp_WHI"]]) != incorrect_TOM_ids)] # Remove
+incorrect_TOM_ids %in% colnames(dfs[["hp_WHI"]]) # Confirm removal
+```
+
+```{r}
+# Previews
+head(met_info)
+lapply(dfs, function(df) df[1:5,1:5])
+```
+
+```{r}
+dfs[["an_WHI"]]
+```
+
+## QC
+1\. Remove signatures w/ σ^2 = 0\
+2\. Remove signatures w/ >25% missingness\
+3\. Impute (half-min)\
+4\. Winsorize (to 5*σ)\
+5a. Log2\
+5b. Log2 and z-score\
+5c. Inverse normal transform\
+5d. ln\
+5e. ln and z-score\
+6abc. Adjust for batch
+```{r}
+print("order of dfs:"); print(names(dfs))
+
+tmp <- lapply(dfs, function(df) {
+    print("")
+    
+    df <- rm0VarRows(df) # 1
+    df <- rmHighMissingness(df, 0.25) # 2
+    df <- t2(apply(df,1, function(r) { r[is.na(r)] <- min(r,na.rm=T)/2; r })) # 3
+    df <- winsorizeBySd(df, 5) # 4
+
+    df_l2 <- log2(df+1) # 5a
+    df_l2_z <- zScoreRows(log2(df+1)) # 5b
+    df_inv_norm <- t2(apply(df,1, function(r) qnorm( (rank(r)-0.5)/length(r) ) )) # 5c
+    df_ln <- log(df+1) # 5d
+    df_ln_z <- zScoreRows(log(df+1))
+
+    return(list(default=df, l2=df_l2, l2_z=df_l2_z, inv_norm=df_inv_norm, ln=df_ln, ln_z=df_ln_z))
+})
+
+# tmp is a list of QC transforms (l2, l2_z, etc.) per cohort. Rearrange to List of cohorts per transform. 
+dfss <- list(default  = lapply(tmp, function(cohort) cohort[["default" ]]),
+             l2       = lapply(tmp, function(cohort) cohort[[   "l2"   ]]),
+             l2_z     = lapply(tmp, function(cohort) cohort[[  "l2_z"  ]]),
+             inv_norm = lapply(tmp, function(cohort) cohort[["inv_norm"]]),
+             ln       = lapply(tmp, function(cohort) cohort[[   "ln"   ]]),
+             ln_z     = lapply(tmp, function(cohort) cohort[[  "ln_z"  ]]))
+rm(tmp)
+```
+
+```{r}
+# Reason for the NaNs: there are a few negative values in amines FHS, WHI, and MESA (1,7,2 NaNs respectively).
+  # Except proteo_WHI, but that's already log'd so it's ok.
+lapply(dfs, function(df) sum(df[!is.na(df)]<0))
+lapply(dfs, function(df) df[!is.na(df) & df<0])
+```
+
+```{r}
+rm(dfs)
+```
+
+```{r}
+# Actually, the raw proteo_WHI was already log2'd, so:
+dfss[[   "l2"   ]][["proteo_WHI"]] <- dfss[["default"]][["proteo_WHI"]]
+dfss[[  "l2_z"  ]][["proteo_WHI"]] <- zScoreRows(dfss[["l2"]][["proteo_WHI"]])
+dfss[["default" ]][["proteo_WHI"]] <- NULL
+dfss[["inv_norm"]][["proteo_WHI"]] <- NULL
+dfss[[   "ln"   ]][["proteo_WHI"]] <- NULL
+dfss[[  "ln_z"  ]][["proteo_WHI"]] <- NULL
+```
+
+```{r}
+lapply(dfss, function(dfs) lapply(dfs, function(df) { print(dim(df)); df[1:5,1:5] })) # Inspect
+```
+
+```{r}
+# Only dfs 1-10 have  v batch info.
+batch_list <- lapply(1:10, function(i) {
+    df <- dfss[["default"]][[i]]
+
+    batch <- sample_info[sample_id %in% colnames(df), sample_id, eval(batch_info_cols[i])]
+    batch <- batch[complete.cases(batch),]
+
+    # identical(batch$sample_id, colnames(df)) # == FALSE: samples are not in the same order at first!!
+
+    #batch <- batch[order(match(sample_id, colnames(df)))] # Reorder batch to match the order of samples in the main df
+    batch <- batch[match(colnames(df),sample_id),] # Reorder batch to match the order of samples in the main df
+    print( identical(colnames(df), batch$sample_id) ) # == TRUE
+    batch <- factor(unlist(batch[,1])) # Need only the dates column, as a vector
+})
+
+# Display
+names(batch_list) <- df_labels[1:10]
+lapply(batch_list,table)
+```
+
+```{r}
+# Comment/Uncomment the optional PCAPlot lines to inspect data before & after batch adjustment (takes a while to load)
+#for(i in seq_along(dfss)) { for(j in seq_along(dfss[[i]])) { print( PCAPlot(t2(dfss[[i]][[j]]), color_var=batch_list[[j]], n_PC=3, title=paste(df_labels[j],names(dfss)[i],"BEFORE")) )}}
+
+# Again only datasets 1:10 have batch  v info
+for(i in seq_along(dfss)) { for(j in 1:10) { removeBatchEffect(dfss[[i]][[j]], batch=batch_list[[j]]) }}
+
+#for(i in seq_along(dfss)) { for(j in seq_along(dfss[[i]])) { print( PCAPlot(t2(dfss[[i]][[j]]), color_var=batch_list[[j]], n_PC=3, title=paste(df_labels[j],names(dfss)[i],"AFTER")) )}}
+```
+
+## Diagnostics
+### Overall distribution
+```{r}
+for(i in seq_along(dfss     )) {
+for(j in seq_along(dfss[[i]])) {
+    hist(rowMeans(dfss[[i]][[j]]), main=paste(names(dfss[[i]])[j],names(dfss)[i],": Distribution of signature medians"))
+}}
+```
+
+### Skew vs. Kurtosis
+```{r}
+for(i in seq_along(dfss     )) {
+for(j in seq_along(dfss[[i]])) {
+    print( plotSkewKurt(dfss[[i]][[j]], title=paste(names(dfss[[i]])[j],names(dfss)[i])) )
+}}
+```
+
+### Plot a random signature's measurements for each sample to make sure things look alright
+```{r}
+length(dfss)
+```
+
+```{r}
+for(i in seq_along(dfss     )) {
+for(j in seq_along(dfss[[i]])) {
+    random_row <- trunc(runif(1, 1,nrow(dfss[[i]][[j]]+1)))
+    plot(dfss[[i]][[j]][random_row,], col="red", main=rownames(dfss[[i]][[j]])[random_row])
+}}
+```
+
+## Write to file
+```{r}
+dir.create(file.path(paste0("QCd/")), showWarnings=F)
+for(type in names(dfss)) { dir.create(file.path(paste0("QCd/",type)), showWarnings=F) }
+
+for(i in seq_along(dfss)) {
+for(j in seq_along(dfss[[i]])) {
+    write.csv(dfss[[i]][[j]], paste0("QCd/",names(dfss)[i],"/",names(dfss[[i]])[j],"_QCd_",names(dfss)[i],".csv"))
+}}
+```
+
+```{r}
+export_location <- paste0( Sys.getenv('WORKSPACE_BUCKET'), "/PH_files" )
+system(paste("gsutil cp -R QCd", export_location))
+```
