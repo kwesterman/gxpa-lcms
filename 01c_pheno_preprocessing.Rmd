@@ -5,12 +5,6 @@ suppressPackageStartupMessages(library(patchwork, table1))
 ```
 
 ```{r}
-ws_namespace <- Sys.getenv("WORKSPACE_NAMESPACE")
-ws_name <- Sys.getenv("WORKSPACE_NAME")
-ws_bucket <- Sys.getenv("WORKSPACE_BUCKET")
-```
-
-```{r}
 theme_set(theme_bw())
 
 ## ggplot specifications ----------
@@ -71,7 +65,7 @@ n_pct <- function(x, level=F) {
 # Read in and align datasets
 We will read in various phenotype datassets to align and eventually merge with genotypes.
 ```{r}
-system(paste0("gsutil cp -R ", ws_bucket, "/phenotypes ./"))
+system(paste0("gsutil cp -R $WORKSPACE_BUCKET/phenotypes ."))
 list.files("phenotypes")
 ```
 

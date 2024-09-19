@@ -1,35 +1,24 @@
 # Preliminaries
-
-
 ```{r}
 suppressPackageStartupMessages(library(tidyverse))
 library(patchwork)
 ```
-
-
 ```{r}
 ws_namespace <- Sys.getenv("WORKSPACE_NAMESPACE")
 ws_name <- Sys.getenv("WORKSPACE_NAME")
 ws_bucket <- Sys.getenv("WORKSPACE_BUCKET")
 ```
-
-
 ```{r}
 theme_set(theme_bw())
 ```
 
 # Read in and align datasets
-
 We will read in various data types to merge (phenotypes and genotypes) and align (with a separate metabolomic dataset).
-
-
 ```{r}
 system(paste0("gsutil cp -R ", ws_bucket, "/phenotypes ."))
 ```
 
 ## Basic info: draw dates, study site, etc.
-
-
 ```{r}
 basic_info_df <- readxl::read_excel("phenotypes/draw_dates_MESA_study_site.xlsx") %>%
     mutate(sidno = as.integer(sidno),
@@ -44,8 +33,6 @@ table(basic_info_df$race) / sum(table(basic_info_df$race))
 ```
 
 ## Batch info
-
-
 ```{r}
 batch_info_df <- read_csv("phenotypes/sample_info.csv", col_types=cols())
 #     mutate(sidno = as.integer(sidno),
@@ -58,15 +45,10 @@ head(batch_info_df, 3)
 ```
 
 ## Main phenotypes
-
 Retrieved using PIC-SURE
-
-
 ```{r}
 fix_pheno_names <- function(pheno_names) {
-    
     # Remove front matter and trailing backslashes from MESA phenotype names
-    
     new_pheno_names <- unlist(lapply(pheno_names, function(nm) {
         if (grepl("phs000209", nm)) {
             capture_str <- ".*\\\\(.*)\\\\$"
@@ -90,7 +72,6 @@ winsorize <- function(x, SDs=5) {
   )
 }
 ```
-
 
 ```{r}
 basic_pheno_df <- read_csv("phenotypes/basic_phenotypes.csv", col_types=cols()) %>%
@@ -134,12 +115,9 @@ covariate_df <- read_csv("phenotypes/covariates.csv", col_types=cols()) %>%
 ```
 
 ## NMR data
-
-
 ```{r}
 system("unzip phenotypes/SHARe_AncilMesaNMR_LP4_DS.zip -d phenotypes/")
 ```
-
 
 ```{r}
 nmr_df <- read_table("phenotypes/SHARe_AncilMesaNMR_LP4_DS.txt", col_types=cols()) %>%
@@ -165,8 +143,6 @@ nmr_lp3_df <- read_csv("phenotypes/nmr_metabolites.csv", col_types=cols()) %>%
 ```
 
 ## Genetic principal components
-
-
 ```{r}
 system(paste0("gsutil cp ", ws_bucket, "/freeze9b_sample_annot_2020-08-20.txt phenotypes/"))
 f9b_sample_map <- read_tsv("phenotypes/freeze9b_sample_annot_2020-08-20.txt",
@@ -188,8 +164,6 @@ head(gPC_df, 3)
 ```
 
 ## Ancestry proportions
-
-
 ```{r}
 ancestry_prop_fields <- c("African", "American", "East_Asian", "European")
 ancestry_prop_df <- read_csv("phenotypes/id_match_file.csv", col_types=cols()) %>%
@@ -201,10 +175,7 @@ head(ancestry_prop_df, 3)
 ```
 
 ## Genotypes of interest
-
 ## ID matching file
-
-
 ```{r}
 id_df <- read_csv("phenotypes/id_match_file.csv", col_types=cols()) %>%
     mutate(mesa_id = as.integer(Cohort_Specific_Id)) %>%
@@ -213,17 +184,13 @@ id_df <- read_csv("phenotypes/id_match_file.csv", col_types=cols()) %>%
 head(id_df, 3)
 ```
 
-
 ```{r}
 genos <- readRDS("genotypes/analysis_genotypes.rds")
 head(genos, 3)
 ```
 
 # Create primary analysis dataset
-
 ## Merge phenotype and genotype datasets
-
-
 ```{r}
 dim(basic_info_df)
 dim(basic_pheno_df)
@@ -235,7 +202,6 @@ dim(ancestry_prop_df)
 dim(genos)
 dim(id_df)
 ```
-
 
 ```{r}
 # Full dataset without subsetting to LC/MS subgroup
@@ -250,11 +216,9 @@ analysis_df <- basic_info_df %>%
     left_join(id_df, by=c("mesa_id", "NWD_ID"))  # Adds TOM_ID
 ```
 
-
 ```{r}
 str(analysis_df)
 ```
-
 
 ```{r}
 summarize_continuous <- function(x) {
@@ -283,8 +247,6 @@ pop_description_tbl %>% t()
 ```
 
 ## Distributions
-
-
 ```{r}
 plot_continuous <- function(cont_var) {
     analysis_df %>%
@@ -304,7 +266,6 @@ plot_categorical <- function(cat_var) {
 options(repr.plot.width=12, repr.plot.height=5)
 ```
 
-
 ```{r}
 # Basic biological variables
 age_plt <- plot_continuous("age")
@@ -315,7 +276,6 @@ age_plt + gender_plt + bmi_plt
 race_plt <- plot_categorical("race")
 race_plt
 ```
-
 
 ```{r}
 # Outcomes
@@ -329,7 +289,6 @@ l_hdl_p_plt <- plot_continuous("L_HDL_P")
 hdl_p_plt + m_hdl_p_plt + l_hdl_p_plt
 ```
 
-
 ```{r}
 # Exposures
 pa_plt <- plot_continuous("pa")
@@ -342,7 +301,6 @@ vig_pa_plt <- plot_continuous("vig_pa")
 mvpa_plt + mod_pa_plt + vig_pa_plt
 ```
 
-
 ```{r}
 analysis_df %>%
     filter(!is.na(vig_pa)) %>%
@@ -352,7 +310,6 @@ geom_histogram(bins=100) +
     labs(title="vig_pa by gender") +
 coord_cartesian(ylim=c(0, 200))
 ```
-
 
 ```{r}
 # Covariates
@@ -369,7 +326,6 @@ dash_plt <- plot_continuous("dash_score")
 ahei_plt + dash_plt
 ```
 
-
 ```{r}
 # Batch variables
 site_plt <- plot_categorical("site")
@@ -377,7 +333,6 @@ month_plt <- plot_categorical("month") + theme(axis.text.x=element_text(angle=30
 season_plt <- plot_categorical("season")
 site_plt + month_plt + season_plt
 ```
-
 
 ```{r}
 missingness_vars <- c(
@@ -395,16 +350,12 @@ analysis_df %>%
 ```
 
 ## Additional phenotype preprocessing
-
 We will include a few more preprocessing steps to prepare the data for analysis.
-
 * ___ of continuous PA variables to reduce the extreme skewness
 * Imputation of covariate values to retain sample size, using:
     - Median value for continuous variables
     - "Missing" indicator for categorical income
     - "Never" for smoking
-
-
 ```{r}
 analysis_df <- analysis_df %>%
   mutate(income_cat = ifelse(is.na(income_cat), "Missing", income_cat),  # Add missing indicators to SES & HL covariates rather than drop them
@@ -414,14 +365,10 @@ analysis_df <- analysis_df %>%
 ```
 
 # Incorporate LC/MS metabolomics
-
 ## Preprocessed and QCed MESA metabolomics data
-
-
 ```{r}
 system(paste0("gsutil cp -R ", ws_bucket, "/QCd ."))
 ```
-
 
 ```{r}
 mesa_metab_files <- c(
@@ -445,8 +392,6 @@ metabolite_types <- lapply(mesa_metab_mat_list, function(df) {
 ```
 
 ## Merge and align primary and metabolomics datasets
-
-
 ```{r}
 common_samples <- Reduce(intersect, lapply(mesa_metab_mat_list, rownames))
 
@@ -456,17 +401,13 @@ mesa_metab_mat <- mesa_metab_mat[rownames(mesa_metab_mat) %in% analysis_df$TOM_I
 mesa_metabs <- colnames(mesa_metab_mat)                          
 ```
 
-
 ```{r}
 analysis_df_lcms <- analysis_df[match(rownames(mesa_metab_mat), 
                                       analysis_df$TOM_ID), ]
-
 dim(analysis_df_lcms)
 ```
 
 ## PCA
-
-
 ```{r}
 pc_res <- prcomp(mesa_metab_mat, center=TRUE, scale=TRUE)
 pc_df <- as_tibble(pc_res$x, rownames="TOM_ID") %>%
@@ -474,16 +415,12 @@ pc_df <- as_tibble(pc_res$x, rownames="TOM_ID") %>%
     rename_with(~paste0("m", .), -TOM_ID)
 ```
 
-
 ```{r}
 options(repr.plot.width=8, repr.plot.height=6)
-
 screeplot(pc_res, npcs=20, main="Metabolite PCA Scree plot")
 ```
 
 ## PEER factors
-
-
 ```{r}
 # system(paste0(
 #     "conda config --add channels bioconda &&",
@@ -494,27 +431,21 @@ screeplot(pc_res, npcs=20, main="Metabolite PCA Scree plot")
 # system("R CMD INSTALL R_peer_source_1.3.tgz")
 ```
 
-
 ```{r}
 # Chunk: create PEER factors
 ```
-
 
 ```{r}
 # Chunk: compare PEER factors to PCs
 ```
 
 ## Add metabolomic summary variables to analysis dataset
-
-
 ```{r}
 analysis_df_lcms <- analysis_df_lcms %>%
     left_join(pc_df, by="TOM_ID")
 ```
 
 # Covariate associations with metabolomic PCs
-
-
 ```{r}
 race_plt <- bind_cols(analysis_df_lcms, pc_res$x[, 1:5]) %>%
     ggplot(aes(x=PC1, y=PC2)) +
@@ -532,7 +463,6 @@ options(repr.plot.width=12, repr.plot.height=3)
 
 race_plt + site_plt + gender_plt
 ```
-
 
 ```{r}
 cont_vars <- c("age", "bmi", 
@@ -554,7 +484,6 @@ pc_test_res <- expand_grid(
     rowwise() %>%
     mutate(p = pc_test(pc, covar))
 ```
-
 
 ```{r}
 pc_test_plt_df <- pc_test_res %>%
@@ -583,16 +512,12 @@ pc_test_plt_df %>%
 ```
 
 # Assessment of the SNPs and exposures of interest
-
-
 ```{r}
 snp_info_df <- read_csv("genotypes/snp_info.csv", col_types=cols())
 exposures <- c("pa_bin")
 ```
 
 ## Univariate SNP-mPC and exposure-mPC associations
-
-
 ```{r}
 snp_mPC_assoc_df <- lapply(snp_info_df$rsID, function(rsID) {
     g_dominant <- analysis_df_lcms[[rsID]] > 0
@@ -612,7 +537,6 @@ exp_mPC_assoc_df <- lapply(exposures, function(e) {
     setNames(exposures) %>%
     bind_rows(.id="exposure")
 ```
-
 
 ```{r}
 options(repr.plot.width=12, repr.plot.height=3)
@@ -635,8 +559,6 @@ exp_mPC_assoc_df %>%
 ```
 
 ## Incorporation of technical covariates
-
-
 ```{r}
 technical_covar_sets <- list(
     none = "",
@@ -653,7 +575,6 @@ test_univariate <- function(y, x, covar_vec) {
         filter(term == x)
 }
 ```
-
 
 ```{r}
 snp_mPC_technical_covar_assoc_df <- expand_grid(
@@ -674,7 +595,6 @@ exp_mPC_technical_covar_assoc_df <- expand_grid(
     mutate(lm_res = list(test_univariate(mPC, e, technical_covar_sets[[covar_set]]))) %>%
     unnest(lm_res)
 ```
-
 
 ```{r}
 options(repr.plot.width=8, repr.plot.height=6)
@@ -703,8 +623,6 @@ exp_mPC_technical_covar_assoc_df %>%
 ```
 
 ## Incorporation of biological covariates
-
-
 ```{r}
 biological_covar_sets <- list(
     basic = "site",
@@ -717,7 +635,6 @@ biological_covar_sets <- list(
     add_gender_age_race_gPC = c("site", "gender_f0m1", "age", "race", paste0("gPC", 1:5))
 )
 ```
-
 
 ```{r}
 snp_mPC_biological_covar_assoc_df <- expand_grid(
@@ -738,7 +655,6 @@ exp_mPC_biological_covar_assoc_df <- expand_grid(
     mutate(lm_res = list(test_univariate(e, mPC, biological_covar_sets[[covar_set]]))) %>%
     unnest(lm_res)
 ```
-
 
 ```{r}
 options(repr.plot.width=12, repr.plot.height=6)
@@ -767,14 +683,10 @@ exp_mPC_biological_covar_assoc_df %>%
 ```
 
 # Conclusions
-
 * The most important covariates affecting top PCs are study site and race (highly correlated) as well as gender
 * It appears that most of the high-level metabolite associations can be captured with about 9 metabolite PCs (for both genotypes and exposures) 
 * So, we want to adjust for PEER factors, and we are OK knowing that they are representing expected variables.
-
 # Export final datasets for analysis
-
-
 ```{r}
 write_csv(analysis_df, "analysis/analysis_df.csv")  # All individuals
 write_csv(analysis_df_lcms, "analysis/analysis_df_lcms.csv")  # Matched to the LC/MS dataset
