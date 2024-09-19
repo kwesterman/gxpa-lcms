@@ -1,291 +1,105 @@
-# Import
+# Lib
 ```{r}
-data_files <- c("19_0904_TOPMed_FHS_Broad_C18-neg_metabolomics_NONREDUNDANTonly_tabd.txt",
-                "19_1203_TOPMed_FHS_Broad_C8-pos_metabolomics_v2_NONREDUNDANTonly_tabd.txt",
-                "20_0213_TOPMed_FHS_Broad_HILIC-pos_metabolomics_NONREDUNDANTonly_tabd.txt",
-                "20_0226_TOPMed_FHS_BIDMC_Amide-neg_metabolomics_tabd.txt",
-
-                "19_1008_TOPMed_WHI_Broad_C18-neg_metabolomics_NONREDUNDANTonly_tabd.txt",
-                "19_1126_TOPMed_WHI_Broad_C8-pos_metabolomics_v2_NONREDUNDANTonly_tabd.txt",
-                "19_1211_TOPMed_WHI_Broad_HILIC-pos_metabolomics_NONREDUNDANTonly_tabd.txt",
-                "20_0226_TOPMed_WHI_BIDMC_Amide-neg_metabolomics_tabd.txt",
-                
-                "MESA_pilot_BroadInst_C8-pos_lipids_050517.csv",
-                "MESA_pilot_BroadInst_HIL-pos_polar_050517.csv",
-                # "amines_mesa_raw.txt", # April 28, 2022: where did this file go? :(
-                "an_MESA_clean.txt",
-                
-                "l_proapt_ex02_3_1117s_18.csv", # FHS proteomics
-                "WHI_proteomics_2021-05-25.csv",
-                "proteomics_MESA_april2021.csv",
-               
-                "MESA_amines_HMDBs.csv")
-
-data_paths <- paste0("gs://fc-secure-4b3e979d-ba8b-43c4-a5ec-b41ab42ce606/",data_files)
-```
-
-```{r}
-for(path in data_paths) { print(system(paste("gsutil cp",path,"./ 2>&1"))) } # Copy data files into working dir. 0==success
-```
-
-# Read
-```{r}
-library(data.table)
 options(stringsAsFactors=FALSE)
+library(AnVIL)
+library(data.table)
+"%ni%" <- Negate("%in%")
+```
+
+# MESA C8 and HILIC positive
+Amines data looks completely different, handled later.
+```{r}
+data_files <- c(MESA_C8=paste0(avbucket(),"/metabolomics/raw/MESA_pilot_BroadInst_C8-pos_lipids_050517.csv"),
+                MESA_HP=paste0(avbucket(),"/metabolomics/raw/MESA_pilot_BroadInst_HIL-pos_polar_050517.csv"))
+dts <- sapply( data_files, \(path) fread(cmd=paste("gsutil cat",path)) )
+
+#dts[[1]][1:10,1:10] # Uncomment to get an idea of what the data looks like
 ```
 
 ```{r}
-dts1 <- lapply(data_files[ 1:10], fread) # dts1 are all of a similar-ish format and can be handled together.
-dts2 <- lapply(data_files[11:14], fread) # dts2 are already mostly clean. Handled separately.
-names(dts1) <- c("cn_FHS", "cp_FHS", "hp_FHS", "an_FHS", "cn_WHI", "cp_WHI", "hp_WHI", "an_WHI", "cp_MESA", "hp_MESA")
-dts1_methods<- c("cn",     "cp",     "hp",     "an",     "cn",     "cp",     "hp",     "an",     "cp",      "hp")
-names(dts2) <- c("an_MESA", "proteo_FHS", "proteo_WHI", "proteo_MESA")
-```
-
-```{r}
-gc()
-```
-
-# dts1
-## Inspect
-```{r}
-lapply(dts1,dim)
-# lapply(dts1,head,n=12)
-```
-
-```{r}
-data_start_rows <- c(10,10,10,10,10,10,10,10, 6, 6)
-data_start_cols <- c( 8, 8, 8, 7, 8, 8, 8, 7, 7, 7)
+data_start_row <- 6
+data_start_col <- 7
 
 # Sample-related stuff all starts @ data_start_COL
-sample_id_rows <- c(9,9,9,9,9,9,9,9,5,5)
-extr_date_rows <- c(1,1,1,1,1,1,1,1,1,1)
+sample_id_row <- 5
+extr_date_row <- 1
 
 # Metabolite-related stuff all starts @ data_start_ROW
-method_cols      <- c(1,1,1,1,1,1,1,1,1,1)
-compound_id_cols <- c(2,2,2,5,2,2,2,5,2,2)
-mrm_cols <- c(NA,NA,NA, 2,NA,NA,NA, 2,NA,NA)
-mz_cols  <- c( 3, 3, 3,NA, 3, 3, 3,NA, 3, 3)
-rt_cols  <- c( 4, 4, 4, 3, 4, 4, 4, 3, 4, 4)
-hmdb_id_cols  <- c(5,5,5,5,5,5,5,5,5,5)
-met_name_cols <- c(7,7,7,6,7,7,7,6,6,6)
+invisible(lapply(dts, setnames, old=c("V1","V2","V3","V4","V5","V6"), new=c("method","compound_id","mz","rt","hmdb","name")))
 ```
 
-## Fix that one Compound_ID/HMDB_ID in an_WHI
-Compound_ID "C12271\xa0\xa0\xa0(KEGG)" with HMDB_ID "C12271\U{3e30613c}\U{3e30613c}\U{3e30613c}(KEGG)". The invisible special characters cause errors.
-```{r}
-# (dts1[[8]] is cp_WHI)
-cpd_id_tmp <- unlist( dts1[[8]][,compound_id_cols[8],with=F] )
-grep("C12271",cpd_id_tmp) # The row of the offending compound is 82
-
-set(dts1[[8]], i=82L, j=as.integer(compound_id_cols[8]), value="C12271")
-set(dts1[[8]], i=82L, j=as.integer(hmdb_id_cols    [8]), value="") # There is no HMDB id for this molecule (manually searched)
-```
-
-## Give an (arbitrary) id to WHI amines with none
-```{r}
-# # an_WHI = 8
-# tmp <- unlist(dts1[[8]][,hmdb_id_cols[8],with=F])
-# table(nchar(tmp))
-# tmp[nchar(tmp)!=11]
-# dts1[[8]][nchar(tmp)!=11,]
-```
-
-## Remove "redundant_ion"s
-A.K.A. the metabolites with names beginning with "NH4_".\
-They are only present in MESA c8.
-```{r}
-rows2keep <- unlist(dts1[[9]][,hmdb_id_cols[9],with=F])!="redundant_ion"
-dts1[[9]] <- dts1[[9]][rows2keep,]
-
-# You can use this commented code to make sure ~all~ the "redundant_ion"s are the "NH4_..." metabolites, and all the "NH4_..." metabolites are "redundant_ion"s.
-#lapply(seq_along(dts1), function(i) {
-#    tmp <- dts1[[i]][,c(hmdb_id_cols[i],met_name_cols[i]),with=F]
-#    names(tmp) <- c("hmdb","nm")
-#    print(tmp[hmdb=="redundant_ion",nm]) # All the "redundant_ion"s are "NH4_..." metabolites indeed
-#    print(tmp[grep("NH4_",nm),hmdb]) # All the "NH4_..." metabolites are "redundant_ion"s indeed
-#})
-```
-
-```{r}
-#intstd_row_indss <- lapply(1:length(dts1), function(i) { which(grepl("interna", unlist(dts1[[i]][,hmdb_id_cols[i],with=F]), ignore.case=T)) })
-#lapply(1:length(dts1), function(i) { print(names(dts1)[i]); dts1[[i]][intstd_row_indss[[i]],1:10,with=F]})
-```
-
-## Remove the '\*' suffix from HMDBs which have it
+## Remove '\*' suffix from some HMDBs
 E.g. "HMDB00001*" --> "HMDB00001"
 ```{r}
-for(dti in 1:length(dts1)) {
-    hmdbs_col <- unlist(dts1[[dti]][,hmdb_id_cols[dti],with=F])
-    hmdbs_col <- sub("\\*","",hmdbs_col)
-    for(r in 1:nrow(dts1[[dti]]))
-        set(dts1[[dti]], i=r, j=as.integer(hmdb_id_cols[dti]), hmdbs_col[r])
-}
+invisible(lapply(dts, \(dt) dt[, hmdb := sub("\\*$","",hmdb) ] ))
 ```
 
 ## Manually deal with duplications in the individual method datasets
-##### Function to delete data.table rows by reference, stolen from jarppiko's comment in https://github.com/Rdatatable/data.table/issues/635
-```{r}
-rmDtRows <- function(DT, del.idxs) {
-  keep.idxs <- setdiff(DT[, .I], del.idxs); # row indexes to keep
-  cols = names(DT);
-  DT.subset <- data.table(DT[[1]][keep.idxs]); # this is the subsetted table
-  setnames(DT.subset, cols[1]);
-  for (col in cols[2:length(cols)]) {
-    DT.subset[, (col) := DT[[col]][keep.idxs]];
-    DT[, (col) := NULL];  # delete
-  }
-   return(DT.subset);
-}
-```
-
 ### Duplicated HMDBs
 ```{r}
-names(dts1)
-lapply(seq_along(dts1), function(i) { tmp <- table(dts1[[i]][,hmdb_id_cols[i],with=F]); tmp[tmp>1][-1] })
-# The [-1] subset of tmp is meant to ignore the "" duplications at the top of the file.
+lapply(dts, \(dt) { tmp <- table(dt[,hmdb]); tmp[tmp>1] })
 ```
 
+#### Remove `redundant_ion`s and `Internal Standard`s. Set `""` and `"n/a"` to `NA`.
 ```{r}
-# This code block does nothing, just looking at "internal standard" metabolites
-#tmp <- unlist(dts1[[1]][,hmdb_id_cols[1],with=F])
-#dts1[[1]][tmp=="Internal Standard"]
+dts <- lapply(dts, \(dt) dt[hmdb %ni% c("redundant_ion","Internal Standard")] )
+invisisble(lapply(dts, \(dt) dt[hmdb %in% c("","n/a"), hmdb := NA] ))
 ```
 
-##### HMDB0000610 duplicated in FHS c8
+#### MESA HILIC+ Duplicated HMDBs
 ```{r}
-inds <- which(dts1[[2]][,hmdb_id_cols[2],with=F]=="HMDB0000610"); dts1[[2]][inds,]
-dts1[[2]] <- rmDtRows(dts1[[2]], inds[2]) # Just keep the first entry
-inds <- which(dts1[[2]][,hmdb_id_cols[2],with=F]=="HMDB0000610"); dts1[[2]][inds,]
+dup_hmdbs <- c("HMDB00853","HMDB00991","HMDB01325","HMDB07973","HMDB12101","HMDB13122")
+dts[[2]][hmdb %in% dup_hmdbs, 1:6]
+
+# For most, just arbitrarily keep the first entry.
+# For HMDB12101, keep the 2nd, becuase the 1st entry used to have an HMDB with an asterisk* (meaning it is a representative metabolite). We would rather have the exact metabolite. 
+dts[[2]] <- dts[[2]][ -which(hmdb=="HMDB00853")[2] ]
+dts[[2]] <- dts[[2]][ -which(hmdb=="HMDB00991")[2] ]
+dts[[2]] <- dts[[2]][ -which(hmdb=="HMDB01325")[2] ]
+dts[[2]] <- dts[[2]][ -which(hmdb=="HMDB07973")[2] ]
+dts[[2]] <- dts[[2]][ -which(hmdb=="HMDB12101")[1] ]
+dts[[2]] <- dts[[2]][ -which(hmdb=="HMDB13122")[2] ]
+dts[[2]][hmdb %in% dup_hmdbs, 1:6]
 ```
 
-##### HMDB0010393 and HMDB0011130 duplicated in FHS hilic
+### Duplicated Metabolite Names
 ```{r}
-inds <- which(dts1[[3]][,hmdb_id_cols[3],with=F]=="HMDB0010393"); dts1[[3]][inds,]
-dts1[[3]] <- rmDtRows(dts1[[3]], inds[2]) # Just keep the first entry
-inds <- which(dts1[[3]][,hmdb_id_cols[3],with=F]=="HMDB0010393"); dts1[[3]][inds,]
+lapply(dts, \(dt) { tmp <- table(dt[,name]); tmp[tmp>1] })
 ```
 
+####  MESA HILIC+ Duplicated Names
 ```{r}
-inds <- which(dts1[[3]][,hmdb_id_cols[3],with=F]=="HMDB0011130"); dts1[[3]][inds,]
-dts1[[3]] <- rmDtRows(dts1[[3]], inds[2]) # Just keep the first entry
-inds <- which(dts1[[3]][,hmdb_id_cols[3],with=F]=="HMDB0011130"); dts1[[3]][inds,]
-```
-
-##### HMDB0062641 duplicated in FHS amines
-```{r}
-inds <- which(dts1[[4]][,hmdb_id_cols[4],with=F]=="HMDB0062641"); dts1[[4]][inds,]
-dts1[[4]] <- rmDtRows(dts1[[4]], inds[1]) # Because the assignment certainty of the first appearance is worse, we remove that one.
-inds <- which(dts1[[4]][,hmdb_id_cols[4],with=F]=="HMDB0062641"); dts1[[4]][inds,]
-```
-
-##### HMDB0010393 and HMDB0013122 duplicated in WHI hilic
-```{r}
-inds <- which(dts1[[7]][,hmdb_id_cols[7],with=F]=="HMDB0010393"); dts1[[7]][inds,]
-dts1[[7]] <- rmDtRows(dts1[[7]], inds[2]) # Just keep the first entry
-inds <- which(dts1[[7]][,hmdb_id_cols[7],with=F]=="HMDB0010393"); dts1[[7]][inds,]
-```
-
-```{r}
-inds <- which(dts1[[7]][,hmdb_id_cols[7],with=F]=="HMDB0013122"); dts1[[7]][inds,]
-dts1[[7]] <- rmDtRows(dts1[[7]], inds[2]) # Just keep the first entry
-inds <- which(dts1[[7]][,hmdb_id_cols[7],with=F]=="HMDB0013122"); dts1[[7]][inds,]
-```
-
-##### HMDB0062641 duplicated in WHI amines
-```{r}
-inds <- which(dts1[[8]][,hmdb_id_cols[8],with=F]=="HMDB0062641"); dts1[[8]][inds,]
-dts1[[8]] <- rmDtRows(dts1[[8]], inds[1]) # Because the assignment certainty of the first appearance is worse, we remove that one.
-inds <- which(dts1[[8]][,hmdb_id_cols[8],with=F]=="HMDB0062641"); dts1[[8]][inds,]
-```
-
-##### HMDB00853, HMDB00991, HMDB01325, HMDB07973, HMDB12101, HMDB13122 duplicated in MESA hilic
-```{r}
-inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB00853" ); dts1[[10]][inds,]
-dts1[[10]] <- rmDtRows(dts1[[10]], inds[2]) # Just keep the first entry
-inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB00853" ); dts1[[10]][inds,]
-```
-
-```{r}
-inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB00991" ); dts1[[10]][inds,]
-dts1[[10]] <- rmDtRows(dts1[[10]], inds[2]) # Just keep the first entry
-inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB00991" ); dts1[[10]][inds,]
-```
-
-```{r}
-inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB01325" ); dts1[[10]][inds,]
-dts1[[10]] <- rmDtRows(dts1[[10]], inds[2]) # Just keep the first entry
-inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB01325" ); dts1[[10]][inds,]
-```
-
-```{r}
-inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB07973"); dts1[[10]][inds,]
-dts1[[10]] <- rmDtRows(dts1[[10]], inds[2]) # Just keep the first entry
-inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB07973"); dts1[[10]][inds,]
-```
-
-We choose the secodn row here because the first row used to have an asterisk next to the HMDB, meaning that the HMDB is not an exact match to the metabolite but close enough that to be a representative HMDB. However, we would rather choose the molecule with an exact match to the HMDB, i.e. the not-asterisk one.
-```{r}
-inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB12101" ); dts1[[10]][inds,]
-dts1[[10]] <- rmDtRows(dts1[[10]], inds[1]) # Just keep the second entry
-inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB12101" ); dts1[[10]][inds,]
-```
-
-```{r}
-inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB13122" ); dts1[[10]][inds,]
-dts1[[10]] <- rmDtRows(dts1[[10]], inds[2]) # Just keep the first entry
-inds <- which(dts1[[10]][,hmdb_id_cols[10],with=F]=="HMDB13122" ); dts1[[10]][inds,]
-```
-
-### Duplicated Known Metabolite Names
-```{r}
-names(dts1)
-lapply(seq_along(dts1), function(i) { tmp <- table(dts1[[i]][,met_name_cols[i],   with=F]); tmp[tmp>1][-1] })
-```
-
-##### "C34:1 DAG_or_TAG_fragment" and "C34:2 DAG_or_TAG_fragment" duplicated in MESA hilic
-```{r}
-inds1 <- which(dts1[[10]][,met_name_cols[10],with=F]=="C34:1 DAG_or_TAG_fragment"); dts1[[10]][inds1,]
-inds2 <- which(dts1[[10]][,met_name_cols[10],with=F]=="C34:2 DAG_or_TAG_fragment"); dts1[[10]][inds2,]
-dts1[[10]] <- rmDtRows(dts1[[10]], c(inds1,inds2)) # Just remove all 4 of these
-inds1 <- which(dts1[[10]][,met_name_cols[10],with=F]=="C34:1 DAG_or_TAG_fragment"); length(inds1)
-inds2 <- which(dts1[[10]][,met_name_cols[10],with=F]=="C34:2 DAG_or_TAG_fragment"); length(inds2)
+dup_nms <- c("C34:1 DAG_or_TAG_fragment", "C34:2 DAG_or_TAG_fragment")
+dts[[2]][name %in% dup_nms, 1:6]
+dts[[2]] <- dts[[2]][ name %ni% dup_nms ] # Just remove all 4 of these
+dts[[2]][name %in% dup_nms, 1:6]
 ```
 
 ### Duplicated Compound Ids and Sample Ids (there are none!)
 ```{r}
-lapply(seq_along(dts1), function(i) { tmp <- table(dts1[[i]][,compound_id_cols[i],with=F]); tmp[tmp>1][-1] })
-lapply(seq_along(dts1), function(i) { tmp <- table(dts1[[i]][ sample_id_rows[i],        ]); tmp[tmp>1]     })
+lapply(dts, \(dt) { tmp <- table(dt[, compound_id]); tmp[tmp>1] })
+lapply(dts, \(dt) { tmp <- table(dt[sample_id_row]); tmp[tmp>1] })
 ```
 
-## Checking for Within-cohort Duplications?
-TL;DR yes, e.g. within MESA the HILIC+ and C8+ might pick up a bunch of the same knowns.\
-All the above were _within_-method duplications, now testing within-_cohort_ duplications (like if the methods were merged together without making the ids unique with a method suffix). Indeed if there were no method suffix, there would be many within-cohort duplicated HMDBs.
+## Checking for within-cohort Duplications?
+Yes they exist, i.e. multiple methods (C8+, HILIC+) can pick up the same mets. A greater number than we'd want to remove.\
+To deal with this, we will add a suffix signifying the method to the end of each HMDB later.
 ```{r}
-#fhs_hmdbs <- unlist(sapply(1:4, function(i) {
-#    hmdbs <- unlist(dts1[[i]][,hmdb_id_cols[i],with=F])
-#    hmdbs <- hmdbs[!(hmdbs %in% c("Internal Standard","internal standard", "")) & !is.na(hmdbs)]
-#}))
-#fhs_hmdbs[duplicated(fhs_hmdbs)]
-#
-#whi_hmdbs <- unlist(sapply(5:8, function(i) {
-#    hmdbs <- unlist(dts1[[i]][,hmdb_id_cols[i],with=F])
-#    hmdbs <- hmdbs[!(hmdbs %in% c("Internal Standard","internal standard", "")) & !is.na(hmdbs)]
-#}))
-#whi_hmdbs[duplicated(whi_hmdbs)
-#
-#mesa_hmdbs <- unlist(sapply(9:10, function(i) {
-#    hmdbs <- unlist(dts1[[i]][,hmdb_id_cols[i],with=F])
-#    hmdbs <- hmdbs[!(hmdbs %in% c("Internal Standard","internal standard", "", "redundant_ion", "n/a")) & !is.na(hmdbs)]
-#}))
-#mesa_hmdbs[duplicated(mesa_hmdbs)]
+all_mesa_hmdbs <- unlist(sapply(dts,'[',j=hmdb))
+tmp <- table(all_mesa_hmdbs); tmp[tmp>1]
 ```
+
+
+# TODO, CONTINUE prettying up the code here
+
+
+
 
 ## Clean
 Just the sample IDs as rows, metabolite compound IDs as columns, and measurement data in the middle.\
 The dictionaries we made map these sample/metabolite IDs to the additional information if we ever need it later.
 ```{r}
-dts1_clean <- list()
+dts_clean <- list()
 
 sample_idss <- lapply(seq_along(dts1), function(i) unlist(dts1[[i]][ sample_id_rows[i], data_start_cols[i]:ncol(dts1[[i]]) ]))
 
@@ -309,9 +123,6 @@ for(i in seq_along(dts1)) {
       # (but not integer, b/c some counts are > MAX_INT and also amine measurements are floats)
     for(col in 1:ncol(dts1_clean[[i]])) set(dts1_clean[[i]], j=col, value=as.numeric(dts1_clean[[i]][[col]]))
 
-    # With the dictionaries and this, now nothing else we need from the raw data, might as well toss it, save memory.
-    # dts1[[i]] <- 0 
-
     # T, and naming
     dts1_clean[[i]] <- t(dts1_clean[[i]])
 
@@ -320,8 +131,7 @@ for(i in seq_along(dts1)) {
     dts1_clean[[i]] <- data.table(sample_id=sample_idss[[i]], dts1_clean[[i]])
 }
 
-# c8_MESA has 4 full NA rows at the end.
-# all(is.na(tail(dts1_clean[[9]],n=4))) --> TRUE ¯\_('- ')_/¯
+# c8_MESA has 4 full NA rows at the end (who knows why): all(is.na(tail(dts1_clean[[9]],n=4))) --> TRUE
 dts1_clean[[9]] <- dts1_clean[[9]][!is.na(sample_id)]
 
 
@@ -350,31 +160,9 @@ for(i in seq_along(dts1_clean)) { write.table(dts1_clean[[i]], paste0("PH_files/
 system(paste("gsutil cp -R PH_files", Sys.getenv('WORKSPACE_BUCKET')))
 ```
 
-# dts2
+## MESA amines
 ```{r}
-# Inspect
-lapply(dts2,dim)
-# lapply(dts2,head,n=12)
-```
-
-```{r}
-# Clean
-
-# As of April 28 2022 the raw amines_mesa.txt file is gone, so just using the already cleaned one. Not much modification was made anyways.
-#dts2[["an_MESA"]] <- dts2[["an_MESA"]][,-c(1,2)]
-#colnames(dts2[["an_MESA"]])[2:ncol(dts2[["an_MESA"]])] <- paste0(colnames(dts2[["an_MESA"]])[2:ncol(dts2[["an_MESA"]])],"_an") # method suffix
-
-dts2[["proteo_FHS"]] <- dts2[["proteo_FHS"]][,-c(2,3)]
-dts2[["proteo_WHI"]] <- dts2[["proteo_WHI"]][,grep("^O",colnames(dts2[["proteo_WHI"]])), with=F]
-dts2[["proteo_MESA"]] <- dts2[["proteo_MESA"]]
-
-for(i in seq_along(dts2)) colnames(dts2[[i]])[1] <- "sample_id"
-```
-
-```{r}
-# Inspect again
-lapply(dts2,dim)
-# lapply(dts2,head,n=12)
+colnames(dts2[[i]])[1] <- "sample_id"
 ```
 
 ## Write
@@ -435,26 +223,6 @@ selectMetInfoCols  <- function(dts, col_inds)
         else                   { dts[[i]][data_start_rows[i]:nrow(dts[[i]]), col_inds[i], with=F] }
 })
 
-met_info_fhs <- data.table(
-    Compound_Id_FHS = unlist(selectMetInfoCols(dts1[1:4], compound_id_cols[1:4])),
-    Compound_Id_WHI = NA,
-    Compound_Id_MESA= NA,
-    HMDB_Id     = unlist(selectMetInfoCols(dts1[1:4],         hmdb_id_cols[1:4])) ,
-    Name        = unlist(selectMetInfoCols(dts1[1:4],        met_name_cols[1:4])) ,
-    MRM         = unlist(selectMetInfoCols(dts1[1:4],             mrm_cols[1:4])) ,
-    MZ          = as.numeric(unlist(selectMetInfoCols(dts1[1:4],   mz_cols[1:4]))),
-    RT          = as.numeric(unlist(selectMetInfoCols(dts1[1:4],   rt_cols[1:4]))),
-    Method      = unlist(selectMetInfoCols(dts1[1:4],          method_cols[1:4])) )
-met_info_whi <- data.table(
-    Compound_Id_FHS = NA,
-    Compound_Id_WHI = unlist(selectMetInfoCols(dts1[5:8], compound_id_cols[5:8])),
-    Compound_Id_MESA= NA,
-    HMDB_Id     = unlist(selectMetInfoCols(dts1[5:8],         hmdb_id_cols[5:8])) ,
-    Name        = unlist(selectMetInfoCols(dts1[5:8],        met_name_cols[5:8])) ,
-    MRM         = unlist(selectMetInfoCols(dts1[5:8],             mrm_cols[5:8])) ,
-    MZ          = as.numeric(unlist(selectMetInfoCols(dts1[5:8],   mz_cols[5:8]))),
-    RT          = as.numeric(unlist(selectMetInfoCols(dts1[5:8],   rt_cols[5:8]))),
-    Method      = unlist(selectMetInfoCols(dts1[5:8],          method_cols[5:8])) )
 met_info_mesa <- data.table(
     Compound_Id_FHS = NA,
     Compound_Id_WHI = NA,
@@ -468,21 +236,13 @@ met_info_mesa <- data.table(
 ```
 
 ```{r}
-met_info_fhs [met_info_fhs ==""] <- NA
-met_info_whi [met_info_whi ==""] <- NA
 met_info_mesa[met_info_mesa==""] <- NA
-
-met_info_fhs [grepl("tandard",HMDB_Id), HMDB_Id:=NA]
-met_info_whi [grepl("tandard",HMDB_Id), HMDB_Id:=NA]
 met_info_mesa[grepl("tandard",HMDB_Id), HMDB_Id:=NA]
-
 met_info_mesa[met_info_mesa=="n/a"] <- NA
 ```
 
 ```{r}
-met_info_fhs[runif(5,1,nrow(met_info_fhs))] # Inspect 5 random rows
-met_info_whi[runif(5,1,nrow(met_info_whi))]
-met_info_mesa[runif(5,1,nrow(met_info_mesa))]
+met_info_mesa[runif(5,1,nrow(met_info_mesa))]# Inspect 5 random rows
 ```
 
 ### Add MESA amines to met_info_mesa
