@@ -11,16 +11,18 @@ bcf_drs <- "drs://dg.4503:dg.4503/5e649ac5-cf10-4cea-9003-3f9f585cf31b"
 idx_drs <- "drs://dg.4503:dg.4503/9742725a-b4d7-4b66-a517-4588295df747"
 bcf_url <- system(paste("tnu drs access", bcf_drs), intern=T)
 idx_url <- system(paste("tnu drs access", idx_drs), intern=T)
-system(paste0("curl '",idx_url,"' -o freeze.9b.chr17.pass_and_fail.gtonly.minD0.bcf.csi"))
+system(paste0("curl '",idx_url,"' -o idx.csi"))
 tmp <- fread(cmd = paste0(
   "bcftools/bcftools view",
     " -r chr17:36804493",
     " -i'ID=\"rs295849\"'",
-    " '",bcf_url,"'",
+    " '",bcf_url,"##idx##idx.csi'",
   " | ",
   "bcftools/bcftools +bcftools/plugins/dosage.so"
 ))
 
 tmp <- t(tmp[,5:length(tmp), with=F])
+colnames(tmp) <- "rs295849"
+fwrite(tmp,"dosages.csv")
 # Samples as rows, SNPs as columns. For merging with pheno data later.
 ```

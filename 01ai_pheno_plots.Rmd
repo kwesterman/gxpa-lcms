@@ -1,0 +1,415 @@
+# Set up
+```{r}
+library(tidyverse)
+library(patchwork, table1)
+```
+
+```{r}
+theme_set(theme_bw())
+
+## ggplot specifications ----------
+ggplot_theme_standard_continuous <- theme_bw() + theme(
+    axis.text.x = element_text(size=12, vjust=0.65, color = "black"),
+    axis.text.y = element_text(size=12, color="black"), 
+    strip.text=element_text(size=14, face="bold"),
+    axis.title = element_text(size=14, color = "black")
+)
+
+ggplot_theme_standard_categorical <- theme_bw() + theme(
+    axis.text.x = element_text(size=12, color = "black", angle=30, hjust=0.9),
+    axis.text.y = element_text(size=12, color="black"), 
+    strip.text=element_text(size=14, face="bold"),
+    axis.title = element_text(size=14, color = "black")
+)
+
+## Color palettes
+proj_palettes <- list(
+    greens = paletteer::paletteer_dynamic("cartography::green.pal", 10),
+    blues = paletteer::paletteer_dynamic("cartography::blue.pal", 10),
+    oranges = paletteer::paletteer_dynamic("cartography::orange.pal", 10),
+    pretty_dark = paletteer::paletteer_d("PrettyCols::Dark", 5))
+  
+```
+
+## Build basic functions
+Function to remove outliers by SD
+```{r}
+remove_outliers.fun <- function(x, SDs=5) {
+    bounds <- mean(x, na.rm=T) + SDs * c(-1, 1) * sd(x, na.rm=T)
+    
+    print(paste0(sum(x < bounds[1], na.rm=TRUE), " outliers removed at <", SDs, " SDs"))
+    print(paste0(sum(x > bounds[2], na.rm=TRUE), " outliers removed at >", SDs, " SDs"))
+    
+    x <- ifelse(x>bounds[1] & x<bounds[2], x, NA) ; x    
+}
+```
+
+Functions for describing data
+```{r}
+# Print mean/sd
+mean_sd<-function(x, d=2) {
+  sprintf("%s \u00B1 %s", round(mean(x, na.rm=T), digits = d), 
+          round(sd(x, na.rm=T), digits = d))
+}
+
+# Print n_pct for categorical vars
+n_pct <- function(x, level=F) {
+  if(level==F) {
+  sapply(as.list(names(table(x))), function(lvl) {
+    paste0(lvl, ", ", sum(x == lvl, na.rm=T), " (", round(sum(x == lvl, na.rm=T)/n()*100,1), "%)") }) } 
+  else{paste0(sum(x == level, na.rm=T), " (", round(sum(x == level, na.rm=T)/n()*100,1), "%)")}
+}
+
+```
+
+# Read in and align datasets
+We will read in various phenotype datassets to align and eventually merge with genotypes.
+```{r}
+# TODO
+```
+
+```{r}
+# Cohort basic descriptives
+pop_description_tbl <- analysis.df %>%
+    group_by(RaceEthn) %>%
+    reframe(
+        N = n(),
+        Age = mean_sd(age, d=1),
+        Female = n_pct(female, level=1),
+        BMI = mean_sd(bmi, d=1)) %>%
+  arrange(desc(N))
+
+pop_description_tbl %>% t()
+```
+
+## Distributions
+```{r}
+plot_continuous <- function(cont_var) {
+  d_complete <- analysis.df %>% select(var=all_of(cont_var)) %>% filter(!is.na(var)) 
+  d_complete %>% 
+    ggplot(aes(x=var)) + geom_histogram(bins=30) +
+    labs(title=cont_var, x=cont_var, y="frequency") +
+    geom_vline(xintercept = mean(d_complete$var, na.rm=T), linewidth=1) +
+    geom_vline(xintercept = c(mean(d_complete$var)+c(1,-1)*sd(d_complete$var)), linewidth=1, linetype="dashed") + 
+    geom_vline(xintercept = median(d_complete$var, na.rm=T), linewidth=2, color = "red") +
+    ggplot_theme_standard_continuous
+}
+
+plot_categorical <- function(cat_var) {
+  analysis.df %>% 
+    select(var=all_of(cat_var)) %>% filter(!is.na(var)) %>%
+    ggplot(aes(x=factor(var))) + geom_bar(stat="count") +
+    labs(title=cat_var, x=cat_var) +
+    ggplot_theme_standard_categorical
+}
+
+plot_xyscatter <- function(x_var, y_var) {
+  d_complete <- analysis.df %>% select(xvar=x_var, yvar = y_var) %>% filter(complete.cases(.)) 
+  d_complete %>%
+    ggplot(aes(x=xvar, y=yvar)) + geom_point(size=4, color="#00000075") + 
+    labs(title=paste0(x_var, " by ", y_var, "\nr2 = ",
+                      round(cor(d_complete$xvar, d_complete$yvar), 3))) +
+    ylab(y_var) + xlab(x_var) +
+    ggplot_theme_standard_continuous
+}
+
+options(repr.plot.width=14, repr.plot.height=5)
+options(warn=-1)
+```
+
+### Basic descriptives 
+```{r}
+# Basic descriptives
+age_plt <- plot_continuous("age")
+gender_plt <- plot_categorical("female")
+bmi_plt <- plot_continuous("bmi")
+age_plt + gender_plt + bmi_plt
+
+racethn_plt <- plot_categorical("RaceEthn")
+racethn_plt
+```
+
+### SES phenotypes
+```{r}
+# Education & Income variables
+educ_plt <- plot_categorical("educ_lvl.lab")
+educ_4lvl_plt <- plot_categorical("educ_4lvl.lab")
+educ_plt + educ_4lvl_plt
+
+inc_plt <- plot_categorical("income_lvl.lab")
+inc_4lvl_plt <- plot_categorical("income_4lvl.lab")
+inc_plt + inc_4lvl_plt
+```
+
+#### Plot of education x race/ethnicity
+```{r}
+# make plot for Education levels by R/E
+as.data.frame(with(analysis.df, table(RaceEthn, educ_4lvl.lab))) %>% 
+    ggplot(aes(x=RaceEthn, y=Freq, group=educ_4lvl.lab, fill=educ_4lvl.lab)) + 
+    geom_bar(stat = "identity", position=position_dodge()) + 
+    scale_fill_manual(values = c(proj_palettes$pretty_dark[1:5])) + 
+    ggplot_theme_standard_categorical
+
+as.data.frame(with(analysis.df, table(RaceEthn, educ_4lvl.lab))) %>% 
+    ggplot(aes(x=educ_4lvl.lab, y=Freq, group=RaceEthn, fill=RaceEthn)) + 
+    geom_bar(stat = "identity", position=position_dodge()) + 
+    scale_fill_manual(values = c(proj_palettes$pretty_dark[1:5])) +
+    ggplot_theme_standard_categorical
+```
+
+#### Plot of education x income
+```{r}
+# Education x Income
+as.data.frame(with(analysis.df, table(educ_4lvl.lab, income_4lvl.lab))) %>% 
+    ggplot(aes(x=educ_4lvl.lab, y=Freq, group=income_4lvl.lab, fill=income_4lvl.lab)) + 
+    geom_bar(stat = "identity", position=position_stack()) + 
+    scale_fill_manual(values = c(proj_palettes$pretty_dark[1:5])) 
+```
+
+### Diet phenotypes
+Total energy
+```{r}
+energy_plt <- plot_continuous("energy_kcal")
+energy_plt
+```
+
+Macronutrients (g & %kcal)
+```{r}
+carb_plt <- plot_continuous("nut_carb_g")
+carb_pct_plt <- plot_continuous("nut_carb_pct")
+fat_plt <- plot_continuous("nut_fat_g")
+fat_pct_plt <- plot_continuous("nut_fat_pct")
+prot_plt <- plot_continuous("nut_prot_g")
+prot_pct_plt <- plot_continuous("nut_prot_pct")
+carb_plt + carb_pct_plt 
+fat_plt + fat_pct_plt
+prot_plt + prot_pct_plt
+```
+
+Fat types (g & %kcal)
+```{r}
+mufa_plt <- plot_continuous("nut_mufa_g")
+mufa_pct_plt <- plot_continuous("nut_mufa_pct")
+pufa_plt <- plot_continuous("nut_pufa_g")
+pufa_pct_plt <- plot_continuous("nut_pufa_pct")
+sfa_plt <- plot_continuous("nut_sfa_g")
+sfa_pct_plt <- plot_continuous("nut_sfa_pct")
+
+mufa_plt + mufa_pct_plt
+pufa_plt + pufa_pct_plt
+sfa_plt + sfa_pct_plt
+```
+
+### Carbohydrate quality
+```{r}
+fib_plt <- plot_continuous("nut_fiber_g")
+fibsol_plt <- plot_continuous("nut_fiber_sol_g")
+fibinsol_plt <- plot_continuous("nut_fiber_insol_g")
+fib_plt 
+fibsol_plt + fibinsol_plt
+
+# note: soluble + insoluble = total
+```
+
+**Carbohydrate-to-fiber ratio
+```{r}
+carb2fib_plt <- plot_continuous("carb2fib") 
+fib2carb_plt <- plot_continuous("fib2carb") 
+carb2fib_plt + fib2carb_plt
+```
+
+```{r}
+## Add ranges, means/sd, medians
+c("Carb-to-Fiber: ", round(quantile(analysis.df$carb2fib, na.rm=T, probs=seq(0,1,0.2), include.lowest=T), 1))
+c("Fiber-to-Carb: ", round(quantile(analysis.df$fib2carb, na.rm=T, probs=seq(0,1,0.2), include.lowest=T), 3))
+
+# Create boxplot to identify potential outliers
+carb2fib_boxplt <- analysis.df %>% select("carb2fib") %>%
+    filter(!is.na("carb2fib")) %>%
+    ggplot(aes(x=carb2fib)) + 
+    geom_boxplot(outlier.color="red") +
+    ggplot_theme_standard_continuous
+
+# Create boxplot to identify potential outliers
+fib2carb_boxplt <- analysis.df %>% select("fib2carb") %>%
+    filter(!is.na("fib2carb")) %>%
+    ggplot(aes(x=fib2carb)) + 
+    geom_boxplot(outlier.color="red") +
+    ggplot_theme_standard_continuous
+
+carb2fib_boxplt
+fib2carb_boxplt
+```
+
+```{r}
+#carb-to-fib
+bounds_5SD <- c(mean(analysis.df$carb2fib, na.rm=T)+c(-5,5)*sd(analysis.df$carb2fib, na.rm=T))
+bounds_5to95 <- quantile(analysis.df$carb2fib, na.rm=T, probs = c(0.05, 0.25, 0.5, 0.75, 0.95))
+
+analysis.df %>% 
+select("carb2fib") %>%
+    filter(!is.na("carb2fib")) %>%
+    mutate(gt5SD = ifelse(carb2fib < bounds_5SD[1] | carb2fib > bounds_5SD[2],">5 SD", "ok")) %>%
+    mutate(out5to95 = ifelse(carb2fib < bounds_5to95[1] | carb2fib > bounds_5to95[5],">5 to 95%", "ok")) %>%
+    reframe(Outliers_carb2fib_gt5SD=n_pct(gt5SD),
+           Outliers_carb2fib_out5to95=n_pct(out5to95))
+
+
+#fib-to-carb
+bounds_5SD <- c(mean(analysis.df$fib2carb, na.rm=T)+c(-5,5)*sd(analysis.df$fib2carb, na.rm=T))
+bounds_5to95 <- quantile(analysis.df$fib2carb, na.rm=T, probs = c(0.05, 0.25, 0.5, 0.75, 0.95))
+
+analysis.df %>% 
+select("fib2carb") %>%
+    filter(!is.na("fib2carb")) %>%
+    mutate(gt5SD = ifelse(fib2carb < bounds_5SD[1] | fib2carb > bounds_5SD[2],">5 SD", "ok")) %>%
+    mutate(out5to95 = ifelse(fib2carb < bounds_5to95[1] | fib2carb > bounds_5to95[5],">5 to 95%", "ok")) %>%
+    reframe(Outliers_fib2carb_gt5SD=n_pct(gt5SD),
+           Outliers_fib2carb_out5to95=n_pct(out5to95))
+
+```
+
+Note on outliers for Carbohydrate-to-fiber ratio: 
+* 13 (0.3%) values are outside mean+/- 5 SDs
+* 406 (10%) vauues are outside 5 to 95% of the data
+
+### Covariates
+Lifestyle factors
+```{r}
+smk_plt <- plot_categorical("smoke_stat.lab")
+smkyrs_plt <- plot_continuous("smoke_packyrs")
+alc_plt <- plot_categorical("alch_currdrnk.lab")
+pa_plt <- plot_continuous("physact_mvpa")
+smk_plt + smkyrs_plt
+alc_plt + pa_plt
+```
+
+Health status-related covariates
+```{r}
+med_t2d_plt <- plot_categorical("med_t2d")
+med_htn_plt <- plot_categorical("med_htn")
+med_lip_plt <- plot_categorical("med_lip")
+med_t2d_plt + med_htn_plt + med_lip_plt
+```
+
+```{r}
+missingness_vars <- c(
+    "age", "gender", "bmi", "RaceEthn",
+    "educ_4lvl.lab", "income_4lvl.lab",
+    "energy_kcal",
+    "nut_carb_g", "carb2fib", "nut_fat_g", "nut_prot_g",
+    "alch_currdrnk.lab", "smoke_stat.lab",
+    "med_t2d", "med_htn", "med_lip")
+
+analysis.df %>%
+    select(all_of(missingness_vars)) %>%
+    mutate(across(everything(), is.na)) %>%
+    summarise(across(everything(), sum)) %>% t()
+```
+
+```{r}
+# Re-run basic participant descriptives
+
+analysis.df %>%
+    group_by(RaceEthn) %>%
+    reframe(
+        N = n(),
+        Age = mean_sd(age, d=1),
+        Female = n_pct(female, level=1),
+        BMI = mean_sd(bmi, d=1)) %>%
+      arrange(desc(N)) %>% t()
+```
+
+# Run basic correlations among diet variables
+### Carbohydrate & macronutrients
+```{r}
+options(repr.plot.width=14, repr.plot.height=5)
+options(warn=-1)
+
+# Carbohydrates vs. macros
+carbfat_plt<-plot_xyscatter("nut_carb_g", "nut_fat_g")
+carbprot_plt<-plot_xyscatter("nut_carb_g", "nut_prot_g")
+carbengy_plot <- plot_xyscatter("nut_carb_g", "energy_kcal")
+carbfat_plt + carbprot_plt + carbengy_plot
+
+# Carbohydrates vs. types of fat
+carbmufa_plt<-plot_xyscatter("nut_carb_g", "nut_mufa_g")
+carbpufa_plt<-plot_xyscatter("nut_carb_g", "nut_pufa_g")
+carbsfa_plot <- plot_xyscatter("nut_carb_g", "nut_sfa_g")
+carbmufa_plt + carbpufa_plt + carbsfa_plot
+```
+
+### Carbohydrate & fiber sources
+```{r}
+carb2fib_plt <- plot_continuous("carb2fib")
+carbfib_plt<-plot_xyscatter("nut_carb_g", "nut_fiber_g")
+carb2fib_plt + carbfib_plt 
+
+carbfibsol_plt<-plot_xyscatter("nut_carb_g", "nut_fiber_sol_g")
+carbfibinsol_plt<-plot_xyscatter("nut_carb_g", "nut_fiber_insol_g")
+carbfibsol_plt + carbfibinsol_plt + carbfibcer_plt
+```
+
+# Covariate descriptions across education levels
+### Demographic, behavioral & lifestyle phenotypes
+```{r}
+analysis.df %>% 
+    group_by(educ_4lvl.lab) %>%
+    reframe(
+        N = n(),
+        Age = mean_sd(age, d=1),
+        Female = n_pct(female, level=1),
+        BMI = mean_sd(bmi, d=1),
+        Smoking_Current = n_pct(smoke_stat.lab, level="Current"),
+        Smoking_Former_lt1yr = n_pct(smoke_stat.lab, level="Former, <1 yr"),
+        Smoking_Former_gt1yr = n_pct(smoke_stat.lab, level="Former, >1 yr"),
+        Smoking_Never = n_pct(smoke_stat.lab, level="Never"),
+        PA_MVPA = mean_sd(physact_mvpa),
+        Alchohol_Drinker = n_pct(alch_currdrnk.lab, level="Drinker"),
+        Medication_t2d = n_pct(med_t2d, level=1),
+        Medication_htn = n_pct(med_htn, level=1),
+        Medication_lipid = n_pct(med_lip, level=1),
+        Fasting_Glucose= mean_sd(glucose),
+        HbA1c=mean_sd(hba1c),
+        Triglyceride=mean_sd(tg),
+        LDL=mean_sd(ldl),
+        HDL=mean_sd(hdl)
+    ) %>% t()
+```
+
+### Diet phenotypes
+Macronutrients
+```{r}
+analysis.df %>% 
+    group_by(educ_4lvl.lab) %>%
+    reframe(
+        N = n(),
+        Energy_kcal=mean_sd(energy_kcal),
+        Carb_g=mean_sd(nut_carb_g),
+        Protein_g=mean_sd(nut_prot_g),
+        Fat_g=mean_sd(nut_fat_g),
+        MUFA_g=mean_sd(nut_mufa_g),
+        PUFA_g=mean_sd(nut_pufa_g),
+        SFA_g=mean_sd(nut_sfa_g),
+        Carb_pct=mean_sd(nut_carb_pct),
+        Protein_pct=mean_sd(nut_prot_pct),
+        Fat_pct=mean_sd(nut_fat_pct),
+        MUFA_pct=mean_sd(nut_mufa_pct),
+        PUFA_pct=mean_sd(nut_pufa_pct),
+        SFA_pct=mean_sd(nut_sfa_pct)
+    ) %>% t()
+```
+
+Carbohydrate Quality
+```{r}
+analysis.df %>% 
+    group_by(educ_4lvl.lab) %>%
+    reframe(
+        N = n(),
+        Carb_to_Fiber=mean_sd(carb2fib),
+        Fiber_to_Carb=mean_sd(fib2carb, d=3),
+        Fiber_g=mean_sd(nut_fiber_g),
+        Fiber_soluble_g=mean_sd(nut_fiber_sol_g),
+        Fiber_insoluble_g=mean_sd(nut_fiber_insol_g)
+    ) %>% t()
+```
