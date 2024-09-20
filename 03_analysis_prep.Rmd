@@ -2,20 +2,13 @@
 ```{r}
 suppressPackageStartupMessages(library(tidyverse))
 library(patchwork)
-```
-```{r}
-ws_namespace <- Sys.getenv("WORKSPACE_NAMESPACE")
-ws_name <- Sys.getenv("WORKSPACE_NAME")
-ws_bucket <- Sys.getenv("WORKSPACE_BUCKET")
-```
-```{r}
 theme_set(theme_bw())
 ```
 
 # Read in and align datasets
 We will read in various data types to merge (phenotypes and genotypes) and align (with a separate metabolomic dataset).
 ```{r}
-system(paste0("gsutil cp -R ", ws_bucket, "/phenotypes ."))
+system(paste0("gsutil cp -R $WORKSPACE_BUCKET/phenotypes ."))
 ```
 
 ## Basic info: draw dates, study site, etc.
@@ -144,7 +137,7 @@ nmr_lp3_df <- read_csv("phenotypes/nmr_metabolites.csv", col_types=cols()) %>%
 
 ## Genetic principal components
 ```{r}
-system(paste0("gsutil cp ", ws_bucket, "/freeze9b_sample_annot_2020-08-20.txt phenotypes/"))
+system(paste0("gsutil cp $WORKSPACE_BUCKET/freeze9b_sample_annot_2020-08-20.txt phenotypes/"))
 f9b_sample_map <- read_tsv("phenotypes/freeze9b_sample_annot_2020-08-20.txt",
                        col_types=cols_only("sample.id"="c", "subject_id"="c", "study"="c")) %>%
   filter(study == "MESA") %>%
@@ -367,7 +360,7 @@ analysis_df <- analysis_df %>%
 # Incorporate LC/MS metabolomics
 ## Preprocessed and QCed MESA metabolomics data
 ```{r}
-system(paste0("gsutil cp -R ", ws_bucket, "/QCd ."))
+system(paste0("gsutil cp -R $WORKSPACE_BUCKET/QCd ."))
 ```
 
 ```{r}
@@ -691,5 +684,5 @@ exp_mPC_biological_covar_assoc_df %>%
 write_csv(analysis_df, "analysis/analysis_df.csv")  # All individuals
 write_csv(analysis_df_lcms, "analysis/analysis_df_lcms.csv")  # Matched to the LC/MS dataset
 saveRDS(mesa_metab_mat, "metabolites/lcms_metabolites.rds")
-system(paste0("gsutil cp -R phenotypes analysis metabolites ", ws_bucket, "/"))
+system(paste0("gsutil cp -R phenotypes analysis metabolites $WORKSPACE_BUCKET/"))
 ```
