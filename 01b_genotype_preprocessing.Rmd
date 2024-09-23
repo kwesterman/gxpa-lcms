@@ -1,12 +1,11 @@
 # Lib
 ```{r}
-library(AnVIL)
 library(data.table)
 if(!file.exists("bcftools/bcftools")) system("git clone --recurse-submodules https://github.com/samtools/htslib.git; git clone https://github.com/samtools/bcftools.git; cd bcftools; make")
 ```
 
 ```{r}
-# Variant of interest: rs295849 on chr17, pos 36804493
+# Variant of interest: rs295849 (chr17:36804493)
 bcf_drs <- "drs://dg.4503:dg.4503/5e649ac5-cf10-4cea-9003-3f9f585cf31b"
 idx_drs <- "drs://dg.4503:dg.4503/9742725a-b4d7-4b66-a517-4588295df747"
 bcf_url <- system(paste("tnu drs access", bcf_drs), intern=T)
@@ -22,7 +21,10 @@ tmp <- fread(cmd = paste0(
 ))
 
 tmp <- t(tmp[,5:length(tmp), with=F])
-colnames(tmp) <- "rs295849"
-fwrite(tmp,"dosages.csv")
+dosages  <- data.table(
+  sample_id=sub("\\[[0-9]+\\]","",rownames(tmp)), # Remove "[#]" prefix from each name, strange artifact of bcftools dosage output
+  rs295849=as.numeric(tmp)
+)
+fwrite(dosages,"dosages.csv")
 # Samples as rows, SNPs as columns. For merging with pheno data later.
 ```
