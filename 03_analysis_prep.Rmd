@@ -1,16 +1,10 @@
-# Preliminaries
 ```{r}
-suppressPackageStartupMessages(library(tidyverse))
+library(tidyverse)
 library(patchwork)
-theme_set(theme_bw())
-```
-
-# Read in and align datasets
-We will read in various data types to merge (phenotypes and genotypes) and align (with a separate metabolomic dataset).
-```{r}
 system(paste0("gsutil cp -R $WORKSPACE_BUCKET/phenotypes ."))
 ```
 
+# Read in and align datasets
 ## Basic info: draw dates, study site, etc.
 ```{r}
 basic_info_df <- readxl::read_excel("phenotypes/draw_dates_MESA_study_site.xlsx") %>%
@@ -38,7 +32,6 @@ head(batch_info_df, 3)
 ```
 
 ## Main phenotypes
-Retrieved using PIC-SURE
 ```{r}
 fix_pheno_names <- function(pheno_names) {
     # Remove front matter and trailing backslashes from MESA phenotype names
@@ -47,13 +40,10 @@ fix_pheno_names <- function(pheno_names) {
             capture_str <- ".*\\\\(.*)\\\\$"
             nm <- str_match(nm, capture_str)[, 2]  # Extract real column name from front matter
             nm
-        } else {
-            nm
-        }
+        } else { nm }
     }))
     new_pheno_names
 }
-
 winsorize <- function(x, SDs=5) {
   bounds <- mean(x, na.rm=TRUE) + c(-1, 1) * SDs * sd(x, na.rm=TRUE)
   print(paste0(sum(x < bounds[1], na.rm=TRUE), " values winsorized at the lower bound."))
@@ -64,9 +54,8 @@ winsorize <- function(x, SDs=5) {
     TRUE ~ x
   )
 }
-```
 
-```{r}
+
 basic_pheno_df <- read_csv("phenotypes/basic_phenotypes.csv", col_types=cols()) %>%
     rename_with(fix_pheno_names, everything()) %>%
     mutate(mesa_id = gsub("phs000209.v13_", "", 
@@ -105,14 +94,7 @@ covariate_df <- read_csv("phenotypes/covariates.csv", col_types=cols()) %>%
         ahei_score=ahei_2010_1, dash_score=dash_sodium1
     ) %>%
     mutate(across(c(ses_score, drinks_per_week, ahei_score, dash_score), winsorize))
-```
 
-## NMR data
-```{r}
-system("unzip phenotypes/SHARe_AncilMesaNMR_LP4_DS.zip -d phenotypes/")
-```
-
-```{r}
 nmr_df <- read_table("phenotypes/SHARe_AncilMesaNMR_LP4_DS.txt", col_types=cols()) %>%
     select(
         mesa_id = subject_id,
@@ -124,8 +106,7 @@ nmr_df <- read_table("phenotypes/SHARe_AncilMesaNMR_LP4_DS.txt", col_types=cols(
 
 nmr_lp3_df <- read_csv("phenotypes/nmr_metabolites.csv", col_types=cols()) %>%
     rename_with(fix_pheno_names, everything()) %>%
-    mutate(mesa_id = gsub("phs000209.v13_", "", 
-                          `\\_Parent Study Accession with Subject ID\\`),
+    mutate(mesa_id = gsub("phs000209.v13_", "", `\\_Parent Study Accession with Subject ID\\`),
            mesa_id = as.integer(mesa_id)) %>%
     select(
         mesa_id,
@@ -133,69 +114,38 @@ nmr_lp3_df <- read_csv("phenotypes/nmr_metabolites.csv", col_types=cols()) %>%
         HDL_P_lp3 = hdlp31c, HDL_size_lp3 = hz31,
         L_HDL_P_lp3 = hl31, M_HDL_P_lp3 = hm31, S_HDL_P_lp3 = hs31
     )
-```
 
-## Genetic principal components
-```{r}
-system(paste0("gsutil cp $WORKSPACE_BUCKET/freeze9b_sample_annot_2020-08-20.txt phenotypes/"))
 f9b_sample_map <- read_tsv("phenotypes/freeze9b_sample_annot_2020-08-20.txt",
                        col_types=cols_only("sample.id"="c", "subject_id"="c", "study"="c")) %>%
   filter(study == "MESA") %>%
   rename(NWD_ID=sample.id, mesa_id=subject_id) %>%
   mutate(mesa_id = as.integer(mesa_id))
-
 gPC_df <- read_tsv("phenotypes/freeze9_pcair_results.tsv", col_types=cols()) %>%
     inner_join(f9b_sample_map, by=c("sample.id"="NWD_ID")) %>%
     rename_with(~paste0("g", .), contains("PC")) %>%
     select(mesa_id, NWD_ID=sample.id, contains("gPC"))
 
-# gPC_df <- read_tsv("phenotypes/freeze9_pcair_results.tsv", col_types=cols()) %>%
-#     inner_join(select(id_df, NWD_ID, mesa_id), by=c("sample.id"="NWD_ID")) %>%
-#     rename_with(~paste0("g", .), contains("PC")) %>%
-#     select(mesa_id, contains("gPC"))
-head(gPC_df, 3)
-```
-
-## Ancestry proportions
-```{r}
 ancestry_prop_fields <- c("African", "American", "East_Asian", "European")
 ancestry_prop_df <- read_csv("phenotypes/id_match_file.csv", col_types=cols()) %>%
     mutate(mesa_id = as.integer(Cohort_Specific_Id)) %>%
     filter(is.na(Exclusion_Reason)) %>%
     select(mesa_id, all_of(ancestry_prop_fields)) %>%
     rename_with(~paste0("prop_", .), -mesa_id)
-head(ancestry_prop_df, 3)
-```
 
-## Genotypes of interest
-## ID matching file
-```{r}
 id_df <- read_csv("phenotypes/id_match_file.csv", col_types=cols()) %>%
     mutate(mesa_id = as.integer(Cohort_Specific_Id)) %>%
     filter(is.na(Exclusion_Reason)) %>%
     select(mesa_id, NWD_ID=NWD_Id, TOM_ID=TOM_Id)
-head(id_df, 3)
 ```
 
 ```{r}
+# TODO: DOSAGE FILE was read in here as a random RDS, replace with dosages.txt
+# Samples as rows, rsids as cols
 genos <- readRDS("genotypes/analysis_genotypes.rds")
-head(genos, 3)
 ```
 
 # Create primary analysis dataset
-## Merge phenotype and genotype datasets
-```{r}
-dim(basic_info_df)
-dim(basic_pheno_df)
-dim(primary_pheno_df)
-dim(covariate_df)
-dim(nmr_df)
-dim(gPC_df)
-dim(ancestry_prop_df)
-dim(genos)
-dim(id_df)
-```
-
+## Merge datasets
 ```{r}
 # Full dataset without subsetting to LC/MS subgroup
 analysis_df <- basic_info_df %>%
@@ -207,10 +157,6 @@ analysis_df <- basic_info_df %>%
     inner_join(gPC_df, by="mesa_id") %>%
     inner_join(genos, by="NWD_ID") %>%
     left_join(id_df, by=c("mesa_id", "NWD_ID"))  # Adds TOM_ID
-```
-
-```{r}
-str(analysis_df)
 ```
 
 ```{r}
@@ -387,17 +333,12 @@ metabolite_types <- lapply(mesa_metab_mat_list, function(df) {
 ## Merge and align primary and metabolomics datasets
 ```{r}
 common_samples <- Reduce(intersect, lapply(mesa_metab_mat_list, rownames))
-
 mesa_metab_mat <- do.call(cbind, lapply(mesa_metab_mat_list, function(mat) mat[common_samples, ]))
 mesa_metab_mat <- mesa_metab_mat[rownames(mesa_metab_mat) %in% analysis_df$TOM_ID, ]
-                                        
-mesa_metabs <- colnames(mesa_metab_mat)                          
 ```
 
 ```{r}
-analysis_df_lcms <- analysis_df[match(rownames(mesa_metab_mat), 
-                                      analysis_df$TOM_ID), ]
-dim(analysis_df_lcms)
+analysis_df_lcms <- analysis_df[match(rownames(mesa_metab_mat), analysis_df$TOM_ID), ]
 ```
 
 ## PCA
@@ -411,25 +352,6 @@ pc_df <- as_tibble(pc_res$x, rownames="TOM_ID") %>%
 ```{r}
 options(repr.plot.width=8, repr.plot.height=6)
 screeplot(pc_res, npcs=20, main="Metabolite PCA Scree plot")
-```
-
-## PEER factors
-```{r}
-# system(paste0(
-#     "conda config --add channels bioconda &&",
-#     "conda install r-peer"
-# ))
-
-# system("wget https://github.com/downloads/PMBio/peer/R_peer_source_1.3.tgz", intern=T)
-# system("R CMD INSTALL R_peer_source_1.3.tgz")
-```
-
-```{r}
-# Chunk: create PEER factors
-```
-
-```{r}
-# Chunk: compare PEER factors to PCs
 ```
 
 ## Add metabolomic summary variables to analysis dataset

@@ -9,10 +9,8 @@ Function to remove outliers by SD
 ```{r}
 remove_outliers.fun <- function(x, SDs=5) {
     bounds <- mean(x, na.rm=T) + SDs * c(-1, 1) * sd(x, na.rm=T)
-    
     print(paste0(sum(x < bounds[1], na.rm=TRUE), " outliers removed at <", SDs, " SDs"))
     print(paste0(sum(x > bounds[2], na.rm=TRUE), " outliers removed at >", SDs, " SDs"))
-    
     x <- ifelse(x>bounds[1] & x<bounds[2], x, NA) ; x    
 }
 ```
@@ -45,9 +43,7 @@ fix_pheno_names <- function(pheno_names) {
             capture_str <- ".*\\\\(.*)\\\\$"
             nm <- str_match(nm, capture_str)[, 2]  # Extract real column name from front matter
             nm
-        } else {
-            nm
-        }
+        } else { nm }
     }))
     new_pheno_names
 }
@@ -280,19 +276,4 @@ phenos_diet.df <- read_csv("phenotypes/mesa5_phenos_diet.csv", col_types=cols())
     as.data.frame()
 
 head(phenos_diet.df)
-```
-
-# Create primary analysis dataset
-## Merge phenotype and genotype datasets
-```{r}
-dim(phenos_basic.df) ; dim(phenos_diet.df)
-# Full dataset BEFORE genotype data
-analysis.df <- phenos_basic.df %>%
-    inner_join(phenos_diet.df, by="mesa_id")
-```
-
-# Export final datasets for analysis
-```{r}
-write_csv(analysis_df, "analysis/analysis_df.csv")  # All individuals
-system(paste0("gsutil cp -R phenotypes analysis metabolites ", ws_bucket, "/"))
 ```

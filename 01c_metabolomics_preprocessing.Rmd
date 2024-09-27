@@ -51,6 +51,12 @@ invisisble(lapply(dts, \(dt) dt[hmdb %in% c("","n/a"), hmdb := NA] ))
 dup_hmdbs <- c("HMDB00853","HMDB00991","HMDB01325","HMDB07973","HMDB12101","HMDB13122")
 dts[[2]][hmdb %in% dup_hmdbs, 1:6]
 
+# TODO:
+# Move the '*' removal to below
+# For duplicated HMDBs where one is only a representative (has an asterisk), prefer the exact match.
+# Otherwise, keep the first entry (arbitrary choice).
+# TODO
+
 # For most, just arbitrarily keep the first entry.
 # For HMDB12101, keep the 2nd, becuase the 1st entry used to have an HMDB with an asterisk* (meaning it is a representative metabolite). We would rather have the exact metabolite. 
 dts[[2]] <- dts[[2]][ -which(hmdb=="HMDB00853")[2] ]

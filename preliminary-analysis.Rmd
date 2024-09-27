@@ -1,33 +1,14 @@
-# Preliminaries
 ```{r}
-suppressPackageStartupMessages(library(tidyverse))
+library(tidyverse)
 library(patchwork)
-```
-
-```{r}
-ws_namespace <- Sys.getenv("WORKSPACE_NAMESPACE")
-ws_name <- Sys.getenv("WORKSPACE_NAME")
-ws_bucket <- Sys.getenv("WORKSPACE_BUCKET")
-```
-
-```{r}
-theme_set(theme_bw())
 ```
 
 ## Read in phenotypic and metabolomic data
 * Phenotype data come from integrating inputs from dbGaP (/PIC-SURE), MESA investigators, and metadata from metabolomic preprocessing.
 * Genotype data come from dbGaP (Freeze 9b TOPMed-wide genotype VCF files).
 ```{r}
-list.files()
-```
-
-```{r}
 analysis_df <- read_csv("analysis/analysis_df.csv", col_types=cols())
-names(analysis_df)
-```
-
-```{r}
-snp_info_df <- read_csv("genotypes/snp_info.csv", col_types=cols())
+snp_info_df <- read_csv("genotypes/snp_info.csv",   col_types=cols())
 ```
 
 # Explore physical activity main effects and covariate adjustments
@@ -393,27 +374,11 @@ pa_subtype_gxe_byRace_res_df %>%
 ```
 
 # Export 
-Relevant R objects are exported for use in creating manuscript figures and tables.
 ```{r}
-analysis_df %>%
-  select(mesa_id, gender_f0m1, age, bmi, rs295849, 
-         matches(".*pa$"), matches(".*pa_win$"), contains("hdl")) %>%
-  saveRDS("manuscript/mesa_analysis_df.rds")
-
-saveRDS(main_effect_sensitivity_res_df, 
-        "manuscript/mesa_pa_hdl_res_df.rds")
-
-saveRDS(main_effect_sex_int_res, 
-        "manuscript/mesa_pa_hdl_sexInt_res_df.rds")
-
-saveRDS(pa_subtype_gxe_res_df, 
-        "manuscript/mesa_gxe_exploration_df.rds")
-
-saveRDS(pa_subtype_gxe_byRace_res_df, 
-        "manuscript/mesa_gxe_exploration_byRace_df.rds")
-
-saveRDS(mesa_hdl_subfraction_extra_df, 
-        "manuscript/mesa_hdl_subfraction_extra_df.rds")
-
-system(paste0("gsutil cp manuscript/* ", ws_bucket, "/manuscript/"))
+# Things that were saved to RDS:
+# main_effect_sensitivity_res_df
+# main_effect_sex_int_res, 
+# pa_subtype_gxe_res_df, 
+# pa_subtype_gxe_byRace_res_df, 
+# mesa_hdl_subfraction_extra_df, 
 ```

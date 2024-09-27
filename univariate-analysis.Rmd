@@ -1,24 +1,9 @@
-# Preliminaries
 ```{r}
-suppressPackageStartupMessages(library(tidyverse))
+library(tidyverse)
 library(patchwork)
-
-if (!require(foreach)) install.packages("foreach")
 library(foreach)
-if (!require(iterators)) install.packages("iterators")
 library(iterators)
-if (!require(mediation)) install.packages("mediation")
 library(mediation)
-```
-
-```{r}
-ws_namespace <- Sys.getenv("WORKSPACE_NAMESPACE")
-ws_name <- Sys.getenv("WORKSPACE_NAME")
-ws_bucket <- Sys.getenv("WORKSPACE_BUCKET")
-```
-
-```{r}
-theme_set(theme_bw())
 ```
 
 ## Read in phenotypic, genotypic, and metabolomic data
@@ -27,30 +12,9 @@ theme_set(theme_bw())
 * Metabolomic data come directly from MESA (originally) followed by an extensive QC and preprocessing effort led by Magdalena Sevilla-Gonzalez and Paul Hanson.
 ```{r}
 analysis_df_lcms <- read_csv("analysis/analysis_df_lcms.csv", col_types=cols())
-names(analysis_df_lcms)
-```
-
-```{r}
 snp_info_df <- read_csv("genotypes/snp_info.csv", col_types=cols())
-exposures <- c("pa", "pa_bin", "mod_pa", "vig_pa")
-
-basic_covars <- c("site", "gender_f0m1", "age")
-covar_sets <- list(
-    basic = basic_covars,
-    add_ses = c(basic_covars, "ses_score", "income_cat"),
-    add_ses_HL = c(basic_covars, "ses_score", "income_cat", 
-                              "drinks_per_week", "smoking", "ahei_score", "dash_score"),
-    add_ses_HL_gPC = c(basic_covars, "ses_score", "income_cat", 
-                              "drinks_per_week", "smoking", "ahei_score", "dash_score",
-                       paste0("gPC", 1:5)),
-    add_ses_HL_race = c(basic_covars, "ses_score", "income_cat", 
-                              "drinks_per_week", "smoking", "ahei_score", "dash_score",
-                   "race")
-)
-```
-
-```{r}
 metabs <- readRDS("metabolites/analysis_metabolites.rds")
+exposures <- c("pa", "pa_bin", "mod_pa", "vig_pa")
 ```
 
 # Run metabolome-wide association studies
@@ -62,8 +26,10 @@ metab_bonferroni <- 0.05 / ncol(metabs)
 ```
 
 ```{r}
-qtl_covars <- covar_sets$add_ses_HL_gPC
-e_proxy_covars <- covar_sets$add_ses_HL_gPC
+basic_covars <- c("site", "gender_f0m1", "age")
+covars <- c(basic_covars, "ses_score", "income_cat", 
+            "drinks_per_week", "smoking", "ahei_score", "dash_score",
+            paste0("gPC", 1:5))
 ```
 
 ## QTL tests
@@ -92,60 +58,9 @@ run_qtl_mwas <- function(rsID, covars) {
 ```
 
 ```{r}
-# qtl_mwas_res_df <- lapply(snp_info_df$rsID, run_qtl_mwas, qtl_covars) %>%
-#     setNames(snp_info_df$rsID) %>%
-#     bind_rows(.id="rsID")
-
-# write_csv(qtl_mwas_res_df, "analysis/qtl_mwas_res.csv")
-```
-
-```{r}
-qtl_mwas_res_df <- read_csv("analysis/qtl_mwas_res.csv", col_types=cols())
-```
-
-### Any different results in AFR samples?
-```{r}
-# analysis_df_lcms_afr <- filter(analysis_df_lcms, race == "r4")
-# metabs_afr <- metabs[analysis_df_lcms$race == "r4", ]
-
-# test_qtl_afr <- function(g, m, covars) {
-#     form_str <- paste0("m ~ g + ", paste(covars, collapse=" + "))
-#     lm(as.formula(form_str), data=analysis_df_lcms_afr) %>%
-#         broom::tidy() %>%
-#         filter(term == "g") %>%
-#         select(-term)
-# }
-# run_qtl_mwas_afr <- function(rsID, covars) {
-#     foreach(
-#         m=iterators::iter(metabs_afr, by="col")
-#     ) %do% {
-#         tryCatch(
-#             test_qtl_afr(analysis_df_lcms_afr[[rsID]], m, covars),
-#             error=function(e) tibble(estimate=NA, p.value=NA)
-#         )
-#     } %>%
-#         setNames(colnames(metabs)) %>%
-#         bind_rows(.id="metabolite")
-# }
-```
-
-```{r}
-# qtl_mwas_res_df_afr <- lapply("rs77810251", run_qtl_mwas_afr, qtl_covars) %>%
-#     setNames("rs77810251") %>%
-#     bind_rows(.id="rsID")
-
-# write_csv(qtl_mwas_res_df_afr, "analysis/qtl_mwas_res_afr.csv")
-```
-
-```{r}
-# qtl_mwas_res_df_afr <- read_csv("analysis/qtl_mwas_res_afr.csv", col_types=cols())
-```
-
-```{r}
-# qtl_mwas_res_df_afr %>%
-#     mutate(q = p.adjust(p.value, method="BH")) %>%
-#     arrange(p.value) %>%
-#     head()
+ qtl_mwas_res_df <- lapply(snp_info_df$rsID, run_qtl_mwas, qtl_covars) %>%
+     setNames(snp_info_df$rsID) %>%
+     bind_rows(.id="rsID")
 ```
 
 ## E proxy tests
@@ -174,21 +89,15 @@ run_e_proxy_mwas <- function(e, covars) {
 ```
 
 ```{r}
-# e_proxy_mwas_res_df <- lapply(exposures, run_e_proxy_mwas, e_proxy_covars) %>%
-#     setNames(exposures) %>%
-#     bind_rows(.id="exposure")
-
-# write_csv(e_proxy_mwas_res_df, "analysis/e_proxy_mwas_res.csv")
+e_proxy_mwas_res_df <- lapply(exposures, run_e_proxy_mwas, covars) %>%
+  setNames(exposures) %>%
+  bind_rows(.id="exposure")
+write_csv(e_proxy_mwas_res_df, "analysis/e_proxy_mwas_res.csv")
 ```
 
 ```{r}
 e_proxy_mwas_res_df <- read_csv("analysis/e_proxy_mwas_res.csv", col_types=cols()) %>%
     filter(exposure %in% c("pa", "vig_pa"))
-```
-
-```{r}
-e_proxy_mwas_res_df %>%
-    arrange(p.value)
 ```
 
 ## Annotate summary statistics
@@ -275,10 +184,8 @@ e_proxy_volcano_plt
 ## Collect significant metabolites
 We use a false discovery rate (FDR) correction threshold of q < 0.05 using the Benjamini-Hochberg method.
 ```{r}
-metab_pca_fit <- prcomp(metabs)
-metab_eigenvals <- metab_pca_fit$sdev^2
-n_eff_metabs <- sum(metab_eigenvals) ** 2 / sum(metab_eigenvals ** 2)
-round(n_eff_metabs, 1)
+metab_eigenvals <- prcomp(metabs)$sdev^2
+n_eff_metabs <- sum(metab_eigenvals)^2 / sum(metab_eigenvals^2)
 ```
 
 ```{r}
@@ -298,10 +205,6 @@ top_mwas_res_df <- bind_rows(list(
     qtl = top_qtl_mwas_res_df,
     e_proxy = top_e_proxy_mwas_res_df
 ), .id="type")
-```
-
-```{r}
-top_mwas_res_df
 ```
 
 ## Test main effect mediation
@@ -335,7 +238,7 @@ pa_mediation_res_df <- tibble(
                metabs[match(mediation_analysis_df_lcms$mesa_id, analysis_df_lcms$mesa_id),
                       metab], 
                mediation_analysis_df_lcms$hdl_log, 
-               covar_sets$basic,
+               basic_covars,
                mediation_analysis_df_lcms,
                n_sims=100)
   )) %>%
@@ -355,7 +258,7 @@ vig_pa_mediation_res_df <- tibble(
                metabs[match(mediation_analysis_df_lcms$mesa_id, analysis_df_lcms$mesa_id),
                       metab], 
                mediation_analysis_df_lcms$hdl_log, 
-               covar_sets$basic,
+               basic_covars,
                mediation_analysis_df_lcms,
                n_sims=100)
   )) %>%
@@ -365,88 +268,12 @@ vig_pa_mediation_res_df <- tibble(
     dplyr::select(-med_fit)
 ```
 
-```{r}
-pa_mediation_res_df
-vig_pa_mediation_res_df
-```
-
 ## Export
 ```{r}
 write(n_eff_metabs, "analysis/n_eff_metabolites.txt")
-write(top_qtl_mwas_res_df$metabolite, 
-      "analysis/top_qtl_metabolites.txt")
 write(top_e_proxy_mwas_res_df$metabolite[top_e_proxy_mwas_res_df$exposure == "pa"],
       "analysis/top_pa_metabolites.txt")
 write(top_e_proxy_mwas_res_df$metabolite[top_e_proxy_mwas_res_df$exposure == "vig_pa"],
       "analysis/top_vig_pa_metabolites.txt")
-write_csv(top_mwas_res_df, "analysis/top_mwas_res.csv")
-
-system(paste0("gsutil cp -r analysis ", ws_bucket, "/"))
-```
-
-# Plots for presentation
-```{r}
-# qtl_lambda <- calc_lambda(qtl_mwas_res_df$p.value)
-# qtl_qq_plt <- qtl_mwas_res_df %>%
-#     arrange(desc(p.value)) %>%
-#     mutate(nlp = -log10(p.value),
-#            exp_nlp = rev(-log10(ppoints(nrow(.))))) %>%
-#     ggplot(aes(x=exp_nlp, y=nlp, color=rsID)) +
-#     geom_point() +
-#     geom_abline(slope=1, intercept=0, 
-#                linetype="dashed", color="black") +
-#     annotate("text", x=-Inf, y=Inf, 
-#              hjust=-0.5, vjust=2, 
-#              label=paste("lambda", "==", qtl_lambda),
-#              parse=TRUE) +
-#     labs(x=expression(-log[10] * "(p) - expected"), y=expression(-log[10] * "(p) - observed")) +
-#     theme(legend.title=element_blank(), legend.position="bottom") +
-#     guides(color = guide_legend(nrow=2))
-
-# e_proxy_lambda <- calc_lambda(e_proxy_mwas_res_df$p.value)
-# e_proxy_qq_plt <- e_proxy_mwas_res_df %>%
-#     arrange(desc(p.value)) %>%
-#     mutate(nlp = -log10(p.value),
-#            exp_nlp = rev(-log10(ppoints(nrow(.))))) %>%
-#     ggplot(aes(x=exp_nlp, y=nlp, color=exposure)) +
-#     geom_point() +
-#     geom_abline(slope=1, intercept=0, 
-#                linetype="dashed", color="black") +
-#     scale_color_discrete(breaks=c("mod_vig_pa_bin", "smoking_current", "smoking_ever"),
-#                          labels=c("Physical activity", "Smoking (current)", "Smoking (ever)"),
-#                          name="Exposure") +
-#     annotate("text", x=-Inf, y=Inf, 
-#              hjust=-0.5, vjust=2, 
-#              label=paste("lambda", "==", e_proxy_lambda),
-#              parse=TRUE) +
-#     labs(x=expression(-log[10] * "(p) - expected"), y=expression(-log[10] * "(p) - observed")) +
-#     theme(legend.title=element_blank(), legend.position="bottom") +
-#     guides(color = guide_legend(nrow=2))
-
-# options(repr.plot.width=5, repr.plot.height=5)
-
-# qtl_qq_plt
-# e_proxy_qq_plt
-```
-
-```{r}
-# e_proxy_mwas_res_df %>%
-#     filter(exposure == "pa") %>%
-#     arrange(desc(p.value)) %>%
-#     mutate(nlp = -log10(p.value),
-#            exp_nlp = rev(-log10(ppoints(nrow(.))))) %>%
-#     ggplot(aes(x=exp_nlp, y=nlp, color=exposure)) +
-#     geom_point() +
-#     geom_abline(slope=1, intercept=0, 
-#                linetype="dashed", color="black") +
-#     scale_color_discrete(breaks=c("mod_vig_pa_bin", "smoking_current", "smoking_ever"),
-#                          labels=c("Physical activity", "Smoking (current)", "Smoking (ever)"),
-#                          name="Exposure") +
-#     annotate("text", x=-Inf, y=Inf, 
-#              hjust=-0.5, vjust=2, 
-#              label=paste("lambda", "==", e_proxy_lambda),
-#              parse=TRUE) +
-#     labs(x=expression(-log[10] * "(p) - expected"), y=expression(-log[10] * "(p) - observed")) +
-#     theme(legend.title=element_blank(), legend.position="bottom") +
-#     guides(color = guide_legend(nrow=2))
+system(paste0("gsutil cp -r analysis $WORKSPACE_BUCKET/"))
 ```

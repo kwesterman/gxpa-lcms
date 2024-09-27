@@ -40,17 +40,6 @@ exposures <- c("mod_vig_pa_bin", "smoking_current", "smoking_ever")
 metabs <- readRDS("metabolites/analysis_metabolites.rds")
 ```
 
-```{r}
-basic_covars <- c("site", "gender_f0m1", "age")
-covar_sets <- list(
-    no_gPC = c(basic_covars, "ses_score", "income_cat", 
-                              "drinks_per_week", "smoking", "ahei_score", "dash_score"),
-    all = c(basic_covars, "ses_score", "income_cat", 
-                              "drinks_per_week", "smoking", "ahei_score", "dash_score",
-                       paste0("gPC", 1:5))
-)
-covars <- covar_sets$all
-```
 
 ### What about using a metabolomic E proxy instead?
 ```{r}
@@ -73,18 +62,16 @@ pa_mwas_res <- read_csv("analysis/e_proxy_mwas_res.csv", show_col_types=FALSE) %
 
 top_pa_mwas_metabolites <- scan("analysis/top_pa_metabolites.txt", what=character())
 top_vig_pa_mwas_metabolites <- scan("analysis/top_vig_pa_metabolites.txt", what=character())
-# top_pa_mwas_metabolites <- pa_mwas_res$metabolite[1:100]
 ```
 
 ```{r}
-top_pa_mwas_metabolites
-```
-
-```{r}
+covars <- c("site", "gender_f0m1", "age", "ses_score", "income_cat", 
+             "drinks_per_week", "smoking", "ahei_score", "dash_score",
+             paste0("gPC", 1:5))
 test_g_m_interaction <- function(snp,
                                  m_name, 
                                  df=analysis_df_lcms, 
-                                 covars=covar_sets$all,
+                                 covars=covars,
                                  filter_str=NA) {
     df$m <- metabs[, m_name]
     if (!is.na(filter_str)) df <- filter(df, !!rlang::parse_expr(filter_str))
@@ -94,73 +81,19 @@ test_g_m_interaction <- function(snp,
     filter(grepl(":", term))
 }
 
-m_int_res_df <- expand_grid(
-    metabolite = top_pa_mwas_metabolites,
-    snp = snps
-) %>%
-    rowwise() %>%
-    mutate(lm_fit = list(test_g_m_interaction(snp, metabolite))) %>%
-    unnest(lm_fit) %>%
-    arrange(p.value) %>%
-    mutate(q = p.adjust(p.value, method="BH")) %>%
-    inner_join(metabolite_info_df, by="metabolite")
-head(m_int_res_df, 6)
-
-m_int_res_df <- expand_grid(
-    metabolite = top_vig_pa_mwas_metabolites,
-    snp = snps
-) %>%
-    rowwise() %>%
-    mutate(lm_fit = list(test_g_m_interaction(snp, metabolite))) %>%
-    unnest(lm_fit) %>%
-    arrange(p.value) %>%
-    mutate(q = p.adjust(p.value, method="BH")) %>%
-    inner_join(metabolite_info_df, by="metabolite")
-head(m_int_res_df, 6)
-```
-
-```{r}
-0.05 / 8
-```
-
-```{r}
 m_int_res_df_female <- expand_grid(
-    metabolite = top_vig_pa_mwas_metabolites,
-    snp = snps
-) %>%
+    metabolite = top_vig_pa_mwas_metabolites, # or use top_pa_mwas_metabolites
+    snp = snps) %>%
     rowwise() %>%
-    mutate(lm_fit = list(test_g_m_interaction(snp, metabolite, 
-                                              filter_str="gender_f0m1 == 0"))) %>%
+    mutate(lm_fit = list(test_g_m_interaction(snp, metabolite, filter_str="gender_f0m1 == 0"))) %>%
     unnest(lm_fit) %>%
     arrange(p.value) %>%
     mutate(q = p.adjust(p.value, method="BH")) %>%
     inner_join(metabolite_info_df, by="metabolite")
-head(m_int_res_df_female, 20)
 ```
 
-```{r}
-a <- read_csv("PH_files/met_info_v12.csv", show_col_types=FALSE)
-# a %>% filter(Compound_Id_MESA == "QI1084_cp")
-# a %>% filter(MZ > 368, MZ < 369, !is.na(Name))
-
-# a %>% filter(Compound_Id_MESA == "QI8416_hp")
-# a %>% filter(MZ > 525, MZ < 535, !is.na(Name))
-
-
-a %>% filter(Compound_Id_MESA == "QI497_cp")
-a %>% filter(MZ > 243, MZ < 244, !is.na(Name))
-
-a %>% filter(Compound_Id_MESA == "QI6162_hp")
-a %>% filter(MZ > 330, MZ < 335, !is.na(Name))
-
-# a %>% filter(Compound_Id_MESA == "QI8416_hp")
-# a %>% filter(MZ > 525, MZ < 535, !is.na(Name))
-```
-
-# Test moderated mediation
 ```{r}
 test_moderated_mediation <- function(x, m, y, w, covars) {
-    
     # For now, w (the moderating variable) must be binary (0/1)
     med_form_str <- paste0("m ~ x * w + ", paste(covars, collapse=" + "))
     med_fit <- lm(as.formula(med_form_str), data=analysis_df_lcms)
@@ -169,12 +102,6 @@ test_moderated_mediation <- function(x, m, y, w, covars) {
     med_out <- mediate(med_fit, out_fit, 
                        treat="x", mediator="m",
                        robustSE=TRUE, sims=10)  # N_sims doesn't need to be high for this step
-    modmed_out <- test.modmed(med_out, list(w=0), list(w=1), sims=100)
-    modmed_out
+    test.modmed(med_out, list(w=0), list(w=1), sims=100)
 }
-```
-
-```{r}
-# test_moderated_mediation(analysis_df_lcms$pa, metabs[, 5], analysis_df_lcms$hdl_log, 
-#                          analysis_df_lcms$rs2862183, c("age", "gender_f0m1"))
 ```
