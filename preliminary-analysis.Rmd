@@ -8,7 +8,6 @@ library(patchwork)
 * Genotype data come from dbGaP (Freeze 9b TOPMed-wide genotype VCF files).
 ```{r}
 analysis_df <- read_csv("analysis/analysis_df.csv", col_types=cols())
-snp_info_df <- read_csv("genotypes/snp_info.csv",   col_types=cols())
 ```
 
 # Explore physical activity main effects and covariate adjustments
@@ -55,13 +54,10 @@ analysis_df <- analysis_df %>%
 
 ## Distributions
 ```{r}
-dim(analysis_df)
 table(is.na(analysis_df$hdl))
 ```
 
 ```{r}
-options(repr.plot.width=16, repr.plot.height=5)
-
 mvpa_hist <- analysis_df %>%
   filter(!is.na(mvpa)) %>%
   ggplot(aes(x = mvpa_win)) +
@@ -108,16 +104,11 @@ fit_main_effect_model <- function(y, e, covars, df, std = TRUE) {
 
 basic_covars <- c("site", "gender_f0m1", "age")
 covar_sets <- list(
-    basic = basic_covars,
-    add_ses = c(basic_covars, "ses_score", "income_cat"),
-    add_ses_HL = c(basic_covars, "ses_score", "income_cat", 
-                              "drinks_per_week", "smoking", "ahei_score", "dash_score"),
-    add_ses_HL_gPC = c(basic_covars, "ses_score", "income_cat", 
-                              "drinks_per_week", "smoking", "ahei_score", "dash_score",
-                       paste0("gPC", 1:5)),
-    add_ses_HL_race = c(basic_covars, "ses_score", "income_cat", 
-                              "drinks_per_week", "smoking", "ahei_score", "dash_score",
-                   "race")
+    basic           = basic_covars,
+    add_ses         = c(basic_covars, "ses_score", "income_cat"),
+    add_ses_HL      = c(basic_covars, "ses_score", "income_cat", "drinks_per_week", "smoking", "ahei_score", "dash_score"),
+    add_ses_HL_gPC  = c(basic_covars, "ses_score", "income_cat", "drinks_per_week", "smoking", "ahei_score", "dash_score", paste0("gPC", 1:5)),
+    add_ses_HL_race = c(basic_covars, "ses_score", "income_cat", "drinks_per_week", "smoking", "ahei_score", "dash_score", "race")
 )
 ```
 
@@ -142,8 +133,6 @@ main_effect_sensitivity_res_df <- expand_grid(
 ```
 
 ```{r}
-options(repr.plot.width=16, repr.plot.height=5)
-
 main_effect_sensitivity_res_df %>%
   filter(e %in% c("pa_win", "rs295849"),
          y == "hdl_log") %>%
@@ -204,9 +193,6 @@ Can we reproduce in MESA the interactions found in the original CHARGE GLI meta-
 SNPs come from the CHARGE GLI Phase I PA-lipids paper: Kilpelainen et al. 2019, *Nat. Comm.* (https://doi.org/10.1038/s41467-018-08008-w).
 Physical activity was coded as a binary variable. HDL-C was log-transformed prior to analysis.
 Details on the genetic variants:
-```{r}
-head(snp_info_df)
-```
 
 Details on the previously reported GxE effects:
 ```{r}
