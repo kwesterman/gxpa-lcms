@@ -160,120 +160,6 @@ analysis_df <- basic_info_df %>%
 ```
 
 ```{r}
-summarize_continuous <- function(x) {
-  m <- round(mean(x, na.rm=TRUE), 1)
-  s <- round(sd(x, na.rm=TRUE), 1)
-  paste0(m, " (", s, ")")
-}
-
-pop_description_tbl <- analysis_df %>%
-    rename(Race=race) %>%
-  group_by(Race) %>%
-  summarise(
-    N = n(),
-    Gender = paste(round(sum(gender_f0m1 == 0) / n() * 100, 1), "% female"),
-    Age = summarize_continuous(age),
-    BMI = summarize_continuous(bmi),
-    `Intentional PA` = paste0(round(sum(pa_bin == 1, na.rm=TRUE) / n() * 100, 1), "%"),
-    `Smoking (current)` = paste0(round(sum(smoking == "CURRENT", na.rm=TRUE) / n() * 100, 1), "%"),
-    `Smoking (former)` = paste0(round(sum(smoking == "FORMER", na.rm=TRUE) / n() * 100, 1), "%"),
-    `PCA-based measure of SES` = summarize_continuous(ses_score),
-    
-  ) %>%
-  arrange(desc(N))
-
-pop_description_tbl %>% t()
-```
-
-## Distributions
-```{r}
-plot_continuous <- function(cont_var) {
-    analysis_df %>%
-    filter(!is.na(!!sym(cont_var))) %>%
-    ggplot(aes_string(x=cont_var)) +
-    geom_histogram(bins=30) +
-    labs(title=cont_var)
-}
-
-plot_categorical <- function(cat_var) {
-    ggplot(analysis_df, aes(x=factor(!!sym(cat_var)))) +
-    geom_bar(stat="count") +
-    labs(title=cat_var) +
-    theme(axis.text.x=element_text(angle=30, hjust=0.9))
-}
-
-options(repr.plot.width=12, repr.plot.height=5)
-```
-
-```{r}
-# Basic biological variables
-age_plt <- plot_continuous("age")
-gender_plt <- plot_categorical("gender_f0m1")
-bmi_plt <- plot_continuous("bmi")
-age_plt + gender_plt + bmi_plt
-
-race_plt <- plot_categorical("race")
-race_plt
-```
-
-```{r}
-# Outcomes
-hdl_plt <- plot_continuous("hdl")
-hdl_log_plt <- plot_continuous("hdl_log")
-hdl_plt + hdl_log_plt
-
-hdl_p_plt <- plot_continuous("HDL_P")
-m_hdl_p_plt <- plot_continuous("M_HDL_P")
-l_hdl_p_plt <- plot_continuous("L_HDL_P")
-hdl_p_plt + m_hdl_p_plt + l_hdl_p_plt
-```
-
-```{r}
-# Exposures
-pa_plt <- plot_continuous("pa")
-pa_bin_plt <- plot_categorical("pa_bin")
-pa_plt + pa_bin_plt
-
-mvpa_plt <- plot_continuous("mvpa")
-mod_pa_plt <- plot_continuous("mod_pa")
-vig_pa_plt <- plot_continuous("vig_pa")
-mvpa_plt + mod_pa_plt + vig_pa_plt
-```
-
-```{r}
-analysis_df %>%
-    filter(!is.na(vig_pa)) %>%
-    ggplot(aes(x=vig_pa, group=gender_f0m1, fill=factor(gender_f0m1))) +
-#     geom_density() +
-geom_histogram(bins=100) +
-    labs(title="vig_pa by gender") +
-coord_cartesian(ylim=c(0, 200))
-```
-
-```{r}
-# Covariates
-ses_plt <- plot_continuous("ses_score")
-income_plt <- plot_categorical("income_cat")
-ses_plt + income_plt
-
-alc_plt <- plot_continuous("drinks_per_week")
-smk_plt <- plot_categorical("smoking")
-alc_plt + smk_plt
-
-ahei_plt <- plot_continuous("ahei_score")
-dash_plt <- plot_continuous("dash_score")
-ahei_plt + dash_plt
-```
-
-```{r}
-# Batch variables
-site_plt <- plot_categorical("site")
-month_plt <- plot_categorical("month") + theme(axis.text.x=element_text(angle=30, hjust=0.9))
-season_plt <- plot_categorical("season")
-site_plt + month_plt + season_plt
-```
-
-```{r}
 missingness_vars <- c(
     "age", "gender_f0m1", "bmi", "race",
     "hdl_log",
@@ -454,8 +340,6 @@ exp_mPC_assoc_df <- lapply(exposures, function(e) {
 ```
 
 ```{r}
-options(repr.plot.width=12, repr.plot.height=3)
-
 snp_mPC_assoc_df %>%
     filter(term != "(Intercept)") %>%
     mutate(nlp = -log10(p.value),
@@ -473,6 +357,8 @@ exp_mPC_assoc_df %>%
     scale_fill_continuous(name=expression(-log[10] * "(p)"))
 ```
 
+
+TODO: try to squish the "Incorporation of technical" AND "biological" covariates sections down into one?
 ## Incorporation of technical covariates
 ```{r}
 technical_covar_sets <- list(
@@ -512,8 +398,6 @@ exp_mPC_technical_covar_assoc_df <- expand_grid(
 ```
 
 ```{r}
-options(repr.plot.width=8, repr.plot.height=6)
-
 snp_mPC_technical_covar_assoc_df %>%
     mutate(l95 = estimate - 1.96 * std.error,
            u95 = estimate + 1.96 * std.error,
@@ -540,13 +424,13 @@ exp_mPC_technical_covar_assoc_df %>%
 ## Incorporation of biological covariates
 ```{r}
 biological_covar_sets <- list(
-    basic = "site",
-    add_gender_age = c("site", "gender_f0m1", "age"),
-    add_gender_age_race = c("site", "gender_f0m1", "age", "race"),
-    add_gender_age_ses = c("site", "gender_f0m1", "age", "ses_score", "income_cat"),
-    add_gender_age_ses_HL = c("site", "gender_f0m1", "age", "ses_score", "income_cat", 
+    basic                   =   "site",
+    add_gender_age          = c("site", "gender_f0m1", "age"),
+    add_gender_age_race     = c("site", "gender_f0m1", "age", "race"),
+    add_gender_age_ses      = c("site", "gender_f0m1", "age", "ses_score", "income_cat"),
+    add_gender_age_ses_HL   = c("site", "gender_f0m1", "age", "ses_score", "income_cat", 
                               "drinks_per_week", "smoking", "ahei_score", "dash_score"),
-    add_gender_age_gPC = c("gender_f0m1", "age", paste0("gPC", 1:5)),
+    add_gender_age_gPC      = c("gender_f0m1", "age", paste0("gPC", 1:5)),
     add_gender_age_race_gPC = c("site", "gender_f0m1", "age", "race", paste0("gPC", 1:5))
 )
 ```
@@ -572,8 +456,6 @@ exp_mPC_biological_covar_assoc_df <- expand_grid(
 ```
 
 ```{r}
-options(repr.plot.width=12, repr.plot.height=6)
-
 snp_mPC_biological_covar_assoc_df %>%
     mutate(l95 = estimate - 1.96 * std.error,
            u95 = estimate + 1.96 * std.error,
