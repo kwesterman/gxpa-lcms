@@ -4,20 +4,19 @@ library(data.table)
 
 # Read & inspect data
 ```{r, cache=2}
-ws_bucket <- Sys.getenv("WORKSPACE_BUCKET")
-ws_bucket <- "gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63" # For local use
+ws_bucket <- "gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63"
 data_files <- c(C8=paste0(ws_bucket,"/metabolomics/raw/MESA_pilot_BroadInst_C8-pos_lipids_050517.csv"),
                 HP=paste0(ws_bucket,"/metabolomics/raw/MESA_pilot_BroadInst_HIL-pos_polar_050517.csv"),
                 AN=paste0(ws_bucket,"/metabolomics/raw/an_MESA_clean.txt"))
 
-dts <- sapply( data_files, \(path) fread(cmd=paste("gsutil cat", path), header=F))
+dts <- sapply( data_files, \(path) fread(cmd=paste("gsutil cat", path)))
 
-# Manually inspect the data and extract metabolite metadata.
-dts$C8[1:8,1:8]
+dts$C8[1:8,1:8] # What's the data look like?
 dts$HP[1:8,1:8]
 dts$AN[1:8,1:8]
 ```
-The data is in nonstandard format, so prepare for hardcoded row/col numbers!
+Nonstandard format, so prepare for hardcoded row/col numbers!
+
 
 # Extract metabolite metadata
 Compound IDs may be duplicated across C8 and HP. A concatenated `<ID>_<Method>` variable ensures IDs are unique.\
@@ -27,20 +26,21 @@ met_info <- list()
 met_info$C8 <- dts$C8[seq(6,.N), 1:6]
 met_info$HP <- dts$HP[seq(6,.N), 1:6]
 met_info$AN <- data.table(method="Amine",
-                          compound_id=paste0("an",2:ncol(dts$AN)),
-                          mz=NA, rt=NA, hmdb_id=NA,
-                          name=unlist(dts$AN[1,-1]))
+                          compound_id=NA, mz=NA, rt=NA, hmdb_id=NA,
+                          name=names(dts$AN)[-1])
 names(met_info$C8) <- names(met_info$HP) <- names(met_info$AN)
 met_info <- rbindlist(met_info)
 
-met_info[met_info==' ' | met_info=='n/a'] <- NA
+met_info[met_info=='' | met_info=='n/a'] <- NA
 
-met_info[, unique_met_id := paste0(compound_id,"_",method)]
+met_info[,                unique_met_id := paste0(compound_id,"_",method)]
+met_info[method=="Amine", unique_met_id := name                          ] # Amines have no compound ID so just use name
 #sum(duplicated(met_info$unique_id)) # No dup IDs!
 
 fwrite(met_info, "met_info.csv")
 head(met_info)
 ```
+
 
 # Extract sample metadata
 Note: MESA AN file has no sample metadata, so it is ignored here. All its sample IDs are covered by C8 and HP methods anyways.
@@ -63,14 +63,73 @@ head(sample_info)
 
 # Extract measurement data
 ```{r}
-dts$C8 <- dts$C8[, V6 := paste0(V2,"_",V1) ][, 1:5 := NULL ][-(1:4)]
-dts$HP <- dts$HP[, V6 := paste0(V2,"_",V1) ][, 1:5 := NULL ][-(1:4)]
-dts$AN <- data.table(t(dts$AN))[met_info, on=c(V1="name"), V1 := unique_met_id]
+dts <- copy(og_dts)
+# dts$AN is already formatted.
+#dts$C8 <- as.matrix( transpose( dts$C8[, V6 := paste0(V2,"_",V1) ][, 1:5 := NULL ][-(1:4)], make.names=1), rownames=1)
+dts$C8 <- dts$C8[, V6 := paste0(V2,"_",V1) ][, 1:5 := NULL ][-(1:4)] |> transpose(make.names=1) |> as.matrix(rownames=1)
+class(dts$C8) <- "numeric"
+dts$HP <- t( dts$HP[, V6 := paste0(V2,"_",V1) ][, 1:5 := NULL ][-(1:4)], make.names=1 )
+names(dts$C8)[1] <- names(dts$HP)[1] <- "sample_id"
 
-invisible(lapply(dts, set, i=1L, j=1L, "unique_met_id"))
+dts$C8 <- dts$C8[rowSums(!is.na(dts$C8)) > 0] # Rm all-NA rows in the C8 file
 
-invisible(mapply(dts, paste0(names(dts),"_cleaned.csv"), FUN=fwrite, col.names=F))
-dts$C8[1:8,1:8]
-dts$HP[1:8,1:8]
+#dts <- lapply(dts, \(dt) dt[, lapply(.SD[2:ncol(dt)], as.integer) ]
+
+invisible(mapply(fwrite, dts, paste0(names(dts),"_cleaned.csv")))
+
+dts$C8[1:8,1:8] # Check out the cleaned data!
+dts$HP[1:8,1:8] # 1 sample_id column, 
 dts$AN[1:8,1:8]
+```
+
+
+
+# QC
+1\. Remove signatures w/ σ^2 = 0\
+2\. Remove signatures w/ >25% missingness\
+3\. Impute (half-min)\
+4\. Winsorize (to 5*σ)\
+5a. Log2\
+5b. Log2 and z-score\
+5c. Inverse normal transform\
+5d. ln\
+5e. ln and z-score\
+6abc. Adjust for batch
+```{r}
+dts <- copy(og_cleaned)
+dt <- copy(dts[[3]])
+
+rm0VarCols <- \(dt, verbose=F) {
+  cols2rm <- sapply(dt, var, na.rm=T) == 0
+  dt[,(which(cols2rm)) := NULL]
+
+  if(verbose) {
+    nms <- names(cols2rm)[which(cols2rm)]
+    print(paste( length(nms), "columns will be removed due to 0 variance. Names:", paste(collapse=' ',nms) ))
+  }
+}
+
+rmHighMissingnessRowsCols(dt, thresh, verbose=F) {
+  cols2rm <- colSums(is.na(dt)) > thresh*ncol(dt)
+  rows2rm <- rowSums(is.na(dt)) > thresh*ncol(dt)
+  dt[,(which(cols2rm)) := NULL]
+  dt <- dt[!rows2rm,]
+
+  if(verbose) {
+    rownms <- names(rows2rm)[which(rows2rm)]
+    print(paste( sum(rows2rm),"rows will be removed for >",scales::percent(thresh),"missingness" ))
+    print(paste( sum(cols2rm),"cols will be removed for >",scales::percent(thresh),"missingness" ))
+  }
+}
+
+tmp <- rm0VarCols(dts[[1]])
+
+
+dt <- dts[[1]]
+tmp <- dt[, colnames(dt)[0 < sapply(.SD,var,na.rm=T)] ]
+
+dts2 <- lapply(dts, \(dt) {
+
+  dt[, colnames(dt)[colVars(dt)] ]
+})
 ```
