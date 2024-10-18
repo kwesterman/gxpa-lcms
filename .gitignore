@@ -3,3 +3,12 @@ og_gxpa-lcms-mediation_notebooks/
 old/
 htslib/
 bcftools/
+*_cache/
+*_files/
+*.pdf
+*.html
+*.csv
+*.bgen
+*.sample
+*.vcf
+*.bcf
