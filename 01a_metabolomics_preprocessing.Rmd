@@ -1,6 +1,8 @@
 ```{r, echo=F}
 library(data.table)
 library(matrixStats)
+
+sapply(c("metabolomics/cleaned","metabolomics/QCd","phenotypes"), dir.create, recursive=T)
 ```
 
 # Read & inspect data
@@ -38,7 +40,7 @@ met_info[,                unique_met_id := paste0(compound_id,"_",method)]
 met_info[method=="Amine", unique_met_id := name                          ] # Amines have no compound ID so just use name
 #sum(duplicated(met_info$unique_id)) # No dup IDs!
 
-fwrite(met_info, "met_info.csv")
+fwrite(met_info, "metabolomics/met_info.csv")
 head(met_info)
 ```
 
@@ -57,7 +59,7 @@ sample_info <- sample_info[rowSums(!is.na(sample_info)) > 0]
 
 sample_info[, is_control := !grepl("TOM",sample_id)]
 
-write.csv(sample_info, "sample_info.csv")
+fwrite(sample_info, "phenotypes/sample_info.csv")
 head(sample_info)
 ```
 
@@ -73,7 +75,7 @@ class(dts$C8) <- class(dts$HP) <- class(dts$AN) <- "numeric"
 dts$C8 <- dts$C8[rowSums(!is.na(dts$C8)) > 0,] # Rm all-NA rows artifact in the C8 file
 dts$AN[dts$AN<0] <- NA # Amines has 2 negative measurements, which doesn't make sense
 
-invisible(mapply(fwrite, dts, paste0(names(dts),"_cleaned.csv"), row.names=T))
+invisible(mapply(fwrite, dts, paste0("metabolomics/cleaned/",names(dts),"_cleaned.csv"), row.names=T))
 #dts2 <- lapply(c(C8="C8_cleaned.csv",HP="HP_cleaned.csv",AN="AN_cleaned.csv"), \(f) as.matrix(fread(f),rownames=1)) # WARNING: as.matrix(rownames=1) bugged! See C8 col 24 ("TF03_C8-pos")).
 
 dts$C8[1:4,1:4] # Check out the cleaned data!
@@ -108,7 +110,7 @@ dts <- lapply(dts, \(m) {
   m <- log2(m+1) # step 5
 })
 
-invisible(mapply(fwrite, dts, paste0(names(dts),"_QCd_log2.csv"), row.names=T))
+invisible(mapply(fwrite, dts, paste0("metabolomics/QCd/",names(dts),"_QCd_log2.csv"), row.names=T))
 ```
 
 
