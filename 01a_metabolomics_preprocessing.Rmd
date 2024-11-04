@@ -1,12 +1,12 @@
-```{r, echo=F}
+```{r, echo=F, warning=F}
 library(data.table)
 library(matrixStats)
 
 ws_bucket <- "gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63"
-if(!file.exists("metabolomics/raw")) system(paste0("gsutil -m cp -r ",ws_bucket,"/metabolomics/raw .")) 
+if(!file.exists("metabolomics/raw")) system(paste0("gsutil -m cp -r ",ws_bucket,"/metabolomics .")) 
 
-dir.create("metabolomics/cleaned",showWarnings=F)
-dir.create("metabolomics/QCd",    showWarnings=F)
+dir.create("metabolomics/cleaned")
+dir.create("metabolomics/QCd")
 ```
 
 # Inspect data
@@ -111,11 +111,21 @@ data <- lapply(data, \(m) {
   m <- log2(m+1) # step 5
 })
 
-mapply(fwrite, data, paste0("metabolomics/QCd/",names(data),"_QCd_log2.csv"), row.names=T)
+mapply(fwrite, data, paste0("metabolomics/QCd/",names(data),"_QCd.csv"), row.names=T)
 ```
 
 
+# Merge C8/HP/AN datasets
+```{r message=F}
+sample_ids_shared <- Reduce(intersect, lapply(data, rownames))
+#all(grepl("TOM",sample_ids_shared)) # No QC samples!
+data_merged <- do.call(cbind, lapply(data, \(m) m[sample_ids_shared,]))
+fwrite(data_merged, "metabolomics/QCd/merged_QCd.csv", row.names=T)
+```
+---
+
 # Plots
+Plots are made using the C8/HP/AN data separately (not merged).
 ## Distribution of metabolite medians
 ```{r results="hide", fig.width=12}
 histColMedians <- function(df, title) { hist(colMedians(df), main=title) }
