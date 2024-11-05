@@ -1,3 +1,12 @@
+```{css echo=F}
+pre {
+  overflow-x: scroll;
+}
+pre code {
+  white-space: pre;
+}
+```
+
 # Setup
 ```{r setup, message=F}
 library(data.table)
@@ -32,7 +41,7 @@ data <-
   ][fread("phenotypes/freeze9_pcair_results.tsv")                  [, NWD_Id  := sample.id],                                                     nomatch=0, on="NWD_Id"
   ][fread("metabolomics/sample_info.csv")                          [, TOM_Id  := sample_id],                                                     nomatch=0, on="TOM_Id"
   ][fread("metabolomics/QCd/merged_QCd.csv")                       [, TOM_Id  := V1],                                                            nomatch=0, on="TOM_Id"
-]                                                                  # If a sample has no molecular data, their data is moot, so exclude non-matches ^
+]                                                                     # If a sample has no molecular data, their data is moot, so exclude non-matches ^
 ```
 
 # Rename columns
@@ -90,7 +99,7 @@ data <- data[
 
 # Append metabolomics PCs
 We waited to calculate PCs until now because we only want to do PCA using samples we will use in the analysis; and now we are finally done filtering samples.
-```{r mPCA}
+```{r mPCA, cache=T}
 met_names <- names(fread("metabolomics/QCd/merged_QCd.csv",nrows=0,drop=1))
 
 pca <- prcomp(data[,..met_names], center=T, scale=T)
