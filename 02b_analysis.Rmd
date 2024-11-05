@@ -1,0 +1,97 @@
+```{css echo=F}
+pre {
+  overflow-x: scroll;
+}
+pre code {
+  white-space: pre;
+}
+```
+
+# Setup
+```{r}
+library(data.table)
+library(circlize)
+library(ComplexHeatmap)
+
+adf <- fread("analysis_df.csv")
+```
+
+
+# Heatmap of mPCs vs. covars
+```{r}
+covars <- c(paste0("gPC", 1:11), "age", "bmi", 
+            "smoking", "gender_f0m1",
+            "race", "site", "season", "month")
+
+runs <- CJ(covars, mPC=paste0("mPC",1:20), sorted=F)
+runs[, lm_res    := mapply(mPC,covars, FUN= \(mPC,covar) lm(adf[[mPC]] ~ adf[[covar]]))
+   ][, anova_res := lapply(lm_res, anova)
+   ][, p         := sapply(anova_res, \(res) res$`Pr(>F)`[1])
+]
+p_mtx <- as.matrix(dcast(runs, covars~mPC, value.var="p"), rownames=1)
+p_mtx <- p_mtx[,paste0("mPC",1:20)]
+
+# TODO ask why the two heatmaps are done differently:
+# Covars, as above: lm(mPC ~ one_covar)
+# SNPs, glm(snp ~ all_mPCs, family="binomial")
+
+Heatmap(-log10(p_mtx),
+  cell_fun = \(j,i,x,y,w,h,col) if(p_mtx[i,j]<0.05) grid.text("*",x,y,gp=gpar(col="white")),
+  col = colorRamp2(c(0,10), c("black","steelblue")),
+  cluster_columns=F, cluster_rows=F
+)
+```
+
+# MWAS on genotypes and exposures
+```{r}
+met_names <- names(fread("metabolomics/QCd/merged_QCd.csv",nrows=0,drop=1))
+vars2test <- c("rs295849","pa_bin","pa","mod_pa","vig_pa","mvpa")
+covar_sets <- list(
+  c("site", "gender_f0m1", "age"                                                                                                        ),
+  c("site", "gender_f0m1", "age", "ses_score", "income_cat"                                                                             ),
+  c("site", "gender_f0m1", "age", "ses_score", "income_cat", "drinks_per_week", "smoking", "ahei_score", "dash_score"                   ),
+  c("site", "gender_f0m1", "age", "ses_score", "income_cat", "drinks_per_week", "smoking", "ahei_score", "dash_score", "race"           ),
+  c("site", "gender_f0m1", "age", "ses_score", "income_cat", "drinks_per_week", "smoking", "ahei_score", "dash_score", paste0("gPC", 1:5))
+)
+
+runs <- CJ(met_names, vars2test, covar_sets, sorted=F)
+runs[, lm_res := mapply(met_names,vars2test,covar_sets, FUN = \(met,var,covar_set)
+       lm(adf[[met]] ~ ., adf[,c(var,covar_set),with=F]))
+]
+
+
+# the old code
+test_qtl <- function(g, m, covars) {
+    form_str <- paste0("m ~ g + ", paste(covars, collapse=" + "))
+    lm(as.formula(form_str), data=analysis_df_lcms) %>%
+        broom::tidy() %>%
+        filter(term == "g") %>%
+        select(-term)
+}
+run_qtl_mwas <- function(rsID, covars) {
+  foreach(
+    m=iterators::iter(metabs, by="col")
+  ) %do% { tryCatch(
+    test_qtl(analysis_df_lcms[[rsID]], m, covars),
+    error=function(e) tibble(estimate=NA, p.value=NA)
+  )} %>%
+    setNames(colnames(metabs)) %>%
+    bind_rows(.id="metabolite")
+}
+
+
+```
+
+
+# QTL & Exposure MWASes
+Remem to use mvpa variable
+## QQs
+## Volcanoes
+## cutoff at 0.05/n_eff_metabs
+
+# Interaction analysis (hdl ~ met*(snp OR e) + covars) on the signif mets from MWAS
+# Mediation analysis 
+
+Most of this is in the univariate-analysis script.
+
+# (later) Sensitivity analysis (hdl ~ (e or snp) + covars)

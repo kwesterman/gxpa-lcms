@@ -1,7 +1,8 @@
-# Set up
+# Setup
 ```{r}
 library(tidyverse)
 library(patchwork, table1)
+library(data.table)
 ```
 
 ```{r}
@@ -52,7 +53,7 @@ mean_sd<-function(x, d=2) {
           round(sd(x, na.rm=T), digits = d))
 }
 
-# Repeat from analysis_prep.RmD
+# Repeat from analysis_prep.Rmd
 summarize_continuous <- function(x) {
   m <- round(mean(x, na.rm=TRUE), 1)
   s <- round(sd(x, na.rm=TRUE), 1)
