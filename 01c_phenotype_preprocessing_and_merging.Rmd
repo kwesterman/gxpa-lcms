@@ -1,5 +1,5 @@
 # Setup
-```{r setup message=F}
+```{r setup, message=F}
 library(data.table)
 library(readxl)
 
@@ -86,20 +86,10 @@ data <- data[
   ][, pa_bin := pa > 3.75
 
 ]
-
-# Toss old pheno cols, many of which end in "1" or "1c" (but keep "gPC1")
-# Toss most old ID cols, but beware of dropping metabolites like ac"id"s.
-#met_names <- names(fread("metabolomics/QCd/merged_QCd.csv",nrows=0,drop=1))
-#data <- data[, .SD, .SDcols = !grepl("1$|1c$",names(data))                &
-#                            !grepl("id",    names(data), ignore.case=T) |
-#                             grepl("gPC1"  ,names(data))                |
-#                             grepl("mesa_id|NWD_Id|TOM_Id",names(data)) |
-#                             names(data) %in% met_names                 ]
-# TODO: just keeping this in case I change my mind, but prolly just keep old cols to simplify the code. There are so many metabolite cols it doesn't matter.
 ```
 
 # Append metabolomics PCs
-We waited to calculate PCs until now because we only want to do PCA using samples we will use in the analysis; and at this point we have finished filtering out samples.
+We waited to calculate PCs until now because we only want to do PCA using samples we will use in the analysis; and now we are finally done filtering samples.
 ```{r mPCA}
 met_names <- names(fread("metabolomics/QCd/merged_QCd.csv",nrows=0,drop=1))
 
