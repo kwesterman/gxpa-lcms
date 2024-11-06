@@ -82,6 +82,7 @@ data$HP <- fread(data_files$HP, skip=4, drop=1:6, colClasses="double") |> t() |>
 data$AN <- fread(data_files$AN)                                        |> as.matrix(rownames=1)
 class(data$C8) <- class(data$HP) <- class(data$AN) <- "numeric" # "NAs introduced by coersion" are due to 2 weird cells in AN: "1+2559:2584.03935869994933" and "5+3828:3930.95273887971489"
 
+data <- lapply(data, \(m) m[!(rownames(m) %in% sample_info[is_qc_sample==T,sample_id]), ] ) # Rm QC samples
 data$C8 <- data$C8[rowSums(!is.na(data$C8)) > 0,] # Rm all-NA rows artifact in the C8 file
 data$AN[data$AN<0] <- NA # Amines has 2 negative measurements, which doesn't make sense
 
@@ -112,9 +113,9 @@ winsorizeColsBySd <- \(m, n_sd) {
 }
 
 data <- lapply(data, \(m) {
-  m <- m[, colVars(m) > 0] # step 1
+  m <- m[, colVars(m,na.rm=T) > 0] # step 1
   m <- m[,colSums(is.na(m)) < 0.25*nrow(m) ] # step 2a
-  m <- m[ rowSums(is.na(m)) < 0.25*nrow(m),] # step 2b
+  m <- m[ rowSums(is.na(m)) < 0.25*ncol(m),] # step 2b
   m[is.na(m)] <- (colMins(m,na.rm=T)/2)[col(m)[is.na(m)]] # step 3
   m <- winsorizeColsBySd(m,5) # step 4
   m <- log2(m+1) # step 5
