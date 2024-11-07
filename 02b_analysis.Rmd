@@ -12,8 +12,10 @@ pre code {
 library(data.table)
 library(circlize)
 library(ComplexHeatmap)
+library(ggplot2)
+library(parallel)
 
-adf <- fread("analysis_df.csv")
+data <- fread("analysis_df.csv")
 ```
 
 
@@ -24,7 +26,7 @@ covars <- c(paste0("gPC", 1:11), "age", "bmi",
             "race", "site", "season", "month")
 
 runs <- CJ(covars, mPC=paste0("mPC",1:20), sorted=F)
-runs[, lm_res    := mapply(mPC,covars, FUN= \(mPC,covar) lm(adf[[mPC]] ~ adf[[covar]]))
+runs[, lm_res    := mapply(mPC,covars, FUN= \(mPC,covar) lm(data[[mPC]] ~ data[[covar]]))
    ][, anova_res := lapply(lm_res, anova)
    ][, p         := sapply(anova_res, \(res) res$`Pr(>F)`[1])
 ]
@@ -43,7 +45,7 @@ Heatmap(-log10(p_mtx),
 ```
 
 # MWAS on genotypes and exposures
-```{r}
+```{r mwas, cache=T}
 met_names <- names(fread("metabolomics/QCd/merged_QCd.csv",nrows=0,drop=1))
 vars2test <- c("rs295849","pa_bin","pa","mod_pa","vig_pa","mvpa")
 covar_sets <- list(
@@ -54,35 +56,69 @@ covar_sets <- list(
   c("site", "gender_f0m1", "age", "ses_score", "income_cat", "drinks_per_week", "smoking", "ahei_score", "dash_score", paste0("gPC", 1:5))
 )
 
-runs <- CJ(met_names, vars2test, covar_sets, sorted=F)
-runs[, lm_res := mapply(met_names,vars2test,covar_sets, FUN = \(met,var,covar_set)
-       lm(adf[[met]] ~ ., adf[,c(var,covar_set),with=F]))
+met_pca <- prcomp(data[,..met_names])
+met_eigvals <- met_pca$sdev^2
+met_eff_n <- sum(met_eigvals)^2 / sum(met_eigvals^2)
+bonferroni_p_thresh <- 0.05/met_eff_n
+
+  # Define all possible model combinations of met ~ var + covars
+mwas <- CJ(met_names, vars2test, covar_sets, sorted=F)[
+
+  # Run linear models
+    , lm_coefs := mcmapply(met_names,vars2test,covar_sets, FUN = \(met,var,covar_set)
+        lm(data[[met]] ~ ., data[,c(var,covar_set), with=F]) |> (\(x) summary(x)$coefficients)(),
+        SIMPLIFY=F,
+        mc.cores=6)
+
+  # Extract results we want
+  ][, var_coefs := mapply(lm_coefs, vars2test, FUN = \(coefs,var)
+        coefs[rownames(coefs)==var,],
+        SIMPLIFY=F)
+
+  ][, estimate := sapply(var_coefs, "[", "Estimate"  )
+  ][, se       := sapply(var_coefs, "[", "Std. Error")
+  ][, p        := sapply(var_coefs, "[", "Pr(>|t|)"  )
+  ][, q        := p.adjust(p, method="BH")
+  ][, signif   := p < bonferroni_p_thresh
+
+  # Cleanup
+  ][, var_coefs := NULL
+  ][,  lm_coefs := NULL
+  ][, covar_sets := sapply(covar_sets,paste,collapse='+')
 ]
+```
 
+```{r}
+mwas_gpc <- mwas[grepl("gPC",covar_sets)]
 
-# the old code
-test_qtl <- function(g, m, covars) {
-    form_str <- paste0("m ~ g + ", paste(covars, collapse=" + "))
-    lm(as.formula(form_str), data=analysis_df_lcms) %>%
-        broom::tidy() %>%
-        filter(term == "g") %>%
-        select(-term)
+# Checking vs. old results
+mwas_gpc[vars2test=="rs295849" & signif==T][order(p)]
+mwas_gpc[vars2test=="rs295849" & met_names %in% c("QI3513_HIL-pos","QI984_HIL-pos","QI7609_HIL-pos")]
+
+#qqnorm(mwas_qtl_gpc[order(p),-log10(p)])
+
+# Calculate genomic inflation lambda
+calc_lambda <- function(x, p=0.5){
+  x <- x[!is.na(x)]
+  x.quantile <- quantile(x, p)
+  round(qchisq(1 - x.quantile, 1) / qchisq(p, 1), 2)
 }
-run_qtl_mwas <- function(rsID, covars) {
-  foreach(
-    m=iterators::iter(metabs, by="col")
-  ) %do% { tryCatch(
-    test_qtl(analysis_df_lcms[[rsID]], m, covars),
-    error=function(e) tibble(estimate=NA, p.value=NA)
-  )} %>%
-    setNames(colnames(metabs)) %>%
-    bind_rows(.id="metabolite")
-}
+mwas_gpc[, calc_lambda(p), by=vars2test]
 
-
+library(ggplot2)
+mwas_gpc[
+    order(p)
+  ][, nlp := -log10(p)
+  ][, nlp_expect := -log10(ppoints(.N)), by=vars2test
+] |>
+  ggplot(aes(x=nlp_expect, y=nlp, color=vars2test)) +
+    geom_point() +
+    geom_abline(slope=1, intercept=0) +
+    theme_bw()
 ```
 
 
+# TODO
 # QTL & Exposure MWASes
 Remem to use mvpa variable
 ## QQs

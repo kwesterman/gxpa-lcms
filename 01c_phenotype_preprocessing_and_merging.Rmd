@@ -16,7 +16,7 @@ ws_bucket <- "gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63"
 if(!file.exists("phenotypes/")) system(paste0("gsutil -m cp -r ",ws_bucket,"/phenotypes ."))
 
 winsorizeBySd <- function(x, SDs=5) {
-  lower_bound <- mean(x,na.rm=T) + SDs*sd(x,na.rm=T)
+  lower_bound <- mean(x,na.rm=T) - SDs*sd(x,na.rm=T)
   upper_bound <- mean(x,na.rm=T) + SDs*sd(x,na.rm=T)
   print(paste(sum(x<lower_bound,na.rm=T), "values winsorized at the lower bound."))
   print(paste(sum(x>upper_bound,na.rm=T), "values winsorized at the upper bound."))
@@ -73,13 +73,14 @@ data <- data[
     is_qc_sample == F
   ][study=="MESA"
   ][is.na(Exclusion_Reason)
+  ][!is.na(vig_pa) & !is.na(pa) & !is.na(mvpa)
 
   # Edit or creating custom columns
   ][, race        := factor(race1c,  levels=1:4, labels=c("white","asian","hispanic","african-american"))
   ][, gender_f0m1 := factor(gender1, levels=0:1, labels=c("FEMALE","MALE"))
   ][, hdl_log     := log(hdl) 
 
-  # Some imputation of covariates to maintain sample size
+  ## Some imputation of covariates to maintain sample size
   ][is.na(income_cat), income_cat := "Missing"
   ][is.na(smoking),       smoking := "NEVER"
 
@@ -89,10 +90,10 @@ data <- data[
       lapply( .SD, \(x) { x <- winsorizeBySd(x); fifelse(is.na(x), median(x,na.rm=T), x) })
 
   ## Scaling + Winsorization
-  ][, .SDcols = c("pa", "mod_pa", "vig_pa", "mvpa"),
-                c("pa", "mod_pa", "vig_pa", "mvpa") :=
+  ][, .SDcols=c("pa", "mod_pa", "vig_pa", "mvpa"),
+              c("pa", "mod_pa", "vig_pa", "mvpa") :=
       lapply(.SD, \(x) winsorizeBySd(x/60))
-  ][, pa_bin := pa > 3.75
+  ][, pa_bin := as.numeric(pa > 3.75)
 
 ]
 ```
