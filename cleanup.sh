@@ -1,1 +1,5 @@
-rm -rf bcftools htslib an_MESA* MESA_pilot* regions.txt rsids.txt tmp.txt freeze.9b.chr* phenotypes metabolomics Rplots* *.png *.html analysis_df.csv
+rm -rf *.png *.html *_files *_cache regions.txt rsids.txt
+if [ "$1" == "full" ]; then
+  rm -rf bcftools htslib phenotypes metabolomics analysis_df.csv
+fi
+  
