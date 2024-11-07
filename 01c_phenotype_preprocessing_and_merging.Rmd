@@ -30,35 +30,6 @@ winsorizeBySd <- function(x, SDs=5) {
 
 # Join all datasets
 ```{r join}
-data <-
-    setDT(read_excel("phenotypes/draw_dates_MESA_study_site.xlsx"))[, mesa_id := sidno
-  ][fread("phenotypes/freeze9b_sample_annot_2020-08-20.txt")       [, mesa_id := subject_id],                                                               on="mesa_id"
-  ][fread("phenotypes/SHARe_AncilMesaNMR_LP4_DS.txt")              [, mesa_id := as.character(subject_id)],                                                 on="mesa_id"
-  ][fread("phenotypes/id_match_file.csv")                          [, mesa_id := as.character(Cohort_Specific_Id)],                                         on="mesa_id"
-  ][fread("phenotypes/nmr_metabolites.csv")                        [, mesa_id := sub("phs000209.v13_", "", `\\_Parent Study Accession with Subject ID\\`)], on="mesa_id"
-  ][fread("phenotypes/covariates.csv")                             [, mesa_id := sub("phs000209.v13_", "", `\\_Parent Study Accession with Subject ID\\`)], on="mesa_id"
-  ][fread("phenotypes/basic_phenotypes.csv")                       [, mesa_id := sub("phs000209.v13_", "", `\\_Parent Study Accession with Subject ID\\`)], on="mesa_id"
-  ][fread("phenotypes/primary_phenotypes.csv")                     [, mesa_id := sub("phs000209.v13_", "", `\\_Parent Study Accession with Subject ID\\`)], on="mesa_id"
-  ][fread("genotypes.csv")                                         [, NWD_Id  := NWD_ID],                                                                   on="NWD_Id"
-  ][fread("phenotypes/freeze9_pcair_results.tsv")                  [, NWD_Id  := sample.id],                                                                on="NWD_Id"
-  ][fread("metabolomics/sample_info.csv")                          [, TOM_Id  := sample_id],                                                                on="TOM_Id"
-  #][fread("metabolomics/QCd/merged_QCd.csv")                       [, TOM_Id  := V1],                                                                       on="TOM_Id"
-] # X[Y] == merge(X,Y, all.y=T), so we want to join the most important data (metabolomics) last.
-
-# I want no NAs in metabolomics data
-# I want to merge all=T ids and metabolomics, and work from there
-# It's ok to fill NAs in genotype and pa vars, and everything else
-# The thing is, I don't want possibly-good rows to get deleted when merging the phenotype data with each other. Ideally
-#    just merge all the pehno data with all=T permanently on, but that's huge.
-#    Instead, could just start with metabolomics + ids, and collapse the other pheno files into that.
-#    Any way to do that w/o merge() and just left/right joins?
-# Maybe, first merge(ids,mets,all=T), then Reduce(merge(..., ), all_the_phenos, init=merge
-# Wait, I don't even need to merge the ids to mets w/ all=T, I just need to merge it first.
-# But then merging by "mesa_id" vs. "NWD_Id" means i need two separate calls... pooh
-
-# Almost works but some dts have duplicated names
-
-# TODO TODO figure this out, regular merge() doesn't work b/c duplicated colnames.
 merge2 <- \(x,y,by) { # Merge will eliminate cols with duplicated names along the way.
   setkeyv(x,by)
   setkeyv(y,by)
@@ -82,23 +53,6 @@ data <- Reduce(\(x,l) merge2(x,l$y, by=l$by),
     list(by= "NWD_Id", y=fread("genotypes.csv")                                         [,  NWD_Id := NWD_ID])
   )
 )
-
-tmp <-  fread("phenotypes/freeze9b_sample_annot_2020-08-20.txt")
-
-
-#data <-
-#                 fread("phenotypes/id_match_file.csv")                           |>
-#  merge(all.y=T, fread("metabolomics/QCd/merged_QCd.csv")                       [,  TOM_Id := V1],                                                      by="TOM_Id") |>
-#  merge(all  =F, fread("metabolomics/sample_info.csv")                          [,  TOM_Id := sample_id], ) |>
-#  merge(all.x=T, fread("genotypes.csv")                                         [,  NWD_Id := NWD_ID]) |>
-#  merge(all.x=T, fread("phenotypes/freeze9_pcair_results.tsv")                  [,  NWD_Id := sample.id], all.x=T) |>
-#  merge(all.x=T, fread("phenotypes/primary_phenotypes.csv")                     [, mesa_id := sub("phs000209.v13_", "", `\\_Parent Study Accession with Subject ID\\`)], )
-#  merge(all.x=T, fread("phenotypes/basic_phenotypes.csv")                       [, mesa_id := sub("phs000209.v13_", "", `\\_Parent Study Accession with Subject ID\\`)], )
-#  merge(all.x=T, fread("phenotypes/nmr_metabolites.csv")                        [, mesa_id := sub("phs000209.v13_", "", `\\_Parent Study Accession with Subject ID\\`)], )
-#  merge(all.x=T, fread("phenotypes/covariates.csv")                             [, mesa_id := sub("phs000209.v13_", "", `\\_Parent Study Accession with Subject ID\\`)], )
-#  merge(all.x=T, fread("phenotypes/SHARe_AncilMesaNMR_LP4_DS.txt")              [, mesa_id := as.character(subject_id)],                                              )
-#  merge(all.x=T, fread("phenotypes/freeze9b_sample_annot_2020-08-20.txt")       [, mesa_id := subject_id],  )
-#  merge(all.x=T, setDT(read_excel("phenotypes/draw_dates_MESA_study_site.xlsx"))[, mesa_id := sidno], )
 ```
 
 # Rename columns
