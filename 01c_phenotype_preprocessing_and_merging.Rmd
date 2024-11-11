@@ -39,7 +39,7 @@ merge2 <- \(x,y,by) { # Merge will eliminate cols with duplicated names along th
 }
 
 data <- Reduce(\(x,l) merge2(x,l$y, by=l$by),
-    list(              x=fread("metabolomics/QCd/merged_QCd.csv")[,1:3]                 [,  TOM_Id := V1],
+    list(              x=fread("metabolomics/QCd/merged_QCd.csv")                       [,  TOM_Id := V1],
     list(by= "TOM_Id", y=fread("metabolomics/sample_info.csv")                          [,  TOM_Id := sample_id]),
     list(by= "TOM_Id", y=fread("phenotypes/id_match_file.csv")                          [, mesa_id := as.character(Cohort_Specific_Id)]),
     list(by="mesa_id", y=fread("phenotypes/SHARe_AncilMesaNMR_LP4_DS.txt")              [, mesa_id := as.character(subject_id)]),
@@ -75,6 +75,7 @@ data <- data[, `:=`(
    H6P=h6p1,  prop_Eas_Asian=East_Asian,  season=`exam1:season`,                  
    H7P=h7p1,  prop_European=European
 )]
+setnames(data, \(nm) gsub("\\\\","",nm)) # Rm backslashes from names
 ```
 
 # Filter, and generate new columns
@@ -82,13 +83,14 @@ data <- data[, `:=`(
 data <- data[
   # Filtering
     is_qc_sample == F
-  ][study=="MESA"
   ][is.na(Exclusion_Reason)
-  #][!is.na(vig_pa) & !is.na(pa) & !is.na(mvpa) # TODO Well, wasn't done in the previous analysis
+  #][study=="MESA" # TODO loses a lot of samples
+  ][!is.na(vig_pa) | !is.na(mod_pa) | !is.na(pa) | !is.na(mvpa) | !is.na(rs295849)
 
   # Edit or creating custom columns
   ][, race        := factor(race1c,  levels=1:4, labels=c("white","asian","hispanic","african-american"))
-  ][, gender_f0m1 := factor(gender1, levels=0:1, labels=c("FEMALE","MALE"))
+  ][, gender_f0m1 := factor(gender1, levels=c("FEMALE","MALE"))
+  ][, site        := factor(site,    levels=c(3,4,5,6,7,8), labels=c("s3","s4","s5","s6","s7","s8"))
   ][, hdl_log     := log(hdl) 
 
   ## Some imputation of covariates to maintain sample size
