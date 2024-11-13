@@ -13,6 +13,7 @@ library(data.table)
 library(circlize)
 library(ComplexHeatmap)
 library(ggplot2)
+library(ggrepel)
 library(parallel)
 
 data <- fread("analysis_df.csv")
@@ -56,14 +57,12 @@ covar_sets <- list(
   c("site", "gender_f0m1", "age", "ses_score", "income_cat", "drinks_per_week", "smoking", "ahei_score", "dash_score", paste0("gPC", 1:5))
 )
 
-met_pca <- prcomp(data[,..met_names])
-met_eigvals <- met_pca$sdev^2
+met_eigvals <- prcomp(data[,..met_names])$sdev^2
 met_eff_n <- sum(met_eigvals)^2 / sum(met_eigvals^2)
-bonferroni_p_thresh <- 0.05/met_eff_n
+p_thresh <- 0.05/met_eff_n
 
   # Define all possible model combinations of met ~ var + covars
 mwas <- CJ(met_names, vars2test, covar_sets, sorted=F)[
-
   # Run linear models
     , lm_coefs := mcmapply(met_names,vars2test,covar_sets, FUN = \(met,var,covar_set)
         lm(data[[met]] ~ ., data[,c(var,covar_set), with=F]) |> (\(x) summary(x)$coefficients)(),
@@ -79,7 +78,7 @@ mwas <- CJ(met_names, vars2test, covar_sets, sorted=F)[
   ][, se       := sapply(var_coefs, "[", "Std. Error")
   ][, p        := sapply(var_coefs, "[", "Pr(>|t|)"  )
   ][, q        := p.adjust(p, method="BH")
-  ][, signif   := p < bonferroni_p_thresh
+  ][, signif   := p < p_thresh
 
   # Cleanup
   ][, var_coefs := NULL
@@ -88,24 +87,24 @@ mwas <- CJ(met_names, vars2test, covar_sets, sorted=F)[
 ]
 ```
 
+# TMP
 ```{r}
+#tmp <- mwas[vars2test=="rs295849" & met_names %in% c("QI3513_HIL-pos","QI984_HIL-pos","QI7609_HIL-pos")]
+#tmp <- mwas[signif==T]
+#
 mwas_gpc <- mwas[grepl("gPC",covar_sets)]
+knitr::kable(mwas_gpc[signif==T, !c("covar_sets")][order(vars2test,p)])
+#tmp <- mwas[grepl("gPC",covar_sets) & signif==T]
+#
+## Checking vs. old results
+#mwas_gpc[vars2test=="rs295849" & signif==T][order(p)]
+#mwas_gpc[vars2test=="rs295849" & met_names %in% c("QI3513_HIL-pos","QI984_HIL-pos","QI7609_HIL-pos")]
+#
+##qqnorm(mwas_qtl_gpc[order(p),-log10(p)])
+```
 
-# Checking vs. old results
-mwas_gpc[vars2test=="rs295849" & signif==T][order(p)]
-mwas_gpc[vars2test=="rs295849" & met_names %in% c("QI3513_HIL-pos","QI984_HIL-pos","QI7609_HIL-pos")]
-
-#qqnorm(mwas_qtl_gpc[order(p),-log10(p)])
-
-# Calculate genomic inflation lambda
-calc_lambda <- function(x, p=0.5){
-  x <- x[!is.na(x)]
-  x.quantile <- quantile(x, p)
-  round(qchisq(1 - x.quantile, 1) / qchisq(p, 1), 2)
-}
-mwas_gpc[, calc_lambda(p), by=vars2test]
-
-library(ggplot2)
+# QQ
+```{r}
 mwas_gpc[
     order(p)
   ][, nlp := -log10(p)
@@ -115,15 +114,47 @@ mwas_gpc[
     geom_point() +
     geom_abline(slope=1, intercept=0) +
     theme_bw()
+
+# Genomic inflation λ
+calc_λ  <- function(x, p=0.5){
+  x <- x[!is.na(x)]
+  x.quantile <- quantile(x, p)
+  round(qchisq(1 - x.quantile, 1) / qchisq(p, 1), 2)
+}
+mwas_gpc[, calc_λ(p), by=vars2test]
+```
+
+# Volcano
+```{r warning=F, fig.width=16, fig.height=12}
+ggplot(mwas_gpc, aes(x=estimate, y=-log10(p), color=p<p_thresh)) +
+  geom_hline(yintercept=-log10(p_thresh), linetype="dashed") +
+  geom_point(alpha=0.4, shape=16) +
+  geom_text_repel(data=mwas_gpc[p<p_thresh], aes(label=met_names), size=3, show.legend=F) +
+  scale_color_manual(name="Significant?\n(p<0.05/n_eff_metabolites)",values=c("FALSE"="black","TRUE"="red")) +
+  facet_wrap(vars(vars2test), scales="free") +
+  guides(color = guide_legend(override.aes = list(size=5)))
+```
+
+
+
+# Interaction analysis
+lm(hdl ~ met*(snp or exposure) + covars), using MWAS's significant metabolites.
+```{r}
+#TODO
+```
+
+# Mediation analysis
+```{r}
+#TODO
 ```
 
 
 # TODO
-# QTL & Exposure MWASes
-Remem to use mvpa variable
-## QQs
-## Volcanoes
-## cutoff at 0.05/n_eff_metabs
+# QTL & Exposure MWASes ✓
+Remem to use mvpa variable 
+## QQs ✓
+## Volcanoes ✓
+## cutoff at 0.05/n_eff_metabs ✓
 
 # Interaction analysis (hdl ~ met*(snp OR e) + covars) on the signif mets from MWAS
 # Mediation analysis 
