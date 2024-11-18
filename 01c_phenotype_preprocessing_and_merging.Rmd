@@ -30,15 +30,15 @@ winsorizeBySd <- function(x, SDs=5) {
 
 # Join all datasets
 ```{r join}
-merge2 <- \(x,y,by) { # Merge will eliminate cols with duplicated names along the way.
+merge2 <- \(x,y,by,...) { # Merge will eliminate cols with duplicated names along the way.
   setkeyv(x,by)
   setkeyv(y,by)
-  merged <- merge(x,y, all.x=T, suffixes=c('a','b'))
+  merged <- merge(x,y, suffixes=c('a','b'), ...)
   dups <- sub('a$|b$', '', colnames(merged)) |> duplicated()
   merged[,.SD,.SDcols=!dups]
 }
 
-data <- Reduce(\(x,l) merge2(x,l$y, by=l$by),
+data <- Reduce(\(x,l) merge2(x,l$y, by=l$by, all.x=T),
     list(              x=fread("metabolomics/QCd/merged_QCd.csv")                       [,  TOM_Id := V1],
     list(by= "TOM_Id", y=fread("metabolomics/sample_info.csv")                          [,  TOM_Id := sample_id]),
     list(by= "TOM_Id", y=fread("phenotypes/id_match_file.csv")                          [, mesa_id := as.character(Cohort_Specific_Id)]),
@@ -58,7 +58,7 @@ data <- Reduce(\(x,l) merge2(x,l$y, by=l$by),
 # Rename columns
 ```{r rename}
 setnames(data, \(nm) sub(".*\\\\(.*)\\\\$", "\\1", nm)) # Fixes some names e.g. "\\phs000209\\pht001116\\phv00084442\\age1c\\" -> "age1c"
-setnames(data, \(nm) sub("^PC"            , "gPC", nm)) # To distinguish genetic PCs from metabolite PCs we'll add later
+setnames(data, \(nm) sub("^PC"            , "gPC", nm)) # "PC#" -> "gPC#" To distinguish genetic PCs from metabolite PCs we'll add later
 data <- data[, `:=`(
    # SHARe...txt      #primary...csv    #nmr...csv           #covariates.csv           
    HDL_C=nhdlc1,      hdl=hdl1,         HDL_C_lp3=nhdlc31c,  ses_score=F1_PC2_1,       
@@ -84,7 +84,6 @@ data <- data[
   # Filtering
     is_qc_sample == F
   ][is.na(Exclusion_Reason)
-  #][study=="MESA" # TODO loses a lot of samples
   ][!is.na(vig_pa) | !is.na(mod_pa) | !is.na(pa) | !is.na(mvpa) | !is.na(rs295849)
 
   # Edit or creating custom columns
