@@ -6,68 +6,90 @@ pre code {
   white-space: pre;
 }
 ```
-
-```{r, echo=F, warning=F}
+```{r setup, results='hide', warning=F, message=F}
 library(data.table)
 library(matrixStats)
+'%ni%' <- Negate('%in%')
 
-ws_bucket <- "gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63"
-if(!file.exists("metabolomics/raw")) system(paste0("gsutil -m cp -r ",ws_bucket,"/metabolomics .")) 
-
+dir.create("metabolomics/raw", recursive=T)
 dir.create("metabolomics/cleaned")
 dir.create("metabolomics/QCd")
+
+data_csvs <- list(CP='metabolomics/raw/23_0207_MESA_Pilot_X01_Broad_C8-pos.csv',    # C8-positive
+                  CN='metabolomics/raw/23_0210_MESA_Pilot_X01_Broad_C18-neg.csv',   # C18-negative
+                  HP='metabolomics/raw/23_0207_MESA_Pilot_X01_Broad_HILIC-pos.csv', # HILIC-positive
+                  AN='metabolomics/raw/23_0210_MESA_Pilot_X01_BIDMC_Amide-neg.csv') # Amide-negative
+
+# Download original xlsx data and convert to csv, much faster to work with.
+if(!all(file.exists(unlist(data_csvs)))) {
+  system("gsutil -m cp gs://fc-secure-4b3e979d-ba8b-43c4-a5ec-b41ab42ce606/MesaMetabolomics_PilotX01_2023_02_16/23_02* metabolomics/raw")
+  data_xlsxs <- sub('.csv','.xlsx', data_csvs)
+  mapply(data_csvs,data_xlsxs, FUN=\(csv,xlsx) xlsx |> readxl::read_xlsx(col_names=F) |> fwrite(csv, col.names=F))
+}
 ```
 
-# Inspect data
-There are files for 3 LC-MS methods: C8-positive, HILIC-positive, and Amines ([descriptions here](https://topmed.nhlbi.nih.gov/sites/default/files/TOPMed_CORE_Year3_Broad-BIDMC_metabolomics_methods.pdf)).
-```{r results="asis"}
-data_files <- list(C8="metabolomics/raw/MESA_pilot_BroadInst_C8-pos_lipids_050517.csv", # C8-positive
-                   HP="metabolomics/raw/MESA_pilot_BroadInst_HIL-pos_polar_050517.csv", # HILIC-positive
-                   AN="metabolomics/raw/an_MESA_clean.txt")                             # Amines
 
-quick_look <- \(file) knitr::kable(fread(file, nrow=8, select=1:8))
-lapply(data_files, quick_look)
+# Inspect data
+There are files for 4 LC-MS methods: C8-positive, C18-negative, HILIC-positive, Amide-negative ([descriptions here](https://topmed.nhlbi.nih.gov/sites/default/files/TOPMed_CORE_Year3_Broad-BIDMC_metabolomics_methods.pdf)).
+```{r inspect, results="asis"}
+quick_look <- \(file) fread(file, nrow=12, select=1:12) |> knitr::kable()
+lapply(data_csvs, quick_look)
 ```
 Nonstandard format, so prepare for hardcoded row/col numbers!
 
 
 # Extract sample metadata
-Note: MESA AN file has no sample metadata, but all its sample IDs are covered by C8 and HP methods anyways.
-```{r}
+Note: MESA AN file has no sample metadata, but all its sample IDs are covered by CP and HP methods anyways.
+```{r sample-info}
 sample_info <- list()
-sample_info$C8 <- fread(data_files$C8, nrow=5, drop=1:5) |> transpose()
-sample_info$HP <- fread(data_files$HP, nrow=5, drop=1:5) |> transpose()
-names(sample_info[[1]]) <- names(sample_info[[2]]) <- c("extr_date","inject_date","column","analysis_order","sample_id")
+sample_info$CP <- fread(data_csvs$CP, nrow=10, drop=1:8) |> transpose()
+sample_info$CN <- fread(data_csvs$CN, nrow=10, drop=1:8) |> transpose()
+sample_info$HP <- fread(data_csvs$HP, nrow=10, drop=1:8) |> transpose()
+sample_info$AN <- fread(data_csvs$AN, nrow= 9, drop=1:8) |> transpose()
 
-sample_info <- merge(sample_info$C8, sample_info$HP, by="sample_id", suffixes=c("_c8","_hp"), all=T)
+names(sample_info$CP) <- names(sample_info$CN) <- names(sample_info$HP) <- c('extr_date','inject_date','column',  'inject_order','sample_type',           'TOM_Id','checksum','raw_fnm','project','sample_id')
+names(sample_info$AN) <-                                                   c(            'inject_date','batch_an','inject_order','sample_type','BIDMC_Id','TOM_Id',           'raw_fnm','project','sample_id')
 
-# Rm all-NA rows, an artifact from the C8 file
-sample_info <- sample_info[rowSums(!is.na(sample_info)) > 0]
+by_cols <- c('sample_id','TOM_Id','project')
+sample_info <- sample_info$CP |>
+       merge(y=sample_info$CN, suffixes=c('','_cn'), by=by_cols, all=T) |>
+       merge(y=sample_info$HP, suffixes=c('','_hp'), by=by_cols, all=T) |>
+       merge(y=sample_info$AN, suffixes=c('','_an'), by=by_cols, all=T) |>
+       setnames(c('extr_date',   'inject_date',   'column',   'inject_order',   'sample_type',   'checksum',   'raw_fnm'   ),
+                c('extr_date_cp','inject_date_cp','column_cp','inject_order_cp','sample_type_cp','checksum_cp','raw_fnm_cp'))
+
+#sample_info[duplicated(sample_id),sample_id] # None of the duplicated IDs are TOM ids.
 
 sample_info[, is_qc_sample := !grepl("TOM",sample_id)]
 
+# Dates were converted to integers in readxl::read_xlsx. This integer represents the # of days after 1899-12-30 (see ?as.Date.)
+date_cols <- grep('date',names(sample_info),value=T)
+sample_info[, (date_cols) := lapply(.SD, \(x) as.numeric(x) |> as.Date(origin='1899-12-30')), .SDcols=date_cols]
+
 fwrite(sample_info, "metabolomics/sample_info.csv")
 knitr::kable(head(sample_info))
-
-
 ```
+
 # Extract metabolite metadata
-Compound IDs may be duplicated across C8 and HP. A concatenated `<ID>_<Method>` variable ensures IDs are unique.\
 Then, create a file mapping these IDs back to their metabolite metadata such as M/Z and RT.
-```{r}
+```{r met-info}
 met_info <- list()
-met_info$C8 <- fread(data_files$C8, skip=4, select=1:6)
-met_info$HP <- fread(data_files$HP, skip=4, select=1:6)
-met_info$AN <- data.table(method="Amine", compound_id=NA, mz=NA, rt=NA, hmdb_id=NA,
-                          name=names(fread(data_files$AN,nrow=0))[-1])
-names(met_info$C8) <- names(met_info$HP) <- names(met_info$AN)
+met_info$CP <- fread(data_csvs$CP, skip=9, select=1:8)
+met_info$CN <- fread(data_csvs$CN, skip=9, select=1:8)
+met_info$HP <- fread(data_csvs$HP, skip=9, select=1:8)
+met_info$AN <- fread(data_csvs$AN, skip=8, select=1:8)
+
+# Temporarily renames AN's MRM column to RT, for consistent colnames for rbindlist.
+names(met_info$AN) <- names(met_info$CP) 
 met_info <- rbindlist(met_info)
+met_info[Method=='Amide-neg', `:=`(MRM_Transition=RT, RT=NA)]
 
-met_info[met_info=='' | met_info=='n/a'] <- NA
-
-met_info[,                unique_met_id := paste0(compound_id,"_",method)]
-met_info[method=="Amine", unique_met_id := name                          ] # Amines have no compound ID so just use name
+# Compound IDs may be duplicated across CP/CN/HP/AN. A concatenated `<ID>_<Method>` variable ensures IDs are unique.
+met_info[,                    unique_met_id := paste0(Compound_ID,'_',Method)]
+met_info[Method=='Amide-neg', unique_met_id := paste0(    .I,     '_',Method)] # Amines have no Compound_ID, so generate them.
 #sum(duplicated(met_info$unique_id)) # No dup IDs!
+
+met_info[met_info==''] <- NA
 
 fwrite(met_info, "metabolomics/met_info.csv")
 knitr::kable(head(met_info))
@@ -75,21 +97,22 @@ knitr::kable(head(met_info))
 
 
 # Extract measurement data
-```{r, results="hide", warning=F, message=F}
+```{r data, results='hide', warning=F, message=F}
 data <- list()
-data$C8 <- fread(data_files$C8, skip=4, drop=1:6, colClasses="double") |> t() |> `colnames<-`(met_info[method== "C8-pos",unique_met_id]) # Yes I double-checked, the names are in the proper order
-data$HP <- fread(data_files$HP, skip=4, drop=1:6, colClasses="double") |> t() |> `colnames<-`(met_info[method=="HIL-pos",unique_met_id])
-data$AN <- fread(data_files$AN)                                        |> as.matrix(rownames=1)
-mode(data$C8) <- mode(data$HP) <- mode(data$AN) <- "numeric" # "NAs introduced by coersion" are due to 2 weird cells in AN: "1+2559:2584.03935869994933" and "5+3828:3930.95273887971489"
+data$CP <- fread(data_csvs$CP, skip=9, drop=1:8, colClasses='double') |> t() |> `colnames<-`(met_info[Method==   'C8-pos',unique_met_id]) # Yes I double-checked, the names are in the proper order
+data$CN <- fread(data_csvs$CN, skip=9, drop=1:8, colClasses='double') |> t() |> `colnames<-`(met_info[Method==  'C18-neg',unique_met_id])
+data$HP <- fread(data_csvs$HP, skip=9, drop=1:8, colClasses='double') |> t() |> `colnames<-`(met_info[Method=='HILIC-pos',unique_met_id])
+data$AN <- fread(data_csvs$AN, skip=8, drop=1:8, colClasses='double') |> t() |> `colnames<-`(met_info[Method=='Amide-neg',unique_met_id])
 
-data <- lapply(data, \(m) m[!(rownames(m) %in% sample_info[is_qc_sample==T,sample_id]), ] ) # Rm QC samples
-data$C8 <- data$C8[rowSums(!is.na(data$C8)) > 0,] # Rm all-NA rows artifact in the C8 file
-data$AN[data$AN<0] <- NA # Amines has 2 negative measurements, which doesn't make sense
+mode(data$CP) <- mode(data$CN) <- mode(data$HP) <- mode(data$AN) <- "numeric" # "NAs introduced by coersion" are due the AN file, which contains to empty strings "" and one weird cell "1+2559:2584.03935869994933".
+
+data <- lapply(data, \(m) m[rownames(m) %ni% sample_info[is_qc_sample==T,sample_id], ] ) # Rm QC sample rows
+data$AN[data$AN<0] <- NA # Amines has 11 negative measurements, which don't make sense
 
 mapply(fwrite, data, paste0("metabolomics/cleaned/",names(data),"_cleaned.csv"), row.names=T)
 ```
 ```{r results="hold"}
-data$C8[1:3,1:3] # Check out the cleaned data!
+data$CP[1:3,1:3] # Check out the cleaned data!
 data$HP[1:3,1:3]
 data$AN[1:3,1:3]
 ```
@@ -103,7 +126,7 @@ data$AN[1:3,1:3]
 5\. Winsorize to 5*sd\
 Missingness removal is done in two separate steps, where high-missingness metabolites are removed first, _then_ samples (to prioritize not losing samples).\
 Batch adjustment is best done at the same time as adjusting for other covariates, later.
-```{r results="hide", message=F}
+```{r qc, results='hide', message=F}
 winsorizeColsBySd <- \(m, n_sd) {
   cmeans <- colMeans(m,na.rm=T)
   csds   <- colSds  (m,na.rm=T)
@@ -121,31 +144,30 @@ data <- lapply(data, \(m) {
   m <- winsorizeColsBySd(m,5) # step 5
 })
 
-mapply(fwrite, data, paste0("metabolomics/QCd/",names(data),"_QCd.csv"), row.names=T)
+mapply(fwrite, data, paste0('metabolomics/QCd/',names(data),'_QCd.csv'))
 ```
 
 
-# Merge C8/HP/AN datasets
-```{r message=F}
-sample_ids_shared <- Reduce(intersect, lapply(data, rownames))
-#all(grepl("TOM",sample_ids_shared)) # No QC samples!
-data_merged <- do.call(cbind, lapply(data, \(m) m[sample_ids_shared,]))
-fwrite(data_merged, "metabolomics/QCd/merged_QCd.csv", row.names=T)
+# Merge CP/CN/HP/AN datasets
+8174/12183 non-QC samples have metabolomics data for all of CP/CN/HP/AN. We would prefer to preserve those ~4k samples that don't, so we merge the metabolomics data with an outer join. TODO better words
+```{r merge, message=F}
+data_dts <- lapply(data, as.data.table, keep.rownames='TOM_Id')
+data_merged <- Reduce(\(x,y) merge(x,y, all=T, by='TOM_Id'), data_dts)
+fwrite(data_merged, "metabolomics/QCd/merged_QCd.csv")
 ```
+
 ---
 
 # Plots
-Plots are made using the C8/HP/AN data separately (not merged).
+Plots are made using the CP/HP/AN data separately (not merged).
 ## Distribution of metabolite medians
-```{r results="hide", fig.width=12}
-histColMedians <- function(df, title) { hist(colMedians(df), main=title) }
-
-par(mfrow=c(1,3))
-mapply(histColMedians, data, names(data))
+```{r plot-hists, results='hide', fig.width=12}
+par(mfrow=c(1,4))
+mapply(data, names(data), FUN = \(m,nm) hist(colMedians(m), main=nm))
 ```
 
 ## Skew vs. Kurtosis
-```{r, results="hide", fig.width=12}
+```{r plot-skewkurt, results='hide', fig.width=12}
 plotSkewKurt <- function(df, title) {
   n <- nrow(df); ms <- colMeans(df); sds <- colSds(df)
   skews <- sapply(1:ncol(df),\(col) (sum((df[,col]-ms[col])^3)/sds[col]^3)/n   )
@@ -160,35 +182,40 @@ plotSkewKurt <- function(df, title) {
    abline(h =  2.0, lty = 2,  lwd = 2)}
 }
 
-par(mfrow=c(1,3))
+par(mfrow=c(1,4))
 mapply(plotSkewKurt, data, names(data))
 ```
 
 ## Individual metabolite distributions
 You may need to zoom in all the way, and use Windows Magnifier (Win+"+" keys) to see.
-```{r results="hide", cache=T}
+```{r plot-mets, results='hide', cache=T}
 plotAllMets <- function(mtx) {
   par(mar=c(.1,.1,.4,.1), oma=rep(0,4), xaxt='n', yaxt='n', lwd=0.1,
       mfrow = c(ceiling(ncol(mtx)/30), 30)
   )
   sapply(1:ncol(mtx), FUN = \(i)
-    plot(mtx[,i], main=colnames(mtx)[i], cex.main=0.5,
-         pch=16, col=rgb(0,0,0,0.8), cex=0.1)
+    plot(mtx[,i], main=colnames(mtx)[i], cex.main=0.4,
+         pch=16, col=rgb(0,0,0,0.5), cex=0.1)
   )
 }
 
-png("met_dists_C8.png", width = 8000, height = 16000, res=600)
-plotAllMets(data$C8)
+png("met_dists_CP.png", width = 10000, height =  9000, res=800)
+plotAllMets(data$CP)
 dev.off()
-png("met_dists_HP.png", width = 8000, height = 16000, res=600)
+png("met_dists_CN.png", width = 10000, height = 14000, res=800)
+plotAllMets(data$CN)
+dev.off()
+png("met_dists_HP.png", width = 10000, height =  8000, res=800)
 plotAllMets(data$HP)
 dev.off()
-png("met_dists_AN.png", width = 8000, height = 800, res=600)
+png("met_dists_AN.png", width = 10000, height =  1200, res=800)
 plotAllMets(data$AN)
 dev.off()
 ```
 
-![](met_dists_C8.png)
+![](met_dists_CP.png)
+
+![](met_dists_CN.png)
 
 ![](met_dists_HP.png)
 
