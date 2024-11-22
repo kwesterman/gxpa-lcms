@@ -12,10 +12,12 @@ pre code {
 library(data.table)
 library(readxl)
 
-options(datatable.na.strings=c("NA",""))
+options(datatable.na.strings=c('NA',''))
 
-ws_bucket <- "gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63"
-if(!file.exists("phenotypes/")) system(paste0("gsutil -m cp -r ",ws_bucket,"/phenotypes ."))
+if(!file.exists('phenotypes/')) {
+  system('gsutil -m cp -r gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/phenotypes .')
+  system('gsutil    cp    gs://fc-secure-4b3e979d-ba8b-43c4-a5ec-b41ab42ce606/MesaMetabolomics_PilotX01_2023_02_16/MESA_PhenoUsmanSIDNO_20230214.txt phenotypes')
+}
 
 winsorizeBySd <- function(x, SDs=5) {
   lower_bound <- mean(x,na.rm=T) - SDs*sd(x,na.rm=T)
@@ -28,29 +30,51 @@ winsorizeBySd <- function(x, SDs=5) {
 }
 ```
 
-# Join all datasets
+# Join all datqsets
 ```{r join}
-merge2 <- \(x,y,by,...) { # Merge will eliminate cols with duplicated names along the way.
+mergecoalesce <- \(x,y,by,...) { # Merge which coalesces columns with duplicated names along the way
   setkeyv(x,by)
   setkeyv(y,by)
-  merged <- merge(x,y, suffixes=c('a','b'), ...)
-  dups <- sub('a$|b$', '', colnames(merged)) |> duplicated()
-  merged[,.SD,.SDcols=!dups]
+  merged <- merge(x,y, ...)
+
+  basenames     <- sub('\\.x$|\\.y$', '', colnames(merged))
+  basenames_dup <- basenames[duplicated(basenames)]
+
+  for(basename in basenames_dup) {
+    fullnames <- paste0(basename,c('.x','.y'))
+
+    classes <- merged[, sapply(.SD,class), .SDcols=fullnames]
+    if(!Reduce('==',classes)) {
+      warning('Not coalescing these cols because their class doesn\'t match:\n',
+              paste(capture.output(print(classes)), collapse='\n'))
+    }
+
+    merged <- merged[
+        , basenames := fcoalesce(.SD), .SDcols= fullnames
+      ][, .SD                        , .SDcols=!fullnames]
+  }
+
+  merged
 }
 
-data <- Reduce(\(x,l) merge2(x,l$y, by=l$by, all.x=T),
-    list(              x=fread("metabolomics/QCd/merged_QCd.csv")                       [,  TOM_Id := V1],
-    list(by= "TOM_Id", y=fread("metabolomics/sample_info.csv")                          [,  TOM_Id := sample_id]),
-    list(by= "TOM_Id", y=fread("phenotypes/id_match_file.csv")                          [, mesa_id := as.character(Cohort_Specific_Id)]),
-    list(by="mesa_id", y=fread("phenotypes/SHARe_AncilMesaNMR_LP4_DS.txt")              [, mesa_id := as.character(subject_id)]),
-    list(by="mesa_id", y=fread("phenotypes/primary_phenotypes.csv")                     [, mesa_id := sub("phs000209.v13_", "", `\\_Parent Study Accession with Subject ID\\`)]),
-    list(by="mesa_id", y=fread("phenotypes/basic_phenotypes.csv")                       [, mesa_id := sub("phs000209.v13_", "", `\\_Parent Study Accession with Subject ID\\`)]),
-    list(by="mesa_id", y=fread("phenotypes/nmr_metabolites.csv")                        [, mesa_id := sub("phs000209.v13_", "", `\\_Parent Study Accession with Subject ID\\`)]),
-    list(by="mesa_id", y=fread("phenotypes/covariates.csv")                             [, mesa_id := sub("phs000209.v13_", "", `\\_Parent Study Accession with Subject ID\\`)]),
-    list(by="mesa_id", y=fread("phenotypes/freeze9b_sample_annot_2020-08-20.txt")       [, mesa_id := subject_id][!duplicated(mesa_id)]),
-    list(by="mesa_id", y=setDT(read_excel("phenotypes/draw_dates_MESA_study_site.xlsx"))[, mesa_id := sidno]),
-    list(by= "NWD_Id", y=fread("phenotypes/freeze9_pcair_results.tsv")                  [,  NWD_Id := sample.id]),
-    list(by= "NWD_Id", y=fread("genotypes.csv")                                         [,  NWD_Id := NWD_ID])
+data <- Reduce(\(x,l) mergecoalesce(x,l$y, by=l$by, all.x=T),
+    list(              x=fread('metabolomics/QCd/merged_QCd.csv'),
+    list(by= 'TOM_Id', y=fread('metabolomics/sample_info.csv')                          [, TOM_Id := sample_id]),
+    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid1]),
+    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid2]),
+    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid3]),
+    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid4]),
+    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid5]),
+    list(by= 'TOM_Id', y=fread('phenotypes/id_match_file.csv')                          [, mesa_id := as.character(Cohort_Specific_Id)]),
+    list(by='mesa_id', y=fread('phenotypes/SHARe_AncilMesaNMR_LP4_DS.txt')              [, mesa_id := as.character(subject_id)]),
+    list(by='mesa_id', y=fread('phenotypes/primary_phenotypes.csv')                     [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
+    list(by='mesa_id', y=fread('phenotypes/basic_phenotypes.csv')                       [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
+    list(by='mesa_id', y=fread('phenotypes/nmr_metabolites.csv')                        [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
+    list(by='mesa_id', y=fread('phenotypes/covariates.csv')                             [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
+    list(by='mesa_id', y=fread('phenotypes/freeze9b_sample_annot_2020-08-20.txt')       [, mesa_id := subject_id][!duplicated(mesa_id)]),
+    list(by='mesa_id', y=setDT(read_excel('phenotypes/draw_dates_MESA_study_site.xlsx'))[, mesa_id := sidno]),
+    list(by= 'NWD_Id', y=fread('phenotypes/freeze9_pcair_results.tsv')                  [,  NWD_Id := sample.id]),
+    list(by= 'NWD_Id', y=fread('genotypes.csv')                                         [,  NWD_Id := NWD_ID])
   )
 )
 ```
