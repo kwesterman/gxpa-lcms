@@ -32,32 +32,34 @@ winsorizeBySd <- function(x, SDs=5) {
 
 # Join all datqsets
 ```{r join}
-mergecoalesce <- \(x,y,by,...) { # Merge which coalesces columns with duplicated names along the way
+mergecoalesce <- \(x,y,by, ..., force_coalesce=F) { # Merge which coalesces columns with duplicated names along the way
   setkeyv(x,by)
   setkeyv(y,by)
   merged <- merge(x,y, ...)
 
-  basenames     <- sub('\\.x$|\\.y$', '', colnames(merged))
-  basenames_dup <- basenames[duplicated(basenames)]
+  nm_dups <- intersect(names(x),names(y)) |> setdiff(by)
 
-  for(basename in basenames_dup) {
-    fullnames <- paste0(basename,c('.x','.y'))
+  for(nm in nm_dups) {
+    nms_w_suffix <- paste0(nm, c('.x','.y'))
 
-    classes <- merged[, sapply(.SD,class), .SDcols=fullnames]
+    classes <- merged[, sapply(.SD,class), .SDcols=nms_w_suffix]
     if(!Reduce('==',classes)) {
-      warning('Not coalescing these cols because their class doesn\'t match:\n',
-              paste(capture.output(print(classes)), collapse='\n'))
-    }
+      if(force_coalesce) { # Cast to character for maximum compatability
+        merged[, (nms_w_suffix) := lapply(.SD, as.character), .SDcols = nms_w_suffix]
+      } else {
+        warning('Not coalescing these columns because their class doesn\'t match:\n', paste(capture.output(print(classes)), collapse='\n'))
+        next
+    }}
 
     merged <- merged[
-        , basenames := fcoalesce(.SD), .SDcols= fullnames
-      ][, .SD                        , .SDcols=!fullnames]
+        , (nm) := fcoalesce(.SD), .SDcols= nms_w_suffix 
+      ][, .SD                   , .SDcols=!nms_w_suffix]
   }
 
   merged
 }
 
-data <- Reduce(\(x,l) mergecoalesce(x,l$y, by=l$by, all.x=T),
+data <- Reduce(\(x,l) mergecoalesce(x,l$y, by=l$by, all.x=T, force_coalesce=T),
     list(              x=fread('metabolomics/QCd/merged_QCd.csv'),
     list(by= 'TOM_Id', y=fread('metabolomics/sample_info.csv')                          [, TOM_Id := sample_id]),
     list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid1]),
@@ -77,6 +79,7 @@ data <- Reduce(\(x,l) mergecoalesce(x,l$y, by=l$by, all.x=T),
     list(by= 'NWD_Id', y=fread('genotypes.csv')                                         [,  NWD_Id := NWD_ID])
   )
 )
+    names(fread('phenotypes/id_match_file.csv',nrow=0)                          )
 ```
 
 # Rename columns
@@ -104,11 +107,15 @@ setnames(data, \(nm) gsub("\\\\","",nm)) # Rm backslashes from names
 
 # Filter, and generate new columns
 ```{r filter}
-data <- data[
+data2 <- data[
   # Filtering
     is_qc_sample == F
-  ][is.na(Exclusion_Reason)
   ][!is.na(vig_pa) | !is.na(mod_pa) | !is.na(pa) | !is.na(mvpa) | !is.na(rs295849)
+  ][is.na(Exclusion_Reason)
+  ][!(Exclusion_Reason %in% c('Failed expression-based_sex check',
+                            'Failed expression-based sex check; failed fingerprinting',
+                            'Failed fingerprinting',
+                            'Failed fingerprinting; Failed RNA-seq QC'))
 
   # Edit or creating custom columns
   ][, race        := factor(race1c,  levels=1:4, labels=c("white","asian","hispanic","african-american"))
