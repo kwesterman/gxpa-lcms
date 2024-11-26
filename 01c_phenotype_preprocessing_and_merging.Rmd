@@ -62,13 +62,15 @@ mergecoalesce <- \(x,y,by, ..., force_coalesce=F) { # Merge which coalesces colu
 data <- Reduce(\(x,l) mergecoalesce(x,l$y, by=l$by, all.x=T, force_coalesce=T),
     list(              x=fread('metabolomics/QCd/merged_QCd.csv'),
     list(by= 'TOM_Id', y=fread('metabolomics/sample_info.csv')                          [, TOM_Id := sample_id]),
-    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid1]),
-    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid2]),
-    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid3]),
-    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid4]),
-    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid5]),
+    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid1][, NWD_Id := fcoalesce(nwdid2,nwdid1)]), # OK to coalesce genotype
+    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid2][, NWD_Id := fcoalesce(nwdid2,nwdid1)]), #  info b/c it is not likely
+    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid3][, NWD_Id := fcoalesce(nwdid2,nwdid1)]), #  to change much across
+    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid4][, NWD_Id := fcoalesce(nwdid2,nwdid1)]), #  exams. But prefer the more
+    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid5][, NWD_Id := fcoalesce(nwdid2,nwdid1)]), #  recent genos from exam 2.
     list(by= 'TOM_Id', y=fread('phenotypes/id_match_file.csv')                          [, mesa_id := as.character(Cohort_Specific_Id)]),
     list(by='mesa_id', y=fread('phenotypes/SHARe_AncilMesaNMR_LP4_DS.txt')              [, mesa_id := as.character(subject_id)]),
+    list(by='mesa_id', y=fread('phenotypes/mesa5_phenos_basic.csv')                     [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
+    list(by='mesa_id', y=fread('phenotypes/mesa5_phenos_diet.csv')                      [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
     list(by='mesa_id', y=fread('phenotypes/primary_phenotypes.csv')                     [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
     list(by='mesa_id', y=fread('phenotypes/basic_phenotypes.csv')                       [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
     list(by='mesa_id', y=fread('phenotypes/nmr_metabolites.csv')                        [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
@@ -79,7 +81,6 @@ data <- Reduce(\(x,l) mergecoalesce(x,l$y, by=l$by, all.x=T, force_coalesce=T),
     list(by= 'NWD_Id', y=fread('genotypes.csv')                                         [,  NWD_Id := NWD_ID])
   )
 )
-    names(fread('phenotypes/id_match_file.csv',nrow=0)                          )
 ```
 
 # Rename columns
