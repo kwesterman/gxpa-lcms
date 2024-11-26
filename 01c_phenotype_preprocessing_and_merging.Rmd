@@ -22,16 +22,16 @@ if(!file.exists('phenotypes/')) {
 winsorizeBySd <- function(x, SDs=5) {
   lower_bound <- mean(x,na.rm=T) - SDs*sd(x,na.rm=T)
   upper_bound <- mean(x,na.rm=T) + SDs*sd(x,na.rm=T)
-  print(paste(sum(x<lower_bound,na.rm=T), "values winsorized at the lower bound."))
-  print(paste(sum(x>upper_bound,na.rm=T), "values winsorized at the upper bound."))
+  print(paste(sum(x<lower_bound,na.rm=T), 'values winsorized at the lower bound.'))
+  print(paste(sum(x>upper_bound,na.rm=T), 'values winsorized at the upper bound.'))
   x[x<lower_bound] <- lower_bound
   x[x>upper_bound] <- upper_bound
   return(x)
 }
 ```
 
-# Join all datqsets
-```{r join}
+# Join all datasets
+```{r join, cache=T}
 mergecoalesce <- \(x,y,by, ..., force_coalesce=F) { # Merge which coalesces columns with duplicated names along the way
   setkeyv(x,by)
   setkeyv(y,by)
@@ -62,13 +62,15 @@ mergecoalesce <- \(x,y,by, ..., force_coalesce=F) { # Merge which coalesces colu
 data <- Reduce(\(x,l) mergecoalesce(x,l$y, by=l$by, all.x=T, force_coalesce=T),
     list(              x=fread('metabolomics/QCd/merged_QCd.csv'),
     list(by= 'TOM_Id', y=fread('metabolomics/sample_info.csv')                          [, TOM_Id := sample_id]),
-    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid1]),
-    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid2]),
-    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid3]),
-    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid4]),
-    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid5]),
+    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid1][, mesa_id := sidno][, NWD_Id := fcoalesce(nwdid2,nwdid1)]), # OK to coalesce genotype
+    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid2][, mesa_id := sidno][, NWD_Id := fcoalesce(nwdid2,nwdid1)]), #  info b/c it is not likely
+    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid3][, mesa_id := sidno][, NWD_Id := fcoalesce(nwdid2,nwdid1)]), #  to change much across
+    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid4][, mesa_id := sidno][, NWD_Id := fcoalesce(nwdid2,nwdid1)]), #  exams. But prefer the more
+    list(by= 'TOM_Id', y=fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')          [, TOM_Id := tomid5][, mesa_id := sidno][, NWD_Id := fcoalesce(nwdid2,nwdid1)]), #  recent genos from exam 2.
     list(by= 'TOM_Id', y=fread('phenotypes/id_match_file.csv')                          [, mesa_id := as.character(Cohort_Specific_Id)]),
     list(by='mesa_id', y=fread('phenotypes/SHARe_AncilMesaNMR_LP4_DS.txt')              [, mesa_id := as.character(subject_id)]),
+    list(by='mesa_id', y=fread('phenotypes/mesa5_phenos_basic.csv')                     [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
+    list(by='mesa_id', y=fread('phenotypes/mesa5_phenos_diet.csv')                      [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
     list(by='mesa_id', y=fread('phenotypes/primary_phenotypes.csv')                     [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
     list(by='mesa_id', y=fread('phenotypes/basic_phenotypes.csv')                       [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
     list(by='mesa_id', y=fread('phenotypes/nmr_metabolites.csv')                        [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
@@ -79,62 +81,59 @@ data <- Reduce(\(x,l) mergecoalesce(x,l$y, by=l$by, all.x=T, force_coalesce=T),
     list(by= 'NWD_Id', y=fread('genotypes.csv')                                         [,  NWD_Id := NWD_ID])
   )
 )
-    names(fread('phenotypes/id_match_file.csv',nrow=0)                          )
 ```
 
 # Rename columns
 ```{r rename}
-setnames(data, \(nm) sub(".*\\\\(.*)\\\\$", "\\1", nm)) # Fixes some names e.g. "\\phs000209\\pht001116\\phv00084442\\age1c\\" -> "age1c"
-setnames(data, \(nm) sub("^PC"            , "gPC", nm)) # "PC#" -> "gPC#" To distinguish genetic PCs from metabolite PCs we'll add later
+setnames(data, \(nm) sub('.*\\\\(.*)\\\\$', '\\1', nm)) # Fixes some names e.g. '\\phs000209\\pht001116\\phv00084442\\age1c\\' -> 'age1c'
+setnames(data, \(nm) sub('^PC'            , 'gPC', nm)) # 'PC#' -> 'gPC#' To distinguish genetic PCs from metabolite PCs we'll add later
 data <- data[, `:=`(
    # SHARe...txt      #primary...csv    #nmr...csv           #covariates.csv           
    HDL_C=nhdlc1,      hdl=hdl1,         HDL_C_lp3=nhdlc31c,  ses_score=F1_PC2_1,       
    HDL_P=chdlp1,      ldl=ldl1,         HDL_P_lp3= hdlp31c,  income_cat=income1,       
    HDL_size=hdlz1,    chol=chol1,       HDL_size_lp3=hz31,   drinks_per_week=alcwkc1,              
-   L_HDL_P=l_chdlp1,  tg=trig1,         L_HDL_P_lp3=hl31,    smoking=cig1c,
-   M_HDL_P=m_chdlp1,      pa=exercm1c,  M_HDL_P_lp3=hm31,    ahei_score=ahei_2010_1,
-   S_HDL_P=s_chdlp1,  mod_pa= pamcm1c,  S_HDL_P_lp3=hs31,    dash_score=dash_sodium1,
+   L_HDL_P=l_chdlp1,  tg=trig1,         L_HDL_P_lp3=hl31,    ahei_score=ahei_2010_1,
+   M_HDL_P=m_chdlp1,      pa=exercm1c,  M_HDL_P_lp3=hm31,    dash_score=dash_sodium1,
+   S_HDL_P=s_chdlp1,  mod_pa= pamcm1c,  S_HDL_P_lp3=hs31,
    H1P=h1p1,          vig_pa= pavcm1c,                        
    H2P=h2p1,            mvpa=pamvcm1c,
    H3P=h3p1,  #id_match_file.csv          #draw_dates...xlsx     #basic...csv                                              
-   H4P=h4p1,  prop_African=African,       site=site1c,           age=age1c,                                                
-   H5P=h5p1,  prop_American=American,     month=`exam1:month`,   bmi=bmi1c,                                                
-   H6P=h6p1,  prop_Eas_Asian=East_Asian,  season=`exam1:season`,                  
+   H4P=h4p1,  prop_African=African,       month=`exam1:month`,   age=age1c,                                                
+   H5P=h5p1,  prop_American=American,     season=`exam1:season`, bmi=bmi1c,                                                
+   H6P=h6p1,  prop_Eas_Asian=East_Asian,
    H7P=h7p1,  prop_European=European
 )]
-setnames(data, \(nm) gsub("\\\\","",nm)) # Rm backslashes from names
+setnames(data, \(nm) gsub('\\\\','',nm)) # Rm backslashes from names
 ```
 
 # Filter, and generate new columns
 ```{r filter}
-data2 <- data[
+data <- data[
   # Filtering
     is_qc_sample == F
-  ][!is.na(vig_pa) | !is.na(mod_pa) | !is.na(pa) | !is.na(mvpa) | !is.na(rs295849)
-  ][is.na(Exclusion_Reason)
-  ][!(Exclusion_Reason %in% c('Failed expression-based_sex check',
-                            'Failed expression-based sex check; failed fingerprinting',
-                            'Failed fingerprinting',
-                            'Failed fingerprinting; Failed RNA-seq QC'))
+  ][!is.na(pa) | !is.na(mod_pa) | !is.na(mvpa) | !is.na(vig_pa) | !is.na(rs295849)
+  ][TOM_Id %in% tomid1 # Exam1 metabolomics only
+  #][is.na(Exclusion_Reason)
 
   # Edit or creating custom columns
-  ][, race        := factor(race1c,  levels=1:4, labels=c("white","asian","hispanic","african-american"))
-  ][, gender_f0m1 := factor(gender1, levels=c("FEMALE","MALE"))
-  ][, site        := factor(site,    levels=c(3,4,5,6,7,8), labels=c("s3","s4","s5","s6","s7","s8"))
+  ][, race        := as.factor(race1c)
+  ][, site        := factor(site1c,  levels=3:8, labels=c('s3','s4','s5','s6','s7','s8'))
+  ][, smoking     := factor(cig1c,   levels=0:2, labels=c('NEVER','FORMER','CURRENT'))
+  ][, gender_f0m1 := factor(gender1, levels=c('FEMALE','MALE'))
   ][, hdl_log     := log(hdl) 
 
   ## Some imputation of covariates to maintain sample size
-  ][is.na(income_cat), income_cat := "Missing"
-  ][is.na(smoking),       smoking := "NEVER"
+  ][is.na(income_cat), income_cat := 'Missing'
+  ][is.na(smoking),       smoking := 'NEVER'
 
   ## Winsorization + median imputation
-  ][, .SDcols = c("ses_score","drinks_per_week","ahei_score","dash_score"),
-                c("ses_score","drinks_per_week","ahei_score","dash_score") :=
+  ][, .SDcols = c('ses_score','drinks_per_week','ahei_score','dash_score'),
+                c('ses_score','drinks_per_week','ahei_score','dash_score') :=
       lapply( .SD, \(x) { x <- winsorizeBySd(x); fifelse(is.na(x), median(x,na.rm=T), x) })
 
   ## Scaling + Winsorization
-  ][, .SDcols=c("pa", "mod_pa", "vig_pa", "mvpa"),
-              c("pa", "mod_pa", "vig_pa", "mvpa") :=
+  ][, .SDcols=c('pa', 'mod_pa', 'vig_pa', 'mvpa'),
+              c('pa', 'mod_pa', 'vig_pa', 'mvpa') :=
       lapply(.SD, \(x) winsorizeBySd(x/60))
   ][, pa_bin := as.numeric(pa > 3.75)
 
@@ -142,14 +141,18 @@ data2 <- data[
 ```
 
 # Append metabolomics PCs
-We waited to calculate PCs until now because we only want to do PCA using samples we will use in the analysis; and now we are finally done filtering samples.
+We waited to calculate PCs until now because we only want to do PCA using samples we will use in the analysis; and now we are finally done filtering samples.\
+We performed half-minimum imputation in metabolomics QC, but NAs are reintroduced when merging the metabolomics methods CP/CN/HP/AN, since not all samples were profiled with all methods.\
+PCA is intolerant to missing values, so we remove samples who have any missing values. Perhaps a more sophisticated imputation strategy would be better, but the mPCs are only used for exploratory analysis anyways.
 ```{r mPCA, cache=T}
-met_names <- names(fread("metabolomics/QCd/merged_QCd.csv",nrows=0,drop=1))
+met_nms <- names(fread('metabolomics/QCd/merged_QCd.csv',nrows=0,drop=1))
+met_mtx <- data[ rowSums(is.na(data[,..met_nms]))==0, c('TOM_Id',..met_nms) ] |> as.matrix(rownames=1) # Only samples with data for ALL metabolomics methods
+paste('Samples excluded from PCA:',sum(rowSums(is.na(data[,..met_nms]))>0),'/',nrow(data))
 
-pca <- prcomp(data[,..met_names], center=T, scale=T)
-pcs <- pca$x[,1:20]
-colnames(pcs) <- paste0("mPC",1:20)
-data <- cbind(data,pcs)
+pca <- prcomp(met_mtx, center=T, scale=T)
+pcs <- as.data.table(pca$x[,1:20], keep.rownames=T)
+setnames(pcs, c('TOM_Id',paste0('mPC', 1:20)))
+data <- pcs[data, on='TOM_Id']
 
 screeplot(pca,npcs=20)
 ```
@@ -157,10 +160,12 @@ screeplot(pca,npcs=20)
 # Stats
 ```{r}
 table(data$race) / sum(table(data$race)) # Ancestry proportions
-sapply(data, \(x) sum(is.na(x))) |> Filter(f=\(x) x!=0) # What cols have missing values, and how many
+#sapply(data, \(x) sum(is.na(x))) |> Filter(f=\(x) x!=0) # What cols have missing values, and how many
+sapply(data[!duplicated(mesa_id), .(pa,mod_pa,mvpa,vig_pa,rs295849)], \(x) sum(!is.na(x))) # Sample sizes for each exposure/SNP
+data[!duplicated(mesa_id), table(rs295849)] # Genotypes
 ```
 
 ## Write
 ```{r write}
-fwrite(data, "analysis_df.csv")
+fwrite(data, 'analysis_df.csv')
 ```
