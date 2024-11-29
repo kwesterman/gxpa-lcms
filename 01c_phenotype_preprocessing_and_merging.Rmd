@@ -89,17 +89,17 @@ setnames(data, \(nm) sub('.*\\\\(.*)\\\\$', '\\1', nm)) # Fixes some names e.g. 
 setnames(data, \(nm) sub('^PC'            , 'gPC', nm)) # 'PC#' -> 'gPC#' To distinguish genetic PCs from metabolite PCs we'll add later
 data <- data[, `:=`(
    # SHARe...txt      #primary...csv    #nmr...csv           #covariates.csv           
-   HDL_C=nhdlc1,      hdl=hdl1,         HDL_C_lp3=nhdlc31c,  ses_score=F1_PC2_1,       
-   HDL_P=chdlp1,      ldl=ldl1,         HDL_P_lp3= hdlp31c,  income_cat=income1,       
-   HDL_size=hdlz1,    chol=chol1,       HDL_size_lp3=hz31,   drinks_per_week=alcwkc1,              
-   L_HDL_P=l_chdlp1,  tg=trig1,         L_HDL_P_lp3=hl31,    ahei_score=ahei_2010_1,
-   M_HDL_P=m_chdlp1,      pa=exercm1c,  M_HDL_P_lp3=hm31,    dash_score=dash_sodium1,
+   HDL_C=nhdlc1,      hdl=hdl1,         HDL_C_lp3=nhdlc31c,  ses_score=F1_PC2_1,
+   HDL_P=chdlp1,      ldl=ldl1,         HDL_P_lp3= hdlp31c,  drinks_per_week=alcwkc1,
+   HDL_size=hdlz1,    chol=chol1,       HDL_size_lp3=hz31,   ahei_score=ahei_2010_1,
+   L_HDL_P=l_chdlp1,  tg=trig1,         L_HDL_P_lp3=hl31,    dash_score=dash_sodium1,
+   M_HDL_P=m_chdlp1,      pa=exercm1c,  M_HDL_P_lp3=hm31,
    S_HDL_P=s_chdlp1,  mod_pa= pamcm1c,  S_HDL_P_lp3=hs31,
-   H1P=h1p1,          vig_pa= pavcm1c,                        
+   H1P=h1p1,          vig_pa= pavcm1c,
    H2P=h2p1,            mvpa=pamvcm1c,
    H3P=h3p1,  #id_match_file.csv          #draw_dates...xlsx     #basic...csv                                              
-   H4P=h4p1,  prop_African=African,       month=`exam1:month`,   age=age1c,                                                
-   H5P=h5p1,  prop_American=American,     season=`exam1:season`, bmi=bmi1c,                                                
+   H4P=h4p1,  prop_African=African,       month=`exam1:month`,   age=age1c,
+   H5P=h5p1,  prop_American=American,     season=`exam1:season`, bmi=bmi1c,
    H6P=h6p1,  prop_Eas_Asian=East_Asian,
    H7P=h7p1,  prop_European=European
 )]
@@ -116,10 +116,14 @@ data <- data[
   #][is.na(Exclusion_Reason)
 
   # Edit or creating custom columns
-  ][, race    := as.factor(race1c)
-  ][, site    := factor(site1c,  levels=3:8, labels=c('s3','s4','s5','s6','s7','s8'))
-  ][, smoking := factor(cig1c,   levels=0:2, labels=c('NEVER','FORMER','CURRENT'))
-  ][, hdl_log := log(hdl) 
+  ][, hdl_log   := log(hdl) 
+  ][, race      := as.factor(race1c)
+  ][, site      := factor(site1c,  levels=3:8, labels=c('s3','s4','s5','s6','s7','s8'))
+  ][, smoking   := factor(cig1c,   levels=0:2, labels=c('NEVER','FORMER','CURRENT'))
+  ][, income    := factor(income1, ordered=T,
+                          levels=c('< $5,000', '$5,000 - 7,999', '$8,000 - 11,999', '$12,000 - 15,999', '$16,000 - 19,999', '$20,000 - 24,999', '$25,000 - 29,999', '$30,000 - 34,999', '$35,000 - 39,999', '$40,000 - 49,999', '$50,000 - 74,999', '$75,000 - 99,999', '$100,000 +'))
+  ][, education := factor(educ1, ordered=T,
+                          levels=c('NO_SCHOOLING','GRADES 1-8','GRADES 9-11','COMPLETED HIGH SCHOOL/GED','SOME COLLEGE BUT NO DEGREE','ASSOCIATE DEGREE','TECHNICAL SCHOOL CERTIFICATE',"BACHELOR'S DEGREE",'GRADUATE OR PROFESSIONAL SCHOOL'))
 
   ][, sex := fcoalesce(gender1,Sex,SEX) |>
         sub(pattern='^F.*', replacement='FEMALE', ignore.case=T) |>
@@ -129,8 +133,7 @@ data <- data[
       #   but it disagrees with the other `Sex`, `SEX`, and `gender1` cols.
 
   ## Some imputation of covariates to maintain sample size
-  ][is.na(income_cat), income_cat := 'Missing'
-  ][is.na(smoking),       smoking := 'NEVER'
+  ][is.na(smoking), smoking := 'NEVER'
 
   ## Winsorization + median imputation
   ][, .SDcols = c('ses_score','drinks_per_week','ahei_score','dash_score'),
