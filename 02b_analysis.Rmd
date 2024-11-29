@@ -26,7 +26,7 @@ Note that not all samples contributed to the mPCs — only samples with measurem
 ```{r hm, cache=2}
 covars <- c(paste0('gPC', 1:11),
             'site', 'season', 'month',
-            'age', 'bmi', 'gender_f0m1', 'race',
+            'age', 'bmi', 'sex', 'race',
             'ses_score', 'ahei_score', 'dash_score',
             'income_cat', 'drinks_per_week', 'smoking')
 
@@ -56,11 +56,11 @@ Model: `lm(met ~ [snp or exposure] + covars)`
 met_names <- names(fread('metabolomics/QCd/merged_QCd.csv',nrows=0,drop=1))
 vars2test <- c('rs295849','pa_bin','pa','mod_pa','mvpa','vig_pa')
 covar_sets <- list(
-  c('site', 'gender_f0m1', 'age'                                                                                                        ),
-  #c('site', 'gender_f0m1', 'age', 'ses_score', 'income_cat'                                                                             ),
-  #c('site', 'gender_f0m1', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score'                   ),
-  #c('site', 'gender_f0m1', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', 'race'           ),
-  c('site', 'gender_f0m1', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', paste0('gPC', 1:5))
+  c('site', 'sex', 'age'                                                                                                        ),
+  #c('site', 'sex', 'age', 'ses_score', 'income_cat'                                                                             ),
+  #c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score'                   ),
+  #c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', 'race'           ),
+  c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', paste0('gPC', 1:5))
 )
 
 p_thresh <- local({
