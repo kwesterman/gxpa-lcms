@@ -1,11 +1,111 @@
+```{css echo=F}
+pre {
+  overflow-x: scroll;
+}
+pre code {
+  white-space: pre;
+}
+```
+
 # Setup
+```{r setup, message=F}
+library(data.table)
+library(ggplot2)
+library(gtsummary)
+library(parallel)
+
+options(datatable.na.strings=c('NA',''))
+data <- fread('analysis_df.csv')
+```
+
+# Summary table of relevant variables
+```{r summary-tbl, cache=T}
+data[
+  ][, c('bmi','race','smoking','income_cat','sex','pa','mod_pa','mvpa','vig_pa','age','ses_score','drinks_per_week','ahei_score','dash_score','rs295849')
+  ][ is.na(sex), sex := 'Unknown'
+  ] |>
+  tbl_summary(
+    by=sex,
+    missing='no', # TODO more elegant way to display # of missing?
+    statistic = list(
+      all_continuous()  ~ c("{mean} ± {sd}"),
+      all_categorical() ~ c("{n} ({p}%)"   )
+  )) |>
+  add_overall() |> add_n()
+```
+
+<!--
+# Maybe mv those blu heatmaps from analysis to here
+# Distributions of covariates and outcomes (hdl) and stuff
+# Educ x race, and educ x income hists
+-->
+
+# Testing Sets of Covariates
+`mPCs ~ e_or_snp + covars` for a few mPCs, all e's/snp, and all covar sets
+```{r covar-sets, cache=T, fig.width=16, fig.height=10}
+mPCs <- paste0('mPC',1:10)
+vars2test <- c('rs295849','pa_bin','pa','mod_pa','mvpa','vig_pa')
+covar_sets <- list(
+  set1=c('site'                                                                                                                              ),
+  set2=c('site', 'sex', 'age'                                                                                                        ),
+  set3=c('site', 'sex', 'age', 'ses_score', 'income_cat'                                                                             ),
+  set4=c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score'                   ),
+  set5=c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', 'race'           ),
+  set6=c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', paste0('gPC', 1:5))
+)
+
+runs <- CJ(mPCs, vars2test, covar_sets, sorted=F)[
+  ][, lm_coefs := mcmapply(mPCs,vars2test,covar_sets, FUN = \(mPC,var,covar_set)
+        lm(data[[mPC]] ~ ., data[,c(var,covar_set), with=F]) |> (\(model) summary(model)$coefficients)(),
+      SIMPLIFY=F, mc.cores=4)
+
+  # Extract results we want
+  ][, var_coefs := mapply(lm_coefs, vars2test, FUN = \(coefs,var)
+        coefs[rownames(coefs)==var,],
+      SIMPLIFY=F)
+  ][, estimate := sapply(var_coefs, '[', 'Estimate'  )
+  ][, se       := sapply(var_coefs, '[', 'Std. Error')
+  ][, p        := sapply(var_coefs, '[', 'Pr(>|t|)'  )
+  ][, l95      := estimate-(1.96*se),
+  ][, u95      := estimate+(1.96*se),
+
+  # Cleanup
+  ][, covar_sets := factor(covar_sets, levels=..covar_sets, labels=names(..covar_sets))
+  ][, var_coefs := NULL
+  ][, lm_coefs := NULL
+]
+
+ggplot(runs, aes(x=covar_sets, y=estimate, color=covar_sets)) +
+  geom_point   (position=position_dodge(width=0.2)) +
+  geom_errorbar(position=position_dodge(width=0.2), aes(ymin=l95,ymax=u95), width=0) +
+  geom_hline(yintercept=0, color="gray") +
+  scale_x_discrete(labels=NULL, breaks=NULL) + labs(x=NULL) +
+  facet_grid(rows=vars(vars2test), cols=vars(mPCs), scales="free")
+```
+
+# Test Variable Transformations
+HDL vs various transformations of mvpa as in `gxe-omics` workspace's `preliminary-analysis.ipynb`
+```{r mvpa-tfs, cache=T}
+winsor <- \(v, bounds=quantile(v,c(0.05,0.95),na.rm=T)) pmin(pmax(v,bounds[1]),bounds[2])
+
+rbind(data[, .(hdl,        mvpa , tf='identity') ],
+      data[, .(hdl,  trunc(mvpa),    'trunc'   ) ],
+      data[, .(hdl,    log(mvpa),    'log'     ) ],
+      data[, .(hdl, winsor(mvpa),    'winsor'  ) ], use.names=F) |>
+  ggplot(aes(x=mvpa, y=hdl, group=tf)) +
+  geom_smooth(method = 'gam', formula = y ~ s(x, bs = "cs"), se=T, na.rm=T) +
+  facet_wrap(vars(tf), scales='free')
+```
+
+
+
+
+
 ```{r}
 library(tidyverse)
 library(patchwork, table1)
-library(data.table)
 ```
-
-```{r}
+```{r, include=F,eval=F}
 theme_set(theme_bw())
 
 ## ggplot specifications ----------
@@ -34,7 +134,7 @@ proj_palettes <- list(
 
 ## Build basic functions
 Function to remove outliers by SD
-```{r}
+```{r, include=F,eval=F}
 remove_outliers.fun <- function(x, SDs=5) {
     bounds <- mean(x, na.rm=T) + SDs * c(-1, 1) * sd(x, na.rm=T)
     
@@ -46,7 +146,7 @@ remove_outliers.fun <- function(x, SDs=5) {
 ```
 
 Functions for describing data
-```{r}
+```{r, include=F,eval=F}
 # Print mean/sd
 mean_sd<-function(x, d=2) {
   sprintf("%s \u00B1 %s", round(mean(x, na.rm=T), digits = d), 
@@ -70,13 +170,7 @@ n_pct <- function(x, level=F) {
 
 ```
 
-# Read in and align datasets
-We will read in various phenotype datassets to align and eventually merge with genotypes.
-```{r}
-# TODO
-```
-
-```{r}
+```{r, include=F,eval=F}
 # Cohort basic descriptives
 pop_description_tbl <- analysis.df %>%
     group_by(RaceEthn) %>%
@@ -108,7 +202,7 @@ pop_description_tbl %>% t()
 ```
 
 ## Distributions
-```{r}
+```{r, include=F,eval=F}
 plot_continuous <- function(cont_var) {
   d_complete <- analysis.df %>% select(var=all_of(cont_var)) %>% filter(!is.na(var)) 
   d_complete %>% 
@@ -156,7 +250,7 @@ options(warn=-1)
 ```
 
 ### Basic descriptives 
-```{r}
+```{r, include=F,eval=F}
 # Basic descriptives
 age_plt <- plot_continuous("age")
 gender_plt <- plot_categorical("female")
@@ -178,7 +272,7 @@ race_plt
 ```
 
 ### Plots from analysis-prep
-```{r}
+```{r, include=F,eval=F}
 # Outcomes
 hdl_plt <- plot_continuous("hdl")
 hdl_log_plt <- plot_continuous("hdl_log")
@@ -215,7 +309,7 @@ site_plt + month_plt + season_plt
 ```
 
 ### SES phenotypes
-```{r}
+```{r, include=F,eval=F}
 # Education & Income variables
 educ_plt <- plot_categorical("educ_lvl.lab")
 educ_4lvl_plt <- plot_categorical("educ_4lvl.lab")
@@ -241,7 +335,7 @@ ahei_plt + dash_plt
 ```
 
 #### Plot of education x race/ethnicity
-```{r}
+```{r, include=F,eval=F}
 # make plot for Education levels by R/E
 as.data.frame(with(analysis.df, table(RaceEthn, educ_4lvl.lab))) %>% 
     ggplot(aes(x=RaceEthn, y=Freq, group=educ_4lvl.lab, fill=educ_4lvl.lab)) + 
@@ -257,7 +351,7 @@ as.data.frame(with(analysis.df, table(RaceEthn, educ_4lvl.lab))) %>%
 ```
 
 #### Plot of education x income
-```{r}
+```{r, include=F,eval=F}
 # Education x Income
 as.data.frame(with(analysis.df, table(educ_4lvl.lab, income_4lvl.lab))) %>% 
     ggplot(aes(x=educ_4lvl.lab, y=Freq, group=income_4lvl.lab, fill=income_4lvl.lab)) + 
@@ -267,13 +361,13 @@ as.data.frame(with(analysis.df, table(educ_4lvl.lab, income_4lvl.lab))) %>%
 
 ### Diet phenotypes
 Total energy
-```{r}
+```{r, include=F,eval=F}
 energy_plt <- plot_continuous("energy_kcal")
 energy_plt
 ```
 
 Macronutrients (g & %kcal)
-```{r}
+```{r, include=F,eval=F}
 carb_plt <- plot_continuous("nut_carb_g")
 carb_pct_plt <- plot_continuous("nut_carb_pct")
 fat_plt <- plot_continuous("nut_fat_g")
@@ -286,7 +380,7 @@ prot_plt + prot_pct_plt
 ```
 
 Fat types (g & %kcal)
-```{r}
+```{r, include=F,eval=F}
 mufa_plt <- plot_continuous("nut_mufa_g")
 mufa_pct_plt <- plot_continuous("nut_mufa_pct")
 pufa_plt <- plot_continuous("nut_pufa_g")
@@ -300,7 +394,7 @@ sfa_plt + sfa_pct_plt
 ```
 
 ### Carbohydrate quality
-```{r}
+```{r, include=F,eval=F}
 fib_plt <- plot_continuous("nut_fiber_g")
 fibsol_plt <- plot_continuous("nut_fiber_sol_g")
 fibinsol_plt <- plot_continuous("nut_fiber_insol_g")
@@ -311,13 +405,13 @@ fibsol_plt + fibinsol_plt
 ```
 
 **Carbohydrate-to-fiber ratio
-```{r}
+```{r, include=F,eval=F}
 carb2fib_plt <- plot_continuous("carb2fib") 
 fib2carb_plt <- plot_continuous("fib2carb") 
 carb2fib_plt + fib2carb_plt
 ```
 
-```{r}
+```{r, include=F,eval=F}
 ## Add ranges, means/sd, medians
 c("Carb-to-Fiber: ", round(quantile(analysis.df$carb2fib, na.rm=T, probs=seq(0,1,0.2), include.lowest=T), 1))
 c("Fiber-to-Carb: ", round(quantile(analysis.df$fib2carb, na.rm=T, probs=seq(0,1,0.2), include.lowest=T), 3))
@@ -340,7 +434,7 @@ carb2fib_boxplt
 fib2carb_boxplt
 ```
 
-```{r}
+```{r, include=F,eval=F}
 #carb-to-fib
 bounds_5SD <- c(mean(analysis.df$carb2fib, na.rm=T)+c(-5,5)*sd(analysis.df$carb2fib, na.rm=T))
 bounds_5to95 <- quantile(analysis.df$carb2fib, na.rm=T, probs = c(0.05, 0.25, 0.5, 0.75, 0.95))
@@ -374,7 +468,7 @@ Note on outliers for Carbohydrate-to-fiber ratio:
 
 ### Covariates
 Lifestyle factors
-```{r}
+```{r, include=F,eval=F}
 smk_plt <- plot_categorical("smoke_stat.lab")
 smkyrs_plt <- plot_continuous("smoke_packyrs")
 alc_plt <- plot_categorical("alch_currdrnk.lab")
@@ -384,14 +478,14 @@ alc_plt + pa_plt
 ```
 
 Health status-related covariates
-```{r}
+```{r, include=F,eval=F}
 med_t2d_plt <- plot_categorical("med_t2d")
 med_htn_plt <- plot_categorical("med_htn")
 med_lip_plt <- plot_categorical("med_lip")
 med_t2d_plt + med_htn_plt + med_lip_plt
 ```
 
-```{r}
+```{r, include=F,eval=F}
 missingness_vars <- c(
     "age", "gender", "bmi", "RaceEthn",
     "educ_4lvl.lab", "income_4lvl.lab",
@@ -406,7 +500,7 @@ analysis.df %>%
     summarise(across(everything(), sum)) %>% t()
 ```
 
-```{r}
+```{r, include=F,eval=F}
 # Re-run basic participant descriptives
 
 analysis.df %>%
@@ -421,7 +515,7 @@ analysis.df %>%
 
 # Run basic correlations among diet variables
 ### Carbohydrate & macronutrients
-```{r}
+```{r, include=F,eval=F}
 options(repr.plot.width=14, repr.plot.height=5)
 options(warn=-1)
 
@@ -439,7 +533,7 @@ carbmufa_plt + carbpufa_plt + carbsfa_plot
 ```
 
 ### Carbohydrate & fiber sources
-```{r}
+```{r, include=F,eval=F}
 carb2fib_plt <- plot_continuous("carb2fib")
 carbfib_plt<-plot_xyscatter("nut_carb_g", "nut_fiber_g")
 carb2fib_plt + carbfib_plt 
@@ -451,7 +545,7 @@ carbfibsol_plt + carbfibinsol_plt + carbfibcer_plt
 
 # Covariate descriptions across education levels
 ### Demographic, behavioral & lifestyle phenotypes
-```{r}
+```{r, include=F,eval=F}
 analysis.df %>% 
     group_by(educ_4lvl.lab) %>%
     reframe(
@@ -478,7 +572,7 @@ analysis.df %>%
 
 ### Diet phenotypes
 Macronutrients
-```{r}
+```{r, include=F,eval=F}
 analysis.df %>% 
     group_by(educ_4lvl.lab) %>%
     reframe(
@@ -500,7 +594,7 @@ analysis.df %>%
 ```
 
 Carbohydrate Quality
-```{r}
+```{r, include=F,eval=F}
 analysis.df %>% 
     group_by(educ_4lvl.lab) %>%
     reframe(
@@ -519,7 +613,7 @@ analysis.df %>%
 
 
 # Covariate associations with metabolomic PCs
-```{r}
+```{r, include=F,eval=F}
 race_plt <- bind_cols(analysis_df_lcms, pc_res$x[, 1:5]) %>%
     ggplot(aes(x=PC1, y=PC2)) +
     geom_point(aes(color=race), alpha=0.5)
@@ -537,7 +631,7 @@ options(repr.plot.width=12, repr.plot.height=3)
 race_plt + site_plt + gender_plt
 ```
 
-```{r}
+```{r, include=F,eval=F}
 cont_vars <- c("age", "bmi", 
 #                paste0("prop_", ancestry_prop_fields), 
                paste0("gPC", 1:11))
@@ -558,7 +652,7 @@ pc_test_res <- expand_grid(
     mutate(p = pc_test(pc, covar))
 ```
 
-```{r}
+```{r, include=F,eval=F}
 pc_test_plt_df <- pc_test_res %>%
     mutate(nlp = -log10(p),
            sig = ifelse(p < 0.05, "*", ""),
@@ -585,13 +679,13 @@ pc_test_plt_df %>%
 ```
 
 # Assessment of the SNPs and exposures of interest
-```{r}
+```{r, include=F,eval=F}
 snp_info_df <- read_csv("genotypes/snp_info.csv", col_types=cols())
 exposures <- c("pa_bin")
 ```
 
 ## Univariate SNP-mPC and exposure-mPC associations
-```{r}
+```{r, include=F,eval=F}
 snp_mPC_assoc_df <- lapply(snp_info_df$rsID, function(rsID) {
     g_dominant <- analysis_df_lcms[[rsID]] > 0
     form_str <- paste0("g_dominant ~ ", paste0("mPC", 1:20, collapse=" + "))
@@ -611,7 +705,7 @@ exp_mPC_assoc_df <- lapply(exposures, function(e) {
     bind_rows(.id="exposure")
 ```
 
-```{r}
+```{r, include=F,eval=F}
 snp_mPC_assoc_df %>%
     filter(term != "(Intercept)") %>%
     mutate(nlp = -log10(p.value),
@@ -632,7 +726,7 @@ exp_mPC_assoc_df %>%
 
 TODO: try to squish the "Incorporation of technical" AND "biological" covariates sections down into one?
 ## Incorporation of technical covariates
-```{r}
+```{r, include=F,eval=F}
 technical_covar_sets <- list(
     none = "",
     add_site = c("gender_f0m1", "age", "site")
@@ -649,7 +743,7 @@ test_univariate <- function(y, x, covar_vec) {
 }
 ```
 
-```{r}
+```{r, include=F,eval=F}
 snp_mPC_technical_covar_assoc_df <- expand_grid(
     snp = snp_info_df$rsID,
     mPC = paste0("mPC", 1:3),
@@ -669,7 +763,7 @@ exp_mPC_technical_covar_assoc_df <- expand_grid(
     unnest(lm_res)
 ```
 
-```{r}
+```{r, include=F,eval=F}
 snp_mPC_technical_covar_assoc_df %>%
     mutate(l95 = estimate - 1.96 * std.error,
            u95 = estimate + 1.96 * std.error,
@@ -694,7 +788,7 @@ exp_mPC_technical_covar_assoc_df %>%
 ```
 
 ## Incorporation of biological covariates
-```{r}
+```{r, include=F,eval=F}
 biological_covar_sets <- list(
     basic                   =   "site",
     add_gender_age          = c("site", "gender_f0m1", "age"),
@@ -707,7 +801,7 @@ biological_covar_sets <- list(
 )
 ```
 
-```{r}
+```{r, include=F,eval=F}
 snp_mPC_biological_covar_assoc_df <- expand_grid(
     snp = snp_info_df$rsID,
     mPC = paste0("mPC", 1:3),
@@ -727,7 +821,7 @@ exp_mPC_biological_covar_assoc_df <- expand_grid(
     unnest(lm_res)
 ```
 
-```{r}
+```{r, include=F,eval=F}
 snp_mPC_biological_covar_assoc_df %>%
     mutate(l95 = estimate - 1.96 * std.error,
            u95 = estimate + 1.96 * std.error,
@@ -756,7 +850,7 @@ exp_mPC_biological_covar_assoc_df %>%
 * It appears that most of the high-level metabolite associations can be captured with about 9 metabolite PCs (for both genotypes and exposures) 
 * So, we want to adjust for PEER factors, and we are OK knowing that they are representing expected variables.
 # Export final datasets for analysis
-```{r}
+```{r, include=F,eval=F}
 write_csv(analysis_df, "analysis/analysis_df.csv")  # All individuals
 write_csv(analysis_df_lcms, "analysis/analysis_df_lcms.csv")  # Matched to the LC/MS dataset
 saveRDS(mesa_metab_mat, "metabolites/lcms_metabolites.rds")
