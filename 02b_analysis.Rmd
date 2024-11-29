@@ -30,10 +30,10 @@ covars <- c(paste0('gPC', 1:11),
             'ses_score', 'ahei_score', 'dash_score',
             'income_cat', 'drinks_per_week', 'smoking')
 
-runs <- CJ(covars, mPC=paste0('mPC',1:20), sorted=F)
-runs[, lm_res    := mapply(mPC,covars, FUN= \(mPC,covar) lm(data[[mPC]] ~ data[[covar]]))
-   ][, anova_res := lapply(lm_res, anova)
-   ][, p         := sapply(anova_res, \(res) res$`Pr(>F)`[1])
+runs <- CJ(covars, mPC=paste0('mPC',1:20), sorted=F)[
+  ][, lm_res    := mapply(mPC,covars, FUN = \(mPC,covar) lm(data[[mPC]] ~ data[[covar]]))
+  ][, anova_res := lapply(lm_res, anova)
+  ][, p         := sapply(anova_res, \(res) res$`Pr(>F)`[1])
 ]
 p_mtx <- as.matrix(dcast(runs, covars~mPC, value.var='p'), rownames=1)
 p_mtx <- p_mtx[,paste0('mPC',1:20)]
@@ -68,6 +68,7 @@ p_thresh <- local({
   met_eigvals <- prcomp(met_mtx, scale=T, center=T)$sdev^2
   met_eff_n <- sum(met_eigvals)^2 / sum(met_eigvals^2)
 
+  message('# of effective / total metabolites: ',round(met_eff_n),'/',ncol(met_mtx))
   0.05/met_eff_n
 })
 
@@ -76,12 +77,12 @@ mwas <- CJ(met_names, vars2test, covar_sets, sorted=F)[
   # Run linear models
   ][, lm_coefs := mcmapply(met_names,vars2test,covar_sets, FUN = \(met,var,covar_set)
         lm(data[[met]] ~ ., data[,c(var,covar_set), with=F]) |> (\(model) summary(model)$coefficients)(),
-        SIMPLIFY=F, mc.cores=4)
+      SIMPLIFY=F, mc.cores=4)
 
   # Extract results we want
   ][, var_coefs := mapply(lm_coefs, vars2test, FUN = \(coefs,var)
         coefs[rownames(coefs)==var,],
-        SIMPLIFY=F)
+      SIMPLIFY=F)
 
   ][, estimate := sapply(var_coefs, '[', 'Estimate'  )
   ][, se       := sapply(var_coefs, '[', 'Std. Error')
@@ -94,7 +95,8 @@ mwas <- CJ(met_names, vars2test, covar_sets, sorted=F)[
   ][, var_coefs := NULL
   ][,  lm_coefs := NULL
 ]
-
+```
+```{r}
 # Continuing with results from the run with gPC covars
 mwas_gpc <- mwas[grepl("gPC",covar_sets)]
 knitr::kable( mwas_gpc[signif==T][order(vars2test,p)] )
@@ -146,7 +148,7 @@ mediation_results <-
           mediate(
             lm(data[[   met   ]] ~ ., data[,c(    var,covar_set),with=F]),
             lm(data[['hdl_log']] ~ ., data[,c(met,var,covar_set),with=F]),
-            treat=var, mediator=met, robustSE=T, sims=10
+            treat=var, mediator=met, robustSE=T, sims=1000
           )[c('d0.p', 'n0', 'nobs')] # Select only the results we need. Otherwise eats up a lot of memory.
         }, SIMPLIFY=F)
 
@@ -199,3 +201,21 @@ knitr::kable( interaction_results[p<0.05][order(vars2test,p)] )
 
 
 # (later) Sensitivity analysis (hdl ~ (e or snp) + covars)
+
+
+# Moderated Mediation
+```{r moderated, include=F}
+# TODO just copied the old code
+#test_moderated_mediation <- function(x, m, y, w, covars) {
+#    # For now, w (the moderating variable) must be binary (0/1)
+#    med_form_str <- paste0("m ~ x * w + ", paste(covars, collapse=" + "))
+#    med_fit <- lm(as.formula(med_form_str), data=analysis_df_lcms)
+#    out_form_str <- paste0("y ~ m * w + x * w + ", paste(covars, collapse=" + "))
+#    out_fit <- lm(as.formula(out_form_str), data=analysis_df_lcms)
+#    med_out <- mediate(med_fit, out_fit, 
+#                       treat="x", mediator="m",
+#                       robustSE=TRUE, sims=10)  # N_sims doesn't need to be high for this step
+#    modmed_out <- test.modmed(med_out, list(w=0), list(w=1), sims=100)
+#    modmed_out
+#}
+```
