@@ -17,6 +17,7 @@ library(ggrepel)
 library(mediation)
 library(parallel)
 
+options(datatable.na.strings=c('NA',''))
 data <- fread('analysis_df.csv')
 ```
 
