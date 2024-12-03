@@ -166,15 +166,6 @@ data <- pcs[data, on='TOM_Id']
 screeplot(pca,npcs=20)
 ```
 
-# Stats
-```{r}
-table(data$race) / sum(table(data$race)) # Ancestry proportions
-table(data$sex ) / sum(table(data$sex )) # Sex      proportions
-#sapply(data, \(x) sum(is.na(x))) |> Filter(f=\(x) x!=0) # What cols have missing values, and how many
-sapply(data[!duplicated(mesa_id), .(pa,mod_pa,mvpa,vig_pa,rs295849)], \(x) sum(!is.na(x))) # Sample sizes for each exposure/SNP
-data[!duplicated(mesa_id), table(rs295849)] # Genotypes
-```
-
 ## Write
 ```{r write}
 fwrite(data, 'analysis_df.csv')
