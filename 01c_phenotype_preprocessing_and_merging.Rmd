@@ -120,10 +120,8 @@ data <- data[
   ][, race      := as.factor(race1c)
   ][, site      := factor(site1c,  levels=3:8, labels=c('s3','s4','s5','s6','s7','s8'))
   ][, smoking   := factor(cig1c,   levels=0:2, labels=c('NEVER','FORMER','CURRENT'))
-  ][, income    := factor(income1, ordered=T,
-                          levels=c('< $5,000', '$5,000 - 7,999', '$8,000 - 11,999', '$12,000 - 15,999', '$16,000 - 19,999', '$20,000 - 24,999', '$25,000 - 29,999', '$30,000 - 34,999', '$35,000 - 39,999', '$40,000 - 49,999', '$50,000 - 74,999', '$75,000 - 99,999', '$100,000 +'))
-  ][, education := factor(educ1, ordered=T,
-                          levels=c('NO_SCHOOLING','GRADES 1-8','GRADES 9-11','COMPLETED HIGH SCHOOL/GED','SOME COLLEGE BUT NO DEGREE','ASSOCIATE DEGREE','TECHNICAL SCHOOL CERTIFICATE',"BACHELOR'S DEGREE",'GRADUATE OR PROFESSIONAL SCHOOL'))
+  ][, income    := factor(income1, levels=c('< $5,000', '$5,000 - 7,999', '$8,000 - 11,999', '$12,000 - 15,999', '$16,000 - 19,999', '$20,000 - 24,999', '$25,000 - 29,999', '$30,000 - 34,999', '$35,000 - 39,999', '$40,000 - 49,999', '$50,000 - 74,999', '$75,000 - 99,999', '$100,000 +'))
+  ][, education := factor(educ1, levels=c('NO_SCHOOLING','GRADES 1-8','GRADES 9-11','COMPLETED HIGH SCHOOL/GED','SOME COLLEGE BUT NO DEGREE','ASSOCIATE DEGREE','TECHNICAL SCHOOL CERTIFICATE',"BACHELOR'S DEGREE",'GRADUATE OR PROFESSIONAL SCHOOL'))
 
   ][, sex := fcoalesce(gender1,Sex,SEX) |>
         sub(pattern='^F.*', replacement='FEMALE', ignore.case=T) |>
