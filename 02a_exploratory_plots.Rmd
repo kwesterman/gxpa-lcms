@@ -11,6 +11,7 @@ pre code {
 ```{r setup, message=F}
 library(data.table)
 library(ggplot2)
+library(gganimate)
 library(gtsummary)
 library(parallel)
 
@@ -43,15 +44,16 @@ data[
 # Testing Sets of Covariates
 `mPCs ~ e_or_snp + covars` for a few mPCs, all e's/snp, and all covar sets
 ```{r covar-sets, cache=T, fig.width=16, fig.height=10}
-mPCs <- paste0('mPC',1:10)
+mPCs <- paste0('mPC',1:9)
 vars2test <- c('rs295849','pa_bin','pa','mod_pa','mvpa','vig_pa')
 covar_sets <- list(
-  site                    =c('site'                                                                                                                      ),
-  `+sex+age`              =c('site', 'sex', 'age'                                                                                                        ),
-  `+ses+income`           =c('site', 'sex', 'age', 'ses_score', 'income_cat'                                                                             ),
-  `+drink+smoke+ahei+dash`=c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score'                   ),
-  `+race`                 =c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', 'race'           ),
-  `-race+gPCs`            =c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', paste0('gPC', 1:5))
+  site                    =c('site'                                                                                                                               ),
+  `+sex+age`              =c('site', 'sex', 'age'                                                                                                                 ),
+  `+ses+income`           =c('site', 'sex', 'age', 'ses_score', 'income_cat'                                                                                      ),
+  `+drink+smoke+ahei+dash`=c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score'                            ),
+  `+race`                 =c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', 'race'                    ),
+  `+gPCs`                 =c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', 'race', paste0('gPC', 1:5)),
+  `-race`                 =c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score',         paste0('gPC', 1:5))
 )
 
 runs <- CJ(mPCs, vars2test, covar_sets, sorted=F)[
@@ -86,16 +88,67 @@ ggplot(runs, aes(x=covar_sets, y=estimate, color=covar_sets)) +
 # Test Variable Transformations
 HDL vs various transformations of mvpa as in `gxe-omics` workspace's `preliminary-analysis.ipynb`
 ```{r mvpa-tfs, cache=T}
-winsor <- \(v, bounds=quantile(v,c(0.05,0.95),na.rm=T)) pmin(pmax(v,bounds[1]),bounds[2])
+winsor     <- \(v, bounds=quantile(v,c(0.05,0.95),na.rm=T)) pmin(pmax(v,bounds[1]),bounds[2])
+trunc_inds <- \(v, bounds=quantile(v,c(0.05,0.95),na.rm=T)) v>bounds[1] & v<bounds[2]
 
-rbind(data[, .(hdl,        mvpa , tf='identity') ],
-      data[, .(hdl,  trunc(mvpa),    'trunc'   ) ],
-      data[, .(hdl,    log(mvpa),    'log'     ) ],
-      data[, .(hdl, winsor(mvpa),    'winsor'  ) ], use.names=F) |>
-  ggplot(aes(x=mvpa, y=hdl, group=tf)) +
+rbind(data[,                 .(hdl,        mvpa , f='identity') ],
+      data[trunc_inds(mvpa), .(hdl,        mvpa ,   'trunc'   ) ],
+      data[,                 .(hdl,    log(mvpa),   'log'     ) ],
+      data[,                 .(hdl, winsor(mvpa),   'winsor'  ) ], use.names=F) |>
+  ggplot(aes(x=mvpa, y=hdl)) +
   geom_smooth(method = 'gam', formula = y ~ s(x, bs = "cs"), se=T, na.rm=T) +
-  facet_wrap(vars(tf), scales='free')
+  facet_wrap(vars(f), scales='free')
 ```
+## Sensitivity analysis on variable transformations
+TODO
+```{r}
+
+```
+
+# Histograms
+```{r hist-prep, warning=F}
+vars2hist_quant <- c('bmi','pa','mod_pa','mvpa','vig_pa','age','ses_score','drinks_per_week','ahei_score','dash_score','hdl')
+data4hists_quant <- melt(data[, c('sex', ..vars2hist_quant)],
+  measure.vars  = vars2hist_quant,
+  variable.name = 'var',
+  value.name    = 'val'
+)[, means := mean(val,na.rm=T),       by=.(var,sex)
+][, `-1sd`:= means - sd(val,na.rm=T), by=.(var,sex)
+][, `+1sd`:= means + sd(val,na.rm=T), by=.(var,sex)
+]
+
+vars2hist_categ <- c('race','smoking','income_cat','rs295849')
+data4hists_categ <- melt(data[, c('sex', ..vars2hist_categ)],
+  measure.vars  = vars2hist_categ,
+  variable.name = 'var',
+  value.name    = 'val'
+)
+```
+```{r hist-quant, cache=2, message=F, warning=F}
+ggplot(data4hists_quant, aes(x=val)) + 
+  geom_histogram() +
+  facet_wrap(vars(var), scales = 'free') +
+  geom_vline(aes(xintercept= means), color='red') +
+  geom_vline(aes(xintercept=`-1sd`), linetype='dashed') +
+  geom_vline(aes(xintercept=`+1sd`), linetype='dashed') +
+
+  transition_states(sex, transition_length = 0.2, state_length = 0.8) +
+  ggtitle('Sex: {closest_state}') +
+  ease_aes('sine-in-out') +
+  theme_bw()
+```
+```{r hist-categ, cache=2, message=F, warning=F}
+ggplot(data4hists_categ, aes(x=val)) + 
+  geom_histogram(stat='count') +
+  facet_wrap(vars(var), scales = 'free') +
+
+  transition_states(sex, transition_length = 0.2, state_length = 0.8) +
+  ggtitle('Sex: {closest_state}') +
+  ease_aes('sine-in-out') +
+  theme_bw() + theme(axis.text.x = element_text(angle=30, hjust=0.9))
+```
+
+
 
 
 
