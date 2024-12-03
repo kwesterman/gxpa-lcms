@@ -46,12 +46,12 @@ data[
 mPCs <- paste0('mPC',1:10)
 vars2test <- c('rs295849','pa_bin','pa','mod_pa','mvpa','vig_pa')
 covar_sets <- list(
-  set1=c('site'                                                                                                                              ),
-  set2=c('site', 'sex', 'age'                                                                                                        ),
-  set3=c('site', 'sex', 'age', 'ses_score', 'income_cat'                                                                             ),
-  set4=c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score'                   ),
-  set5=c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', 'race'           ),
-  set6=c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', paste0('gPC', 1:5))
+  site                    =c('site'                                                                                                                      ),
+  `+sex+age`              =c('site', 'sex', 'age'                                                                                                        ),
+  `+ses+income`           =c('site', 'sex', 'age', 'ses_score', 'income_cat'                                                                             ),
+  `+drink+smoke+ahei+dash`=c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score'                   ),
+  `+race`                 =c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', 'race'           ),
+  `-race+gPCs`            =c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', paste0('gPC', 1:5))
 )
 
 runs <- CJ(mPCs, vars2test, covar_sets, sorted=F)[
