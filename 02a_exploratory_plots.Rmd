@@ -16,13 +16,36 @@ library(gtsummary)
 library(parallel)
 
 options(datatable.na.strings=c('NA',''))
-data <- fread('analysis_df.csv')
+#data <- fread('analysis_df.csv')[!is.na(TOM_Id) & TOM_Id %in% tomid1] # Only Exam1 metabolomics individuals
+data <- fread('analysis_df.csv')[!duplicated(mesa_id)] # Only unique mesa_ids
+```
+
+Add some transformed versions of the PA variables to experiment with
+```{r}
+winsor      <- \(v, bounds=quantile(v,c(0,0.9),na.rm=T)) pmin(pmax(v,bounds[1]),bounds[2])
+na_outliers <- \(v, bounds=quantile(v,c(0,0.9),na.rm=T)) fifelse(v<bounds[1] | v>bounds[2], NA, v)
+
+data <- data[
+  ][,     pa_trunc := na_outliers(    pa)
+  ][,   mvpa_trunc := na_outliers(  mvpa)
+  ][, mod_pa_trunc := na_outliers(mod_pa)
+  ][, vig_pa_trunc := na_outliers(vig_pa)
+  ][,     pa_wins  :=      winsor(    pa)
+  ][,   mvpa_wins  :=      winsor(  mvpa)
+  ][, mod_pa_wins  :=      winsor(mod_pa)
+  ][, vig_pa_wins  :=      winsor(vig_pa)
+  ][,     pa_log   :=         log(    pa+1)
+  ][,   mvpa_log   :=         log(  mvpa+1)
+  ][, mod_pa_log   :=         log(mod_pa+1)
+  ][, vig_pa_log   :=         log(vig_pa+1)
+]
 ```
 
 # Summary table of relevant variables
 ```{r summary-tbl, cache=T}
 data[
-  ][, c('bmi','race','smoking','income_cat','sex','pa','mod_pa','mvpa','vig_pa','age','ses_score','drinks_per_week','ahei_score','dash_score','rs295849')
+  ][, .(bmi, race, smoking, income, sex, pa, mod_pa, mvpa, vig_pa, age, ses_score, drinks_per_week, ahei_score, dash_score, rs295849)
+  ][, has_metabolomics := is.na(data$TOM_Id)
   ][ is.na(sex), sex := 'Unknown'
   ] |>
   tbl_summary(
@@ -37,36 +60,67 @@ data[
 
 <!--
 # Maybe mv those blu heatmaps from analysis to here
-# Distributions of covariates and outcomes (hdl) and stuff
-# Educ x race, and educ x income hists
 -->
 
-# Testing Sets of Covariates
-`mPCs ~ e_or_snp + covars` for a few mPCs, all e's/snp, and all covar sets
+# Test Variable Transformations
+HDL vs various transformations of mvpa as in `gxe-omics` workspace's `preliminary-analysis.ipynb`
+```{r mvpa-tfs, cache=T}
+rbind(data[, .(hdl, mvpa      , f='identity') ],
+      data[, .(hdl, mvpa_log  ,   'log'     ) ],
+      data[, .(hdl, mvpa_wins ,   'winsor'  ) ],
+      data[, .(hdl, mvpa_trunc,   'trunc'   ) ], use.names=F) |>
+  ggplot(aes(x=mvpa, y=hdl)) +
+  geom_smooth(method = 'gam', formula = y ~ s(x, bs='cs'), se=T, na.rm=T) +
+  coord_cartesian(ylim = c(45, 53)) +
+  facet_wrap(vars(f), scales='free_x')
+```
+
+# Run models
+Strategy: run all lm models upfront and examine the results afterward.\
+One set of models we want to test is `mPC ~ pa_or_snp_variable + covar_set` for each possible combination of mPC1-10, untransformed PA or SNP variable, and covariate set. The point of this set of models is to see which covariates make the largest difference in the relationship between our variables of interest and the metabolomics, to help figure out which covariates to adjust for.\
+Another set of models is `hdl_log ~ pa_or_snp_variable_transformed + covar_set`, for each possible combination of PA or SNP variable, and covariate set. The point of this is to see the main effects, and also see which covariates make the largest difference in these main effects.
 ```{r covar-sets, cache=T, fig.width=16, fig.height=10}
-mPCs <- paste0('mPC',1:9)
-vars2test <- c('rs295849','pa_bin','pa','mod_pa','mvpa','vig_pa')
 covar_sets <- list(
   site                    =c('site'                                                                                                                               ),
-  `+sex+age`              =c('site', 'sex', 'age'                                                                                                                 ),
+  `+sex`                  =c('site', 'sex'                                                                                                                        ),
+  `+age`                  =c('site', 'sex', 'age'                                                                                                                 ),
   `+ses+income`           =c('site', 'sex', 'age', 'ses_score', 'income_cat'                                                                                      ),
   `+drink+smoke+ahei+dash`=c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score'                            ),
   `+race`                 =c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', 'race'                    ),
   `+gPCs`                 =c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', 'race', paste0('gPC', 1:5)),
-  `-race`                 =c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score',         paste0('gPC', 1:5))
-)
+  `-race`                 =c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score',         paste0('gPC', 1:5)))
 
-runs <- CJ(mPCs, vars2test, covar_sets, sorted=F)[
-  ][, lm_coefs := mcmapply(mPCs,vars2test,covar_sets, FUN = \(mPC,var,covar_set)
-        lm(data[[mPC]] ~ ., data[,c(var,covar_set), with=F]) |> (\(model) summary(model)$coefficients)(),
-      SIMPLIFY=F, mc.cores=4)
+# mPC ~ pa_or_snp + covars
+ys <- paste0('mPC',1:9)
+xs <- c('rs295849','pa_bin','pa','mod_pa','mvpa','vig_pa')
+lm_runs_w_mPC_outcome <- CJ(ys, xs, covar_sets, sorted=F)
 
-  # Extract results we want
-  ][, var_coefs := mapply(lm_coefs, vars2test, FUN = \(coefs,var)
-        coefs[rownames(coefs)==var,],
+
+# hdl_log ~ transformed_pa_or_snp + covars
+ys <- 'hdl_log'
+xs <- c('rs295849', 'pa',       'mod_pa',       'mvpa',       'vig_pa',
+                    'pa_log',   'mod_pa_log',   'mvpa_log',   'vig_pa_log',
+                    'pa_wins',  'mod_pa_wins',  'mvpa_wins',  'vig_pa_wins',
+                    'pa_trunc', 'mod_pa_trunc', 'mvpa_trunc', 'vig_pa_trunc')
+lm_runs_w_hdl_outcome <- CJ(ys, xs, covar_sets, sorted=F)
+
+runs <- rbind(lm_runs_w_mPC_outcome,
+              lm_runs_w_hdl_outcome)
+runs <- runs[, fmlas := paste0('scale(',ys,')','~','scale(',xs,')','+',sapply(covar_sets,paste,collapse='+')) |> sapply(formula) ]
+
+runs[
+  ][, lm_coefs := mcmapply(fmlas, FUN = \(fmla)
+        lm(fmla,data) |> (\(model) summary(model)$coefficients)(),
+      SIMPLIFY=F,     # ↑ Pipe into a function to extract only the coefs. Don't need
+      mc.cores=4)     #   all of lm's output. Keeping everything eats up a lot of memory.
+  # Extract the results we want
+  ][, var_coefs := mapply(lm_coefs, xs, FUN = \(coefs,x)
+        coefs[grepl(x,rownames(coefs)),],
       SIMPLIFY=F)
+
   ][, estimate := sapply(var_coefs, '[', 'Estimate'  )
   ][, se       := sapply(var_coefs, '[', 'Std. Error')
+  ][, t        := sapply(var_coefs, '[', 't value'   )
   ][, p        := sapply(var_coefs, '[', 'Pr(>|t|)'  )
   ][, l95      := estimate-(1.96*se),
   ][, u95      := estimate+(1.96*se),
@@ -75,34 +129,31 @@ runs <- CJ(mPCs, vars2test, covar_sets, sorted=F)[
   ][, covar_sets := factor(covar_sets, levels=..covar_sets, labels=names(..covar_sets))
   ][, var_coefs := NULL
   ][, lm_coefs := NULL
+  ][, fmlas := NULL
 ]
 
-ggplot(runs, aes(x=covar_sets, y=estimate, color=covar_sets)) +
+ggplot(runs[grepl('mPC',ys)], aes(y=estimate, x=covar_sets, color=covar_sets)) +
   geom_point   (position=position_dodge(width=0.2)) +
   geom_errorbar(position=position_dodge(width=0.2), aes(ymin=l95,ymax=u95), width=0) +
   geom_hline(yintercept=0, color="gray") +
   scale_x_discrete(labels=NULL, breaks=NULL) + labs(x=NULL) +
-  facet_grid(rows=vars(vars2test), cols=vars(mPCs), scales="free")
-```
+  facet_grid(rows=vars(xs), cols=vars(ys), scales="free")
 
-# Test Variable Transformations
-HDL vs various transformations of mvpa as in `gxe-omics` workspace's `preliminary-analysis.ipynb`
-```{r mvpa-tfs, cache=T}
-winsor     <- \(v, bounds=quantile(v,c(0.05,0.95),na.rm=T)) pmin(pmax(v,bounds[1]),bounds[2])
-trunc_inds <- \(v, bounds=quantile(v,c(0.05,0.95),na.rm=T)) v>bounds[1] & v<bounds[2]
+ggplot(runs[grepl('hdl',ys)], aes(y=estimate, x=covar_sets, color=covar_sets)) +
+  geom_point   (position=position_dodge(width=0.2)) +
+  geom_errorbar(position=position_dodge(width=0.2), aes(ymin=l95,ymax=u95), width=0) +
+  geom_hline(yintercept=0, color="gray") +
+  scale_x_discrete(labels=NULL, breaks=NULL) + labs(x=NULL) +
+  facet_grid(cols=vars(xs), scales="free")
 
-rbind(data[,                 .(hdl,        mvpa , f='identity') ],
-      data[trunc_inds(mvpa), .(hdl,        mvpa ,   'trunc'   ) ],
-      data[,                 .(hdl,    log(mvpa),   'log'     ) ],
-      data[,                 .(hdl, winsor(mvpa),   'winsor'  ) ], use.names=F) |>
-  ggplot(aes(x=mvpa, y=hdl)) +
-  geom_smooth(method = 'gam', formula = y ~ s(x, bs = "cs"), se=T, na.rm=T) +
-  facet_wrap(vars(f), scales='free')
-```
-## Sensitivity analysis on variable transformations
-TODO
-```{r}
-
+runs[ys=='hdl_log' &
+     xs != 'rs295849' &
+     covar_sets=='+race'
+   ][order(-t)
+   ][, xs := factor(xs,levels=xs) # So that ggplot doesn't alphabetically order it
+] |>
+  ggplot(aes(x=xs, y=t)) +
+  geom_bar(stat='identity')
 ```
 
 # Histograms
