@@ -104,7 +104,8 @@ data <-
        value.name='TOM_Id')
 data <- data[
   ][!(duplicated(mesa_id) & is.na(TOM_Id)) # Melt also expanded rows where tomid#==NA. Rm these mesa_ids associated with multiple NA TOM_Ids.
-  ][, metabolomics_exam := sub('^tomid','',metabolomics_exam)
+  ][is.na(TOM_Id), metabolomics_exam := NA
+  ][,              metabolomics_exam := sub('^tomid','',metabolomics_exam)
 ]
 
 data <- 
