@@ -9,6 +9,8 @@ pre code {
 
 # Setup
 ```{r setup, message=F}
+library(circlize)
+library(ComplexHeatmap)
 library(data.table)
 library(ggplot2)
 library(gganimate)
@@ -186,7 +188,7 @@ data4hists_quant <- melt(data[, c('sex', ..vars2hist_quant)],
 ][, `+1sd`:= means + sd(val,na.rm=T), by=.(var,sex)
 ]
 
-vars2hist_categ <- c('race','smoking','income_cat','rs295849')
+vars2hist_categ <- c('race','smoking','income','rs295849')
 data4hists_categ <- melt(data[, c('sex', ..vars2hist_categ)],
   measure.vars  = vars2hist_categ,
   variable.name = 'var',
