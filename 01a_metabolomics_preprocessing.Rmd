@@ -85,8 +85,8 @@ met_info <- rbindlist(met_info)
 met_info[Method=='Amide-neg', `:=`(MRM_Transition=RT, RT=NA)]
 
 # Compound IDs may be duplicated across CP/CN/HP/AN. A concatenated `<ID>_<Method>` variable ensures IDs are unique.
-met_info[,                    unique_met_id := paste0(Compound_ID,'_',Method)]
-met_info[Method=='Amide-neg', unique_met_id := paste0(    .I,     '_',Method)] # Amines have no Compound_ID, so generate them.
+met_info[,                    unique_met_id := paste0(Compound_ID,'_',sub('-','_',Method))] # R doesn't like '-' in names.
+met_info[Method=='Amide-neg', unique_met_id := paste0(    .I,     '_',sub('-','_',Method))] # Amines have no Compound_ID, so generate them.
 #sum(duplicated(met_info$unique_id)) # No dup IDs!
 
 met_info[met_info==''] <- NA
@@ -99,7 +99,7 @@ knitr::kable(head(met_info))
 # Extract measurement data
 ```{r data, results='hide', warning=F, message=F}
 data <- list()
-data$CP <- fread(data_csvs$CP, skip=9, drop=1:8, colClasses='double') |> t() |> `colnames<-`(met_info[Method==   'C8-pos',unique_met_id]) # Yes I double-checked, the names are in the proper order
+data$CP <- fread(data_csvs$CP, skip=9, drop=1:8, colClasses='double') |> t() |> `colnames<-`(met_info[Method==   'C8-pos',unique_met_id]) # I double-checked, the names are in the proper order
 data$CN <- fread(data_csvs$CN, skip=9, drop=1:8, colClasses='double') |> t() |> `colnames<-`(met_info[Method==  'C18-neg',unique_met_id])
 data$HP <- fread(data_csvs$HP, skip=9, drop=1:8, colClasses='double') |> t() |> `colnames<-`(met_info[Method=='HILIC-pos',unique_met_id])
 data$AN <- fread(data_csvs$AN, skip=8, drop=1:8, colClasses='double') |> t() |> `colnames<-`(met_info[Method=='Amide-neg',unique_met_id])
@@ -149,7 +149,7 @@ mapply(fwrite, data, paste0('metabolomics/QCd/',names(data),'_QCd.csv'))
 
 
 # Merge CP/CN/HP/AN datasets
-8174/12183 non-QC samples have metabolomics data for all of CP/CN/HP/AN. We would prefer to preserve those ~4k samples that don't, so we merge the metabolomics data with an outer join. TODO better words
+8174/12183 non-QC samples have metabolomics data for all of CP/CN/HP/AN. We would prefer to preserve those ~4k samples that don't, so we merge the metabolomics data with `all=T`.
 ```{r merge, message=F}
 data_dts <- lapply(data, as.data.table, keep.rownames='TOM_Id')
 data_merged <- Reduce(\(x,y) merge(x,y, all=T, by='TOM_Id'), data_dts)
