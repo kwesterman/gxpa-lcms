@@ -153,33 +153,6 @@ data <- data[, `:=`(                                  # Manually pretty up some 
 ```
 
 # Edit columns
-## Conversion to factors, imputation.
-```{r factorize-impute}
-data <- data[
-  ][, hdl_log   := log(hdl) 
-  ][, race      := fifelse(race1c==1, 'WHITE, CAUCASIAN',
-                   fifelse(race1c==2, 'CHINESE AMERICAN',
-                   fifelse(race1c==3, 'BLACK, AFRICAN-AMERICAN',
-                   fifelse(race1c==4, 'HISPANIC', race1c)))) |>
-                   as.factor()
-  ][, site      := factor(site1c,  levels=3:8, labels=c('s3','s4','s5','s6','s7','s8'))
-  ][, smoking   := factor(cig1c,   levels=0:2, labels=c('NEVER','FORMER','CURRENT')) ## There's also a 'Smoking Status' column but it has no additional info, and it's not clear what exam it's from so I'm sticking with cig1c.
-  ][, income    := factor(income1, levels=c('< $5,000', '$5,000 - 7,999', '$8,000 - 11,999', '$12,000 - 15,999', '$16,000 - 19,999', '$20,000 - 24,999', '$25,000 - 29,999', '$30,000 - 34,999', '$35,000 - 39,999', '$40,000 - 49,999', '$50,000 - 74,999', '$75,000 - 99,999', '$100,000 +'))
-  ][, education := factor(educ1,   levels=c('NO_SCHOOLING','GRADES 1-8','GRADES 9-11','COMPLETED HIGH SCHOOL/GED','SOME COLLEGE BUT NO DEGREE','ASSOCIATE DEGREE','TECHNICAL SCHOOL CERTIFICATE',"BACHELOR'S DEGREE",'GRADUATE OR PROFESSIONAL SCHOOL'))
-
-  ][, sex := fcoalesce(gender1,Sex,SEX) |>
-        sub(pattern='^F.*', replacement='FEMALE', ignore.case=T) |>
-        sub(pattern='^M.*', replacement=  'MALE', ignore.case=T) |>
-        factor(levels=c('FEMALE','MALE'))
-      # There is an existing `sex` col in freeze9b_sample_annot_2020-08-20.txt,
-      #   but it disagrees with the other `Sex`, `SEX`, and `gender1` cols. Ignoring it.
-
-  # Imputation
-  ][is.na(income),  income  := 'Missing'
-  ][is.na(smoking), smoking := 'NEVER'
-]
-```
-
 ## Winsorization, median imputation
 ```{r}
 # Data may have duplicated individuals, e.g. because some individuals have multiple TOM_Ids.
@@ -207,11 +180,57 @@ data_mesa_ids_unique <-
      ][, .SDcols = c('ses_score','drinks_per_week','ahei_score','dash_score'),
                    c('ses_score','drinks_per_week','ahei_score','dash_score') :=
          lapply( .SD, \(x) { x <- winsorizeBySd(x); fifelse(is.na(x), median(x,na.rm=T), x) })
+     ][, pa_bin := pa > 3.75
 ]
 
 # The first df's columns take precedence when coalescing.
 data <- mergecoalesce(data_mesa_ids_unique, data, all.y=T, by='mesa_id', force_coalesce=T)
 ```
+
+## Conversion to factors, imputation, transformed PA variables.
+```{r factorize-impute}
+winsor      <- \(v, bounds=quantile(v,c(0,0.9),na.rm=T)) pmin(pmax(v,bounds[1]),bounds[2])
+na_outliers <- \(v, bounds=quantile(v,c(0,0.9),na.rm=T)) fifelse(v<bounds[1] | v>bounds[2], NA, v)
+
+data <- data[
+  ][, hdl_log   := log(hdl) 
+  ][, race      := fifelse(race1c==1, 'WHITE, CAUCASIAN',
+                   fifelse(race1c==2, 'CHINESE AMERICAN',
+                   fifelse(race1c==3, 'BLACK, AFRICAN-AMERICAN',
+                   fifelse(race1c==4, 'HISPANIC', race1c)))) |>
+                   as.factor()
+  ][, site      := factor(site1c,  levels=3:8, labels=c('s3','s4','s5','s6','s7','s8'))
+  ][, smoking   := factor(cig1c,   levels=0:2, labels=c('NEVER','FORMER','CURRENT')) ## There's also a 'Smoking Status' column but it has no additional info, and it's not clear what exam it's from so I'm sticking with cig1c.
+  ][, income    := factor(income1, levels=c('< $5,000', '$5,000 - 7,999', '$8,000 - 11,999', '$12,000 - 15,999', '$16,000 - 19,999', '$20,000 - 24,999', '$25,000 - 29,999', '$30,000 - 34,999', '$35,000 - 39,999', '$40,000 - 49,999', '$50,000 - 74,999', '$75,000 - 99,999', '$100,000 +'))
+  ][, education := factor(educ1,   levels=c('NO_SCHOOLING','GRADES 1-8','GRADES 9-11','COMPLETED HIGH SCHOOL/GED','SOME COLLEGE BUT NO DEGREE','ASSOCIATE DEGREE','TECHNICAL SCHOOL CERTIFICATE',"BACHELOR'S DEGREE",'GRADUATE OR PROFESSIONAL SCHOOL'))
+
+  ][, sex := fcoalesce(gender1,Sex,SEX) |>
+        sub(pattern='^F.*', replacement='FEMALE', ignore.case=T) |>
+        sub(pattern='^M.*', replacement=  'MALE', ignore.case=T) |>
+        factor(levels=c('FEMALE','MALE'))
+      # There is an existing `sex` col in freeze9b_sample_annot_2020-08-20.txt,
+      #   but it disagrees with the other `Sex`, `SEX`, and `gender1` cols. Ignoring it.
+
+  # Imputation
+  ][is.na(income),  income  := 'Missing'
+  ][is.na(smoking), smoking := 'NEVER'
+
+  # Transformed variables
+  ][,     pa_trunc := na_outliers(    pa)
+  ][,   mvpa_trunc := na_outliers(  mvpa)
+  ][, mod_pa_trunc := na_outliers(mod_pa)
+  ][, vig_pa_trunc := na_outliers(vig_pa)
+  ][,     pa_wins  :=      winsor(    pa)
+  ][,   mvpa_wins  :=      winsor(  mvpa)
+  ][, mod_pa_wins  :=      winsor(mod_pa)
+  ][, vig_pa_wins  :=      winsor(vig_pa)
+  ][,     pa_log   :=         log(    pa+1)
+  ][,   mvpa_log   :=         log(  mvpa+1)
+  ][, mod_pa_log   :=         log(mod_pa+1)
+  ][, vig_pa_log   :=         log(vig_pa+1)
+]
+```
+
 
 # Append metabolomics PCs
 We waited to calculate PCs until now because we only want to do PCA using samples we will use in the analysis; and now we are finally done filtering samples.\

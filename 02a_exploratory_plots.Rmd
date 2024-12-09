@@ -16,29 +16,7 @@ library(gtsummary)
 library(parallel)
 
 options(datatable.na.strings=c('NA',''))
-#data <- fread('analysis_df.csv')[!is.na(TOM_Id) & TOM_Id %in% tomid1] # Only Exam1 metabolomics individuals
-data <- fread('analysis_df.csv')[!duplicated(mesa_id)] # Only unique mesa_ids
-```
-
-Add some transformed versions of the PA variables to experiment with
-```{r}
-winsor      <- \(v, bounds=quantile(v,c(0,0.9),na.rm=T)) pmin(pmax(v,bounds[1]),bounds[2])
-na_outliers <- \(v, bounds=quantile(v,c(0,0.9),na.rm=T)) fifelse(v<bounds[1] | v>bounds[2], NA, v)
-
-data <- data[
-  ][,     pa_trunc := na_outliers(    pa)
-  ][,   mvpa_trunc := na_outliers(  mvpa)
-  ][, mod_pa_trunc := na_outliers(mod_pa)
-  ][, vig_pa_trunc := na_outliers(vig_pa)
-  ][,     pa_wins  :=      winsor(    pa)
-  ][,   mvpa_wins  :=      winsor(  mvpa)
-  ][, mod_pa_wins  :=      winsor(mod_pa)
-  ][, vig_pa_wins  :=      winsor(vig_pa)
-  ][,     pa_log   :=         log(    pa+1)
-  ][,   mvpa_log   :=         log(  mvpa+1)
-  ][, mod_pa_log   :=         log(mod_pa+1)
-  ][, vig_pa_log   :=         log(vig_pa+1)
-]
+data <- fread('analysis_df.csv')[metabolomics_exam==1] # Only Exam1 metabolomics individuals
 ```
 
 # Summary table of relevant variables
@@ -58,21 +36,72 @@ data[
   add_overall() |> add_n()
 ```
 
-<!--
-# Maybe mv those blu heatmaps from analysis to here
--->
+# Heatmap of mPCs vs. covars
+Note that not all samples contributed to the mPCs — only samples with measurements for all metabolomics methods CP/CN/HP/AN could be used in PCA.
+```{r hm, cache=2}
+heatmap_covars <- c(
+  paste0('gPC', 1:11),
+  'site', 'season', 'month',
+  'age', 'bmi', 'sex', 'race',
+  'ses_score', 'ahei_score', 'dash_score',
+  'income', 'drinks_per_week', 'smoking')
 
-# Test Variable Transformations
+runs <- CJ(heatmap_covars, mPC=paste0('mPC',1:20), sorted=F)[
+  ][, lm_res    := mapply(mPC,heatmap_covars, FUN = \(mPC,covar) lm(data[[mPC]] ~ data[[covar]]))
+  ][, anova_res := lapply(lm_res, anova)
+  ][, p         := sapply(anova_res, \(res) res$`Pr(>F)`[1])
+]
+p_mtx <- as.matrix(dcast(runs, heatmap_covars~mPC, value.var='p'), rownames=1)
+p_mtx <- p_mtx[,paste0('mPC',1:20)]
+
+# TODO also do other way of doing heatmap, see journal day 241112.
+# Covars, as above: lm(mPC ~ one_covar)
+# SNPs, glm(snp ~ all_mPCs, family='binomial')
+
+Heatmap(-log10(p_mtx),
+  cell_fun = \(j,i,x,y,w,h,col) if(p_mtx[i,j]<0.05) grid.text('*',x,y,gp=gpar(col='white')),
+  col = colorRamp2(c(0,10), c('black','steelblue')),
+  cluster_columns=F, cluster_rows=F,
+  heatmap_legend_param = list(title = 'log10(p)\nfrom lm')
+)
+```
+
+Define covariate sets we'll want to test
+```{r covar-sets}
+covar_sets <- list(
+  site                    =c('site'                                                                                                                           ),
+  `+sex`                  =c('site', 'sex'                                                                                                                    ),
+  `+age`                  =c('site', 'sex', 'age'                                                                                                             ),
+  `+ses+income`           =c('site', 'sex', 'age', 'ses_score', 'income'                                                                                      ),
+  `+drink+smoke+ahei+dash`=c('site', 'sex', 'age', 'ses_score', 'income', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score'                            ),
+  `+race`                 =c('site', 'sex', 'age', 'ses_score', 'income', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', 'race'                    ),
+  `+gPCs`                 =c('site', 'sex', 'age', 'ses_score', 'income', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', 'race', paste0('gPC', 1:5)),
+  `-race`                 =c('site', 'sex', 'age', 'ses_score', 'income', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score',         paste0('gPC', 1:5)))
+```
+
+# Inspect Variable Transformations
 HDL vs various transformations of mvpa as in `gxe-omics` workspace's `preliminary-analysis.ipynb`
 ```{r mvpa-tfs, cache=T}
-rbind(data[, .(hdl, mvpa      , f='identity') ],
-      data[, .(hdl, mvpa_log  ,   'log'     ) ],
-      data[, .(hdl, mvpa_wins ,   'winsor'  ) ],
-      data[, .(hdl, mvpa_trunc,   'trunc'   ) ], use.names=F) |>
+data <- data[
+  ][, mvpa_resid       := resid(lm(mvpa       ~ ., data[, .SD, .SDcols=covar_sets$`+gPCs`], na.action=na.exclude)),
+  ][, mvpa_log_resid   := resid(lm(mvpa_log   ~ ., data[, .SD, .SDcols=covar_sets$`+gPCs`], na.action=na.exclude)),
+  ][, mvpa_wins_resid  := resid(lm(mvpa_wins  ~ ., data[, .SD, .SDcols=covar_sets$`+gPCs`], na.action=na.exclude)),
+  ][, mvpa_trunc_resid := resid(lm(mvpa_trunc ~ ., data[, .SD, .SDcols=covar_sets$`+gPCs`], na.action=na.exclude))
+]
+
+rbind(data[, .(hdl, mvpa,           f='identity'   ) ],
+      data[, .(hdl, mvpa_resid,       'resid'      ) ],
+      data[, .(hdl, mvpa_log,         'log'        ) ],
+      data[, .(hdl, mvpa_log_resid,   'resid_log'  ) ],
+      data[, .(hdl, mvpa_wins,        'winsor'     ) ],
+      data[, .(hdl, mvpa_wins_resid,  'resid_wins' ) ],
+      data[, .(hdl, mvpa_trunc,       'trunc'      ) ],
+      data[, .(hdl, mvpa_trunc_resid, 'resid_trunc') ],
+      use.names=F)[
+    ][, f := factor(f,levels=unique(f)) ] |>
   ggplot(aes(x=mvpa, y=hdl)) +
   geom_smooth(method = 'gam', formula = y ~ s(x, bs='cs'), se=T, na.rm=T) +
-  coord_cartesian(ylim = c(45, 53)) +
-  facet_wrap(vars(f), scales='free_x')
+  facet_wrap(vars(f), ncol=2, scales='free')
 ```
 
 # Run models
@@ -80,21 +109,10 @@ Strategy: run all lm models upfront and examine the results afterward.\
 One set of models we want to test is `mPC ~ pa_or_snp_variable + covar_set` for each possible combination of mPC1-10, untransformed PA or SNP variable, and covariate set. The point of this set of models is to see which covariates make the largest difference in the relationship between our variables of interest and the metabolomics, to help figure out which covariates to adjust for.\
 Another set of models is `hdl_log ~ pa_or_snp_variable_transformed + covar_set`, for each possible combination of PA or SNP variable, and covariate set. The point of this is to see the main effects, and also see which covariates make the largest difference in these main effects.
 ```{r covar-sets, cache=T, fig.width=16, fig.height=10}
-covar_sets <- list(
-  site                    =c('site'                                                                                                                               ),
-  `+sex`                  =c('site', 'sex'                                                                                                                        ),
-  `+age`                  =c('site', 'sex', 'age'                                                                                                                 ),
-  `+ses+income`           =c('site', 'sex', 'age', 'ses_score', 'income_cat'                                                                                      ),
-  `+drink+smoke+ahei+dash`=c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score'                            ),
-  `+race`                 =c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', 'race'                    ),
-  `+gPCs`                 =c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', 'race', paste0('gPC', 1:5)),
-  `-race`                 =c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score',         paste0('gPC', 1:5)))
-
 # mPC ~ pa_or_snp + covars
 ys <- paste0('mPC',1:9)
 xs <- c('rs295849','pa_bin','pa','mod_pa','mvpa','vig_pa')
 lm_runs_w_mPC_outcome <- CJ(ys, xs, covar_sets, sorted=F)
-
 
 # hdl_log ~ transformed_pa_or_snp + covars
 ys <- 'hdl_log'
