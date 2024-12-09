@@ -18,78 +18,51 @@ library(mediation)
 library(parallel)
 
 options(datatable.na.strings=c('NA',''))
-data <- fread('analysis_df.csv')
-```
+data <- fread('analysis_df.csv')[metabolomics_exam==1]
 
-
-# Heatmap of mPCs vs. covars
-Note that not all samples contributed to the mPCs — only samples with measurements for all metabolomics methods CP/CN/HP/AN could be used in PCA.
-```{r hm, cache=2}
-covars <- c(paste0('gPC', 1:11),
-            'site', 'season', 'month',
-            'age', 'bmi', 'sex', 'race',
-            'ses_score', 'ahei_score', 'dash_score',
-            'income_cat', 'drinks_per_week', 'smoking')
-
-runs <- CJ(covars, mPC=paste0('mPC',1:20), sorted=F)[
-  ][, lm_res    := mapply(mPC,covars, FUN = \(mPC,covar) lm(data[[mPC]] ~ data[[covar]]))
-  ][, anova_res := lapply(lm_res, anova)
-  ][, p         := sapply(anova_res, \(res) res$`Pr(>F)`[1])
-]
-p_mtx <- as.matrix(dcast(runs, covars~mPC, value.var='p'), rownames=1)
-p_mtx <- p_mtx[,paste0('mPC',1:20)]
-
-# TODO also do other way of doing heatmap, see journal day 241112.
-# Covars, as above: lm(mPC ~ one_covar)
-# SNPs, glm(snp ~ all_mPCs, family='binomial')
-
-Heatmap(-log10(p_mtx),
-  cell_fun = \(j,i,x,y,w,h,col) if(p_mtx[i,j]<0.05) grid.text('*',x,y,gp=gpar(col='white')),
-  col = colorRamp2(c(0,10), c('black','steelblue')),
-  cluster_columns=F, cluster_rows=F,
-  heatmap_legend_param = list(title = 'log10(p)\nfrom lm')
-)
+calc_eff_n_metabolites <- \(met_names) {
+  met_mtx <- data[ rowSums(is.na(data[,..met_names]))==0, ..met_names ] |> as.matrix(rownames=1) # Only samples with data for ALL metabolomics methods
+  met_eigvals <- prcomp(met_mtx, scale=T, center=T)$sdev^2
+  met_eff_n <- sum(met_eigvals)^2 / sum(met_eigvals^2)
+}
 ```
 
 # MWAS on genotypes and exposures
 Model: `lm(met ~ [snp or exposure] + covars)`
 ```{r mwas, cache=T}
 met_names <- names(fread('metabolomics/QCd/merged_QCd.csv',nrows=0,drop=1))
-vars2test <- c('rs295849','pa_bin','pa','mod_pa','mvpa','vig_pa')
+#vars2test <- c('rs295849','pa_bin','pa','mod_pa','mvpa','vig_pa')
+vars2test <- c('mvpa_wins')
 covar_sets <- list(
-  c('site', 'sex', 'age'                                                                                                        ),
-  #c('site', 'sex', 'age', 'ses_score', 'income_cat'                                                                             ),
-  #c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score'                   ),
-  #c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', 'race'           ),
-  c('site', 'sex', 'age', 'ses_score', 'income_cat', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', paste0('gPC', 1:5))
+  #c('site'                                                                                                                           ),
+  #c('site', 'sex', 'age'                                                                                                             ),
+  #c('site', 'sex', 'age', 'ses_score', 'income'                                                                                      ),
+  #c('site', 'sex', 'age', 'ses_score', 'income', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score'                            ),
+  #c('site', 'sex', 'age', 'ses_score', 'income', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', 'race'                    ),
+  #c('site', 'sex', 'age', 'ses_score', 'income', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', paste0('gPC', 1:5)        ),
+  c('site', 'sex', 'age', 'ses_score', 'income', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', paste0('gPC', 1:5), 'race')
 )
 
-p_thresh <- local({
-  met_mtx <- data[ rowSums(is.na(data[,..met_names]))==0, ..met_names ] |> as.matrix(rownames=1) # Only samples with data for ALL metabolomics methods
-  met_eigvals <- prcomp(met_mtx, scale=T, center=T)$sdev^2
-  met_eff_n <- sum(met_eigvals)^2 / sum(met_eigvals^2)
-
-  message('# of effective / total metabolites: ',round(met_eff_n),'/',ncol(met_mtx))
-  0.05/met_eff_n
-})
+p_thresh <- 0.05/calc_eff_n_metabolites(met_names)
 
   # Define all possible model combinations of met ~ var + covars
 mwas <- CJ(met_names, vars2test, covar_sets, sorted=F)[
   # Run linear models
-  ][, lm_coefs := mcmapply(met_names,vars2test,covar_sets, FUN = \(met,var,covar_set)
-        lm(data[[met]] ~ ., data[,c(var,covar_set), with=F]) |> (\(model) summary(model)$coefficients)(),
-      SIMPLIFY=F, mc.cores=4)
+  ][, lm_coefs := mapply(met_names,vars2test,covar_sets,.I, FUN = \(met,var,covar_set,i) {
+        cat(i,'/',.N,'\r') # Progress bar
+        lm(data[[met]] ~ ., data[,c(var,covar_set), with=F]) |> (\(model) summary(model)$coefficients)()
+      }, SIMPLIFY=F)
 
   # Extract results we want
   ][, var_coefs := mapply(lm_coefs, vars2test, FUN = \(coefs,var)
         coefs[rownames(coefs)==var,],
       SIMPLIFY=F)
 
-  ][, estimate := sapply(var_coefs, '[', 'Estimate'  )
-  ][, se       := sapply(var_coefs, '[', 'Std. Error')
-  ][, p        := sapply(var_coefs, '[', 'Pr(>|t|)'  )
-  ][, q        := p.adjust(p, method='BH')
-  ][, signif   := p < p_thresh
+  ][, mwas_estimate := sapply(var_coefs, '[', 'Estimate'  )
+  ][, mwas_se       := sapply(var_coefs, '[', 'Std. Error')
+  ][, mwas_p        := sapply(var_coefs, '[', 'Pr(>|t|)'  )
+  ][, mwas_q        := p.adjust(p, method='BH')
+  ][, mwas_signif   := p < p_thresh
 
   # Cleanup
   #][, covar_sets := sapply(covar_sets,paste,collapse='+')
@@ -104,7 +77,7 @@ knitr::kable( mwas_gpc[signif==T][order(vars2test,p)] )
 ```
 
 # QQ
-```{r qq, cache=2}
+```{r qq}
 mwas_gpc[
   ][ order(p)
   ][, nlp := -log10(p)
@@ -125,7 +98,7 @@ mwas_gpc[, calc_λ(p), by=vars2test]
 ```
 
 # Volcano
-```{r volc, warning=F, fig.width=16, fig.height=12, cache=2}
+```{r volc, warning=F, fig.width=16, fig.height=12, cache=T, cache.depends=mwas}
 ggplot(mwas_gpc, aes(x=estimate, y=-log10(p), color=p<p_thresh)) +
   geom_hline(yintercept=-log10(p_thresh), linetype="dashed") +
   geom_point(alpha=0.4, shape=16) +
@@ -139,30 +112,32 @@ ggplot(mwas_gpc, aes(x=estimate, y=-log10(p), color=p<p_thresh)) +
 
 # Mediation Analysis
 Comparing models `lm(met ~ [snp or exposure] + covars)` and `lm(hdl_log ~ met + [snp or exposure] + covars)` to find mediators.
-```{r mediation, cache=T}
+```{r mediation, cache=T, cache.depends=mwas}
+p_thresh2 <- 0.05/calc_eff_n_metabolites(mwas[signif==T,met_names])
+
 mediation_results <-
   mwas_gpc[
-    ][ signif==T # ↓ No mcmapply, mediate() is already multithreaded 
+    ][ signif==T
     ][, med_res := mapply(met_names,vars2test,covar_sets,.I, FUN = \(met,var,covar_set,i) {
-          #cat(i,'/',.N,'\r') # Progress bar
+          cat(i,'/',.N,'\r') # Progress bar
           data <- data[!is.na(hdl_log)]
           mediate(
             lm(data[[   met   ]] ~ ., data[,c(    var,covar_set),with=F]),
             lm(data[['hdl_log']] ~ ., data[,c(met,var,covar_set),with=F]),
-            treat=var, mediator=met, robustSE=T, sims=1000
+            treat=var, mediator=met, robustSE=T, sims=10
           )[c('d0.p', 'n0', 'nobs')] # Select only the results we need. Otherwise eats up a lot of memory.
         }, SIMPLIFY=F)
 
     # Extract results we want
-    ][, mwas_p    := p
-    ][, acme_p    := sapply(med_res,'[[','d0.p')
-    ][, med_prop  := sapply(med_res,'[[','n0'  )
-    ][, n_samples := sapply(med_res,'[[','nobs')
+    ][, med_acme_p    := sapply(med_res,'[[','d0.p')
+    ][, med_prop      := sapply(med_res,'[[','n0'  )
+    ][, med_n_samples := sapply(med_res,'[[','nobs')
+    ][, med_signif    := acme_p < p_thresh2
 
     # Cleanup
     #][, covar_sets := sapply(covar_sets,paste,collapse='+')
-    ][, `:=`(covar_sets=NULL, med_res=NULL, signif=NULL, estimate=NULL, se=NULL, p=NULL, q=NULL)
-    ]
+    ][, `:=`(med_res=NULL, estimate=NULL, se=NULL, p=NULL, q=NULL)
+]
 ```
 ```{r mediation_tbl}
 knitr::kable( mediation_results[acme_p<0.05][order(vars2test,acme_p,mwas_p)] )
@@ -171,33 +146,38 @@ knitr::kable( mediation_results[acme_p<0.05][order(vars2test,acme_p,mwas_p)] )
 
 
 # Interaction analysis
-Model: `lm(hdl ~ met*[snp or exposure] + covars)`, using MWAS's significant metabolites.
+Model: `lm(hdl ~ met*snp + covars)`, using MWAS's significant metabolites.
 ```{r intrx, cache=T}
+p_thresh3 <- 0.05/calc_eff_n_metabolites(mediation_results[signif==T,met_names])
+
+# TODO should only include the mets that were significant in the mediation analysis
+# TODO clean up this mess
 interaction_results <-
-  mwas_gpc[
-    ][ signif==T
-    ][, lm_coefs := mcmapply(met_names,vars2test,covar_sets,.I, FUN = \(met,var,covar_set,i) {
-          #cat(i,'/',.N,'\r') # Progress bar
-          data <- data[!is.na(hdl_log)]
-          lm(data[['hdl_log']] ~ data[[met]] * data[[var]] + ., data[,covar_set,with=F]) |> (\(model) summary(model)$coefficients)()
-        }, SIMPLIFY=F, mc.cores=4)
+  mediation_results[
+    #][ signif==T
+    ][, intrx_coefs := mapply(met_names,vars2test,covar_sets,.I, FUN = \(met,var,covar_set,i) {
+          cat(i,'/',.N,'\r') # Progress bar
+          fmla <- paste0('hdl_log ~ `',met,'` * rs295849 + site*rs295849 + sex*rs295849 + age*rs295849 + ses_score*rs295849 + income*rs295849 + drinks_per_week*rs295849 + smoking*rs295849 + ahei_score*rs295849 + dash_score*rs295849 + gPC1*rs295849 + gPC2*rs295849 + gPC3*rs295849 + gPC4*rs295849 + gPC5*rs295849 + race*rs295849')
+          #fmla <- paste0('hdl_log ~ `',met,'` * rs295849 + site          + sex          + age          + ses_score          + income          + drinks_per_week          + smoking          + ahei_score          + dash_score          + gPC1          + gPC2          + gPC3          + gPC4          + gPC5          + race'         )
+          lm_coefs    <- lm(fmla,data) |> (\(model) summary(model)$coefficients)()
+          intrx_coefs <- lm_coefs[grepl(met,rownames(lm_coefs)) &
+                                  grepl(':',rownames(lm_coefs))  ,]
+        }, SIMPLIFY=F)
 
-    # Extract results we want
-    ][, intrx_coefs := lapply(lm_coefs, \(coefs)
-          coefs[rownames(coefs)=='data[[met]]:data[[var]]',])
-
-    ][, estimate := sapply(intrx_coefs, '[', 'Estimate'  )
-    ][, se       := sapply(intrx_coefs, '[', 'Std. Error')
-    ][, p        := sapply(intrx_coefs, '[', 'Pr(>|t|)'  )
-    ][, q        := p.adjust(p, method='BH')
+    ][, intrx_estimate := sapply(intrx_coefs, '[', 'Estimate'  )
+    ][, intrx_se       := sapply(intrx_coefs, '[', 'Std. Error')
+    ][, intrx_p        := sapply(intrx_coefs, '[', 'Pr(>|t|)'  )
+    ][, intrx_q        := p.adjust(p, method='BH')
+    ][, intrx_signif   := p < p_thresh3
 
     # Cleanup
     #][, covar_sets := sapply(covar_sets,paste,collapse='+')
-    ][, `:=`(covar_sets=NULL, lm_coefs=NULL, intrx_coefs=NULL, signif=NULL)
-    ]
+    ][, `:=`(intrx_coefs=NULL)
+]
 ```
 ```{r intrx_tbl}
-knitr::kable( interaction_results[p<0.05][order(vars2test,p)] )
+knitr::kable( interaction_results[signif==T][order(vars2test,p)] )
+knitr::kable( interaction_results[ p < 0.1 ][order(vars2test,p)] )
 ```
 
 
@@ -206,17 +186,28 @@ knitr::kable( interaction_results[p<0.05][order(vars2test,p)] )
 
 # Moderated Mediation
 ```{r moderated, include=F}
-# TODO just copied the old code
-#test_moderated_mediation <- function(x, m, y, w, covars) {
-#    # For now, w (the moderating variable) must be binary (0/1)
-#    med_form_str <- paste0("m ~ x * w + ", paste(covars, collapse=" + "))
-#    med_fit <- lm(as.formula(med_form_str), data=analysis_df_lcms)
-#    out_form_str <- paste0("y ~ m * w + x * w + ", paste(covars, collapse=" + "))
-#    out_fit <- lm(as.formula(out_form_str), data=analysis_df_lcms)
-#    med_out <- mediate(med_fit, out_fit, 
-#                       treat="x", mediator="m",
-#                       robustSE=TRUE, sims=10)  # N_sims doesn't need to be high for this step
-#    modmed_out <- test.modmed(med_out, list(w=0), list(w=1), sims=100)
-#    modmed_out
-#}
+# p_thresh4 <- 0.05/calc_eff_n_metabolites(interaction_results[signif==T,met_names]) # No signif :(
+p_thresh4 <- 0.05/calc_eff_n_metabolites(interaction_results[p<0.1,met_names])
+
+modmed_results <- 
+  interaction_results[
+    ][, modmed_coefs := mapply(met_names,vars2test,covar_sets,.I, FUN = \(met,var,covar_set,i) {
+          cat(i,'/',.N,'\r') # Progress bar
+          fmla <- paste0('hdl_log ~ `',met,'` * rs295849 + site*rs295849 + sex*rs295849 + age*rs295849 + ses_score*rs295849 + income*rs295849 + drinks_per_week*rs295849 + smoking*rs295849 + ahei_score*rs295849 + dash_score*rs295849 + gPC1*rs295849 + gPC2*rs295849 + gPC3*rs295849 + gPC4*rs295849 + gPC5*rs295849 + race*rs295849')
+        })
+]
+# TODO
+
+test_moderated_mediation <- function(x, m, y, w, covars) {
+    # For now, w (the moderating variable) must be binary (0/1)
+    med_form_str <- paste0("m ~ x * w + ", paste(covars, collapse=" + "))
+    med_fit <- lm(as.formula(med_form_str), data=analysis_df_lcms)
+    out_form_str <- paste0("y ~ m * w + x * w + ", paste(covars, collapse=" + "))
+    out_fit <- lm(as.formula(out_form_str), data=analysis_df_lcms)
+    med_out <- mediate(med_fit, out_fit, 
+                       treat="x", mediator="m",
+                       robustSE=TRUE, sims=10)  # N_sims doesn't need to be high for this step
+    modmed_out <- test.modmed(med_out, list(w=0), list(w=1), sims=100)
+    modmed_out
+}
 ```
