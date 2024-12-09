@@ -86,7 +86,7 @@ met_info[Method=='Amide-neg', `:=`(MRM_Transition=RT, RT=NA)]
 
 # Compound IDs may be duplicated across CP/CN/HP/AN. A concatenated `<ID>_<Method>` variable ensures IDs are unique.
 met_info[,                    unique_met_id := paste0(Compound_ID,'_',sub('-','_',Method))] # R doesn't like '-' in names.
-met_info[Method=='Amide-neg', unique_met_id := paste0(    .I,     '_',sub('-','_',Method))] # Amines have no Compound_ID, so generate them.
+met_info[Method=='Amide-neg', unique_met_id := paste0('met', .I,  '_',sub('-','_',Method))] # Amines have no Compound_ID, so generate them.
 #sum(duplicated(met_info$unique_id)) # No dup IDs!
 
 met_info[met_info==''] <- NA
