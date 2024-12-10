@@ -8,7 +8,7 @@ pre code {
 ```
 
 # Setup
-```{r setup, message=F}
+```{r setup, message=F, cache=T, cache.depends=file.mtime('analysis_df.csv')}
 library(circlize)
 library(ComplexHeatmap)
 library(data.table)
@@ -22,7 +22,7 @@ data <- fread('analysis_df.csv')[metabolomics_exam==1] # Only Exam1 metabolomics
 ```
 
 # Summary table of relevant variables
-```{r summary-tbl, cache=T}
+```{r summary-tbl, cache=T, cache.depend=digest::digest(data)}
 data[
   ][, .(bmi, race, smoking, income, sex, pa, mod_pa, mvpa, vig_pa, age, ses_score, drinks_per_week, ahei_score, dash_score, rs295849)
   ][, has_metabolomics := is.na(data$TOM_Id)
@@ -40,7 +40,7 @@ data[
 
 # Heatmap of mPCs vs. covars
 Note that not all samples contributed to the mPCs — only samples with measurements for all metabolomics methods CP/CN/HP/AN could be used in PCA.
-```{r hm, cache=2}
+```{r hm, cache=T, cache.depend=digest::digest(data)}
 heatmap_covars <- c(
   paste0('gPC', 1:11),
   'site', 'season', 'month',
@@ -69,7 +69,7 @@ Heatmap(-log10(p_mtx),
 ```
 
 Define covariate sets we'll want to test
-```{r covar-sets}
+```{r covar-sets, cache=T, cache.depend=digest::digest(data)}
 covar_sets <- list(
   site                    =c('site'                                                                                                                           ),
   `+sex`                  =c('site', 'sex'                                                                                                                    ),
@@ -83,7 +83,7 @@ covar_sets <- list(
 
 # Inspect Variable Transformations
 HDL vs various transformations of mvpa as in `gxe-omics` workspace's `preliminary-analysis.ipynb`
-```{r mvpa-tfs, cache=T}
+```{r mvpa-tfs, cache=2, cache.depend=digest::digest(data), fig.height=14, fig.width=10}
 data <- data[
   ][, mvpa_resid       := resid(lm(mvpa       ~ ., data[, .SD, .SDcols=covar_sets$`+gPCs`], na.action=na.exclude)),
   ][, mvpa_log_resid   := resid(lm(mvpa_log   ~ ., data[, .SD, .SDcols=covar_sets$`+gPCs`], na.action=na.exclude)),
@@ -91,17 +91,18 @@ data <- data[
   ][, mvpa_trunc_resid := resid(lm(mvpa_trunc ~ ., data[, .SD, .SDcols=covar_sets$`+gPCs`], na.action=na.exclude))
 ]
 
-rbind(data[, .(hdl, mvpa,           f='identity'   ) ],
-      data[, .(hdl, mvpa_resid,       'resid'      ) ],
-      data[, .(hdl, mvpa_log,         'log'        ) ],
-      data[, .(hdl, mvpa_log_resid,   'resid_log'  ) ],
-      data[, .(hdl, mvpa_wins,        'winsor'     ) ],
-      data[, .(hdl, mvpa_wins_resid,  'resid_wins' ) ],
-      data[, .(hdl, mvpa_trunc,       'trunc'      ) ],
-      data[, .(hdl, mvpa_trunc_resid, 'resid_trunc') ],
+rbind(data[, .(sex, hdl, mvpa,           f='identity'   ) ],
+      data[, .(sex, hdl, mvpa_resid,       'resid'      ) ],
+      data[, .(sex, hdl, mvpa_log,         'log'        ) ],
+      data[, .(sex, hdl, mvpa_log_resid,   'resid_log'  ) ],
+      data[, .(sex, hdl, mvpa_wins,        'winsor'     ) ],
+      data[, .(sex, hdl, mvpa_wins_resid,  'resid_wins' ) ],
+      data[, .(sex, hdl, mvpa_trunc,       'trunc'      ) ],
+      data[, .(sex, hdl, mvpa_trunc_resid, 'resid_trunc') ],
       use.names=F)[
     ][, f := factor(f,levels=unique(f)) ] |>
   ggplot(aes(x=mvpa, y=hdl)) +
+  geom_smooth(aes(color=sex), method = 'gam', formula = y ~ s(x, bs='cs'), se=T, na.rm=T) +
   geom_smooth(method = 'gam', formula = y ~ s(x, bs='cs'), se=T, na.rm=T) +
   facet_wrap(vars(f), ncol=2, scales='free')
 ```
@@ -110,7 +111,7 @@ rbind(data[, .(hdl, mvpa,           f='identity'   ) ],
 Strategy: run all lm models upfront and examine the results afterward.\
 One set of models we want to test is `mPC ~ pa_or_snp_variable + covar_set` for each possible combination of mPC1-10, untransformed PA or SNP variable, and covariate set. The point of this set of models is to see which covariates make the largest difference in the relationship between our variables of interest and the metabolomics, to help figure out which covariates to adjust for.\
 Another set of models is `hdl_log ~ pa_or_snp_variable_transformed + covar_set`, for each possible combination of PA or SNP variable, and covariate set. The point of this is to see the main effects, and also see which covariates make the largest difference in these main effects.
-```{r covar-sets, cache=T, fig.width=16, fig.height=10}
+```{r lms, cache=T, cache.depend=digest::digest(data)}
 # mPC ~ pa_or_snp + covars
 ys <- paste0('mPC',1:9)
 xs <- c('rs295849','pa_bin','pa','mod_pa','mvpa','vig_pa')
@@ -151,26 +152,29 @@ runs[
   ][, lm_coefs := NULL
   ][, fmlas := NULL
 ]
-
+```
+```{r lm-plot1, cache=2, cache.depends=digest::digest(data), fig.width=16, fig.height=10}
 ggplot(runs[grepl('mPC',ys)], aes(y=estimate, x=covar_sets, color=covar_sets)) +
   geom_point   (position=position_dodge(width=0.2)) +
   geom_errorbar(position=position_dodge(width=0.2), aes(ymin=l95,ymax=u95), width=0) +
   geom_hline(yintercept=0, color="gray") +
   scale_x_discrete(labels=NULL, breaks=NULL) + labs(x=NULL) +
   facet_grid(rows=vars(xs), cols=vars(ys), scales="free")
-
+```
+```{r lm-plot2, cache=2, cache.depends=digest::digest(data), fig.width=18, fig.height=3}
 ggplot(runs[grepl('hdl',ys)], aes(y=estimate, x=covar_sets, color=covar_sets)) +
   geom_point   (position=position_dodge(width=0.2)) +
   geom_errorbar(position=position_dodge(width=0.2), aes(ymin=l95,ymax=u95), width=0) +
   geom_hline(yintercept=0, color="gray") +
   scale_x_discrete(labels=NULL, breaks=NULL) + labs(x=NULL) +
   facet_grid(cols=vars(xs), scales="free")
-
+```
+```{r lm-plot3, cache=2, cache.depends=digest::digest(data), fig.width=12, fig.height=6}
 runs[ys=='hdl_log' &
      xs != 'rs295849' &
      covar_sets=='+race'
    ][order(-t)
-   ][, xs := factor(xs,levels=xs) # So that ggplot doesn't alphabetically order it
+   ][, xs := factor(xs,levels=xs) # So ggplot doesn't alphabetically order things
 ] |>
   ggplot(aes(x=xs, y=t)) +
   geom_bar(stat='identity')
@@ -193,9 +197,14 @@ data4hists_categ <- melt(data[, c('sex', ..vars2hist_categ)],
   measure.vars  = vars2hist_categ,
   variable.name = 'var',
   value.name    = 'val'
-)
+)[, val := factor(val,levels=c( # So ggplot doesn't alphabetically order thigns
+    '0','1','2',
+    'NEVER', 'FORMER', 'CURRENT',
+    'BLACK, AFRICAN-AMERICAN', 'CHINESE AMERICAN', 'HISPANIC', 'WHITE, CAUCASIAN',
+    'Missing', '< $5,000', '$5,000 - 7,999', '$8,000 - 11,999', '$12,000 - 15,999', '$16,000 - 19,999', '$20,000 - 24,999', '$25,000 - 29,999', '$30,000 - 34,999', '$35,000 - 39,999', '$40,000 - 49,999', '$50,000 - 74,999', '$75,000 - 99,999', '$100,000 +'
+))]
 ```
-```{r hist-quant, cache=2, message=F, warning=F}
+```{r hist-quant, cache=T, cache.extra=digest::digest(data4hists_quant), message=F, warning=F}
 ggplot(data4hists_quant, aes(x=val)) + 
   geom_histogram() +
   facet_wrap(vars(var), scales = 'free') +
@@ -208,7 +217,7 @@ ggplot(data4hists_quant, aes(x=val)) +
   ease_aes('sine-in-out') +
   theme_bw()
 ```
-```{r hist-categ, cache=2, message=F, warning=F}
+```{r hist-categ, cache=T, cache.depend=digest::digest(data4hists_categ), message=F, warning=F}
 ggplot(data4hists_categ, aes(x=val)) + 
   geom_histogram(stat='count') +
   facet_wrap(vars(var), scales = 'free') +
