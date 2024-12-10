@@ -13,7 +13,6 @@ library(circlize)
 library(ComplexHeatmap)
 library(data.table)
 library(ggplot2)
-library(gganimate)
 library(gtsummary)
 library(parallel)
 
@@ -24,8 +23,8 @@ data <- fread('analysis_df.csv')[metabolomics_exam==1] # Only Exam1 metabolomics
 # Summary table of relevant variables
 ```{r summary-tbl, cache=T, cache.depend=digest::digest(data)}
 data[
-  ][, .(bmi, race, smoking, income, sex, pa, mod_pa, mvpa, vig_pa, age, ses_score, drinks_per_week, ahei_score, dash_score, rs295849)
-  ][, has_metabolomics := is.na(data$TOM_Id)
+  ][, .(bmi, sex, pa, mod_pa, mvpa, vig_pa, age, ses_score, drinks_per_week, ahei_score, dash_score, rs295849)
+  ][, has_metabolomics := !is.na(data$TOM_Id)
   ][ is.na(sex), sex := 'Unknown'
   ] |>
   tbl_summary(
@@ -85,26 +84,31 @@ covar_sets <- list(
 HDL vs various transformations of mvpa as in `gxe-omics` workspace's `preliminary-analysis.ipynb`
 ```{r mvpa-tfs, cache=2, cache.depend=digest::digest(data), fig.height=14, fig.width=10}
 data <- data[
-  ][, mvpa_resid       := resid(lm(mvpa       ~ ., data[, .SD, .SDcols=covar_sets$`+gPCs`], na.action=na.exclude)),
-  ][, mvpa_log_resid   := resid(lm(mvpa_log   ~ ., data[, .SD, .SDcols=covar_sets$`+gPCs`], na.action=na.exclude)),
-  ][, mvpa_wins_resid  := resid(lm(mvpa_wins  ~ ., data[, .SD, .SDcols=covar_sets$`+gPCs`], na.action=na.exclude)),
-  ][, mvpa_trunc_resid := resid(lm(mvpa_trunc ~ ., data[, .SD, .SDcols=covar_sets$`+gPCs`], na.action=na.exclude))
+  ][, mvpa_resid             := resid(lm(mvpa       ~ ., data[, .SD, .SDcols=        covar_sets$`+gPCs`       ], na.action=na.exclude))
+  ][, mvpa_log_resid         := resid(lm(mvpa_log   ~ ., data[, .SD, .SDcols=        covar_sets$`+gPCs`       ], na.action=na.exclude))
+  ][, mvpa_wins_resid        := resid(lm(mvpa_wins  ~ ., data[, .SD, .SDcols=        covar_sets$`+gPCs`       ], na.action=na.exclude))
+  ][, mvpa_trunc_resid       := resid(lm(mvpa_trunc ~ ., data[, .SD, .SDcols=        covar_sets$`+gPCs`       ], na.action=na.exclude))
+  ][, mvpa_resid_nosex       := resid(lm(mvpa       ~ ., data[, .SD, .SDcols=setdiff(covar_sets$`+gPCs`,'sex')], na.action=na.exclude))
+  ][, mvpa_log_resid_nosex   := resid(lm(mvpa_log   ~ ., data[, .SD, .SDcols=setdiff(covar_sets$`+gPCs`,'sex')], na.action=na.exclude))
+  ][, mvpa_wins_resid_nosex  := resid(lm(mvpa_wins  ~ ., data[, .SD, .SDcols=setdiff(covar_sets$`+gPCs`,'sex')], na.action=na.exclude))
+  ][, mvpa_trunc_resid_nosex := resid(lm(mvpa_trunc ~ ., data[, .SD, .SDcols=setdiff(covar_sets$`+gPCs`,'sex')], na.action=na.exclude))
 ]
 
-rbind(data[, .(sex, hdl, mvpa,           f='identity'   ) ],
-      data[, .(sex, hdl, mvpa_resid,       'resid'      ) ],
-      data[, .(sex, hdl, mvpa_log,         'log'        ) ],
-      data[, .(sex, hdl, mvpa_log_resid,   'resid_log'  ) ],
-      data[, .(sex, hdl, mvpa_wins,        'winsor'     ) ],
-      data[, .(sex, hdl, mvpa_wins_resid,  'resid_wins' ) ],
-      data[, .(sex, hdl, mvpa_trunc,       'trunc'      ) ],
-      data[, .(sex, hdl, mvpa_trunc_resid, 'resid_trunc') ],
+rbind(data[, .(sex, hdl, d1=mvpa,            d2=mvpa,                 f='identity'   ) ],
+      data[, .(sex, hdl,    mvpa_resid,         mvpa_resid_nosex,       'resid'      ) ],
+      data[, .(sex, hdl,    mvpa_log,           mvpa_log,               'log'        ) ],
+      data[, .(sex, hdl,    mvpa_log_resid,     mvpa_log_resid_nosex,   'resid_log'  ) ],
+      data[, .(sex, hdl,    mvpa_wins,          mvpa_wins,              'winsor'     ) ],
+      data[, .(sex, hdl,    mvpa_wins_resid,    mvpa_wins_resid_nosex,  'resid_wins' ) ],
+      data[, .(sex, hdl,    mvpa_trunc,         mvpa_trunc,             'trunc'      ) ],
+      data[, .(sex, hdl,    mvpa_trunc_resid,   mvpa_trunc_resid_nosex, 'resid_trunc') ],
       use.names=F)[
     ][, f := factor(f,levels=unique(f)) ] |>
-  ggplot(aes(x=mvpa, y=hdl)) +
-  geom_smooth(aes(color=sex), method = 'gam', formula = y ~ s(x, bs='cs'), se=T, na.rm=T) +
-  geom_smooth(method = 'gam', formula = y ~ s(x, bs='cs'), se=T, na.rm=T) +
-  facet_wrap(vars(f), ncol=2, scales='free')
+  ggplot(aes(y=hdl)) +
+  geom_smooth(aes(x=d1           ), method = 'gam', formula = y ~ s(x, bs='cs'), se=T, na.rm=T) +
+  geom_smooth(aes(x=d2, color=sex), method = 'gam', formula = y ~ s(x, bs='cs'), se=T, na.rm=T) +
+  facet_wrap(vars(f), ncol=2, scales='free') +
+  ggtitle(label='Residuals from `mvpa_variable ~ covars_except_sex`')
 ```
 
 # Run models
@@ -172,7 +176,7 @@ ggplot(runs[grepl('hdl',ys)], aes(y=estimate, x=covar_sets, color=covar_sets)) +
 ```{r lm-plot3, cache=2, cache.depends=digest::digest(data), fig.width=12, fig.height=6}
 runs[ys=='hdl_log' &
      xs != 'rs295849' &
-     covar_sets=='+race'
+     covar_sets=='+gPCs'
    ][order(-t)
    ][, xs := factor(xs,levels=xs) # So ggplot doesn't alphabetically order things
 ] |>
@@ -182,7 +186,7 @@ runs[ys=='hdl_log' &
 
 # Histograms
 ```{r hist-prep, warning=F}
-vars2hist_quant <- c('bmi','pa','mod_pa','mvpa','vig_pa','age','ses_score','drinks_per_week','ahei_score','dash_score','hdl')
+vars2hist_quant <- c('bmi','pa','mod_pa','mvpa','vig_pa','age','ses_score','drinks_per_week','ahei_score','dash_score','hdl','hdl_log')
 data4hists_quant <- melt(data[, c('sex', ..vars2hist_quant)],
   measure.vars  = vars2hist_quant,
   variable.name = 'var',
@@ -204,27 +208,18 @@ data4hists_categ <- melt(data[, c('sex', ..vars2hist_categ)],
     'Missing', '< $5,000', '$5,000 - 7,999', '$8,000 - 11,999', '$12,000 - 15,999', '$16,000 - 19,999', '$20,000 - 24,999', '$25,000 - 29,999', '$30,000 - 34,999', '$35,000 - 39,999', '$40,000 - 49,999', '$50,000 - 74,999', '$75,000 - 99,999', '$100,000 +'
 ))]
 ```
-```{r hist-quant, cache=T, cache.extra=digest::digest(data4hists_quant), message=F, warning=F}
-ggplot(data4hists_quant, aes(x=val)) + 
-  geom_histogram() +
+```{r hist-quant, cache=T, cache.extra=digest::digest(data4hists_quant), message=F, warning=F, fig.width=16, fig.height=8}
+ggplot(data4hists_quant, aes(x=val, fill=sex)) + 
+  geom_density(alpha=0.5) +
   facet_wrap(vars(var), scales = 'free') +
-  geom_vline(aes(xintercept= means), color='red') +
-  geom_vline(aes(xintercept=`-1sd`), linetype='dashed') +
-  geom_vline(aes(xintercept=`+1sd`), linetype='dashed') +
-
-  transition_states(sex, transition_length = 0.2, state_length = 0.8) +
-  ggtitle('Sex: {closest_state}') +
-  ease_aes('sine-in-out') +
-  theme_bw()
+  geom_vline(aes(xintercept= means, color=sex)) +
+  geom_vline(aes(xintercept=`-1sd`, color=sex), linetype='dashed') +
+  geom_vline(aes(xintercept=`+1sd`, color=sex), linetype='dashed')
 ```
 ```{r hist-categ, cache=T, cache.depend=digest::digest(data4hists_categ), message=F, warning=F}
 ggplot(data4hists_categ, aes(x=val)) + 
-  geom_histogram(stat='count') +
+  geom_histogram(aes(fill=sex), stat='count', position='dodge', alpha=0.5) +
   facet_wrap(vars(var), scales = 'free') +
-
-  transition_states(sex, transition_length = 0.2, state_length = 0.8) +
-  ggtitle('Sex: {closest_state}') +
-  ease_aes('sine-in-out') +
   theme_bw() + theme(axis.text.x = element_text(angle=30, hjust=0.9))
 ```
 
