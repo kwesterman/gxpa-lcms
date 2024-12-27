@@ -112,7 +112,7 @@ mergecoalesce(by='mesa_id', all=T, force_coalesce=T,
   coalesce_samenames(force_coalesce=T)               |>
   melt(
     variable.name = 'exam',
-    value.name = c('TOM_Id','TOP_Id','TOE_Id', 'hdl', 'income','ses_score','ahei_score','dash_score','drinks_per_week','age','bmi','smoking','site', 'pa','mod_pa','mvpa','vig_pa'),
+    value.name = c('TOM_Id','TOP_Id','TOE_Id', 'hdl', 'income','ses_score','ahei_score','dash_score','drinks_per_week','age','bmi','smoking','site','season','month', 'pa','mod_pa','mvpa','vig_pa'),
     measure.vars = list(
       c(      'tomid1',   'tomid2',    'tomid3',    'tomid4',    'tomid5' ),
       c(      'topid1',   'topid2',    'topid3',    'topid4',    'topid5' ),
@@ -127,6 +127,8 @@ mergecoalesce(by='mesa_id', all=T, force_coalesce=T,
       c(        'bmi1c',    'bmi2c',     'bmi3c',     'bmi4c',     'bmi5c'),
       c(        'cig1c',    'cig2c',     'cig3c',     'cig4c',     'cig5c'),
       c(       'site1c',   'site2c',    'site3c',    'site4c',    'site5c'),
+      c(     'season1',  'season2',   'season3',   'season4',   'season5' ),
+      c(      'month1',   'month2',    'month3',    'month4',    'month5' ),
       c(     'exercm1c', 'exercm2c',  'exercm3c',      'NONE',  'exercm5c'),
       c(      'pamcm1c',  'pamcm2c',   'pamcm3c',      'NONE',   'pamcm5c'),
       c(     'pamvcm1c', 'pamvcm2c',  'pamvcm3c',      'NONE',  'pamvcm5c'),
@@ -222,6 +224,10 @@ data <- data[
   ][is.na(smoking) | smoking=='', smoking := 'NEVER'
   ][is.na(income)  |  income=='', income  := 'Missing'
 
+  ][is.na(site)    |    site=='', site    := 'Unknown'
+  ][is.na(month)   |   month=='', month   := 'Unknown'
+  ][is.na(season)  |  season=='', season  := 'Unknown' # All the same samples are missing season/month/site. 117 samps '', 21 sams NA. Should these be kept as 'Unknown' or discoarded? Only 2 have genotype data so doesn't relaly matter.
+
   ][, hdl_log   := log(hdl) 
   ][, race      := fifelse(race1c==1, 'WHITE, CAUCASIAN',
                    fifelse(race1c==2, 'CHINESE AMERICAN',
@@ -235,7 +241,9 @@ data <- data[
                    gsub(pattern=',', replacement='', fixed=T) |>
                    as.factor() # Treating income as unordered factor for simplicity, and b/c it might not have a monotonic relationship w/ outcomes.
   ][, education := factor(educ1,  levels=c('NO_SCHOOLING','GRADES 1-8','GRADES 9-11','COMPLETED HIGH SCHOOL/GED','SOME COLLEGE BUT NO DEGREE','ASSOCIATE DEGREE','TECHNICAL SCHOOL CERTIFICATE',"BACHELOR'S DEGREE",'GRADUATE OR PROFESSIONAL SCHOOL'))
-  ][, site      := factor(site,   levels=c('COL','JHU','NWU','UCLA','UMN','WFU'))
+  ][, season    := as.factor(season)
+  ][, month     := as.factor(month)
+  ][, site      := as.factor(site)
 
   ][, sex := fcoalesce(gender1,Sex,SEX) |>
         sub(pattern='0|^F.*', replacement='FEMALE', ignore.case=T) |>
