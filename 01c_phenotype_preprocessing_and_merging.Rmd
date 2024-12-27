@@ -92,64 +92,92 @@ coalesce_samenames <- \(dt, force_coalesce=F) {
 
 # Join all datasets
 ```{r join, cache=T}
+# TMP
+#tmp1 <- fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')
+#tmp2 <- fread('phenotypes/MESA_HDL_PA_covars_12345.csv') |>
+#  setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) |>
+#  coalesce_samenames()
+#sum(tmp1$sidno %in% tmp2$sidno)
+# TMP
+
 # Create one dt containing all the IDs we would ever want to annotate.
 # That is, TOM_Ids with metabolomics info, and mesa_ids with PA info. Note that one mesa_id may correspond to multiple TOM_Ids.
 # Then, can merge with impunity using all.x=T for everything, without fear of losing any info.
 data <-
-  merge(fread('phenotypes/primary_phenotypes.csv')           [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)],
-        fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')[, mesa_id := as.character(sidno)][, NWD_Id := fcoalesce(nwdid2,nwdid1)],
-        by='mesa_id', all=T) |>
-  melt(measure.vars=c('tomid1','tomid2','tomid3','tomid4','tomid5'),
-       variable.name='metabolomics_exam',
-       value.name='TOM_Id')
+mergecoalesce(by='mesa_id', all=T, force_coalesce=T,
+  fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')[, mesa_id := sidno],
+  fread('phenotypes/MESA_HDL_PA_covars_12345.csv')     [, mesa_id := `\\phs000209\\pht001116\\phv00084441\\sidno\\`]
+  )[,NONE:=NA][,mesa_id:=as.character(mesa_id)]      |> # Add an NA column, useful for filling in variables with no measurements in a MESA exam later.
+  setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) |> # Fixes some names e.g. '\phs000209\phv00084442\age1c\' -> 'age1c'
+  coalesce_samenames(force_coalesce=T)               |>
+  melt(
+    variable.name = 'exam',
+    value.name = c('TOM_Id','TOP_Id','TOE_Id', 'hdl', 'income','ses_score','ahei_score','dash_score','drinks_per_week','age','bmi','smoking','site', 'pa','mod_pa','mvpa','vig_pa'),
+    measure.vars = list(
+      c(      'tomid1',   'tomid2',    'tomid3',    'tomid4',    'tomid5' ),
+      c(      'topid1',   'topid2',    'topid3',    'topid4',    'topid5' ),
+      c(      'toeid1',   'toeid2',    'toeid3',    'toeid4',    'toeid5' ),
+      c(        'hdl1',     'hdl2',      'hdl3',      'hdl4',      'hdl5' ),
+      c(     'income1',  'income2',   'income3',      'NONE',   'income5' ),
+      c(    'F1_PC2_1', 'F1_PC2_2',  'F1_PC2_3',  'F1_PC2_4',  'F1_PC2_5' ),
+      c( 'ahei_2010_1'                                                    ),
+      c('dash_sodium1'                                                    ),
+      c(      'alcwk1c'                                                   ),
+      c(        'age1c',    'age2c',     'age3c',     'age4c',     'age5c'),
+      c(        'bmi1c',    'bmi2c',     'bmi3c',     'bmi4c',     'bmi5c'),
+      c(        'cig1c',    'cig2c',     'cig3c',     'cig4c',     'cig5c'),
+      c(       'site1c',   'site2c',    'site3c',    'site4c',    'site5c'),
+      c(     'exercm1c', 'exercm2c',  'exercm3c',      'NONE',  'exercm5c'),
+      c(      'pamcm1c',  'pamcm2c',   'pamcm3c',      'NONE',   'pamcm5c'),
+      c(     'pamvcm1c', 'pamvcm2c',  'pamvcm3c',      'NONE',  'pamvcm5c'),
+      c(      'pavcm1c',  'pavcm2c',   'pavcm3c',      'NONE',   'pavcm5c'))) |> suppressWarnings()
 data <- data[
-  ][!(duplicated(mesa_id) & is.na(TOM_Id)) # Melt also expanded rows where tomid#==NA. Rm these mesa_ids associated with multiple NA TOM_Ids.
-  ][is.na(TOM_Id), metabolomics_exam := NA
-  ][,              metabolomics_exam := sub('^tomid','',metabolomics_exam)
-]
+  ][ !(duplicated(mesa_id) & is.na(TOM_Id)) # Only keep 1 row per TOM_Id. Or, 1 row if a mesa_id has no TOM_Ids
+  ][, NWD_Id := fcoalesce(nwdid2,nwdid1)    # Merge NWD_Id (genotype ID) columns. Prefer the exam 2 genotype (more recent).
+]#[, c('TOM_Id','TOP_Id','TOE_Id', 'hdl', 'income','ses_score','ahei_score','dash_score','drinks_per_week','age','bmi','smoking','site', 'pa','mod_pa','mvpa','vig_pa','exam','NWD_Id','mesa_id')]
 
-data <- 
+data <-
 Reduce(\(x,l) mergecoalesce(x, l$y, by=l$by, force_coalesce=T, all.x=T),
   list(                x=data,
-    list(by='mesa_id', y=fread('phenotypes/covariates.csv')                             [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
-    list(by='mesa_id', y=fread('phenotypes/nmr_metabolites.csv')                        [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
-    list(by='mesa_id', y=fread('phenotypes/basic_phenotypes.csv')                       [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
-    list(by='mesa_id', y=fread('phenotypes/mesa5_phenos_diet.csv')                      [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
-    list(by='mesa_id', y=fread('phenotypes/mesa5_phenos_basic.csv')                     [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
-    list(by='mesa_id', y=fread('phenotypes/id_match_file.csv')                          [, mesa_id := as.character(Cohort_Specific_Id)][!duplicated(mesa_id)]                  ), # Duplicated mesa_ids due to TOR replicates. We aren't using RNAseq data so just pick whichever.
-    list(by='mesa_id', y=fread('phenotypes/freeze9b_sample_annot_2020-08-20.txt')       [, mesa_id := subject_id][!duplicated(mesa_id)]                                        ),
-    list(by='mesa_id', y=fread('phenotypes/SHARe_AncilMesaNMR_LP4_DS.txt')              [, mesa_id := as.character(subject_id)]                                                ),
-    list(by='mesa_id', y=setDT(read_excel('phenotypes/draw_dates_MESA_study_site.xlsx'))[, mesa_id := sidno]                                                                   ),
-    list(by= 'NWD_Id', y=fread('genotypes.csv')                                         [, NWD_Id := NWD_ID]                                                                   ),
-    list(by= 'NWD_Id', y=fread('phenotypes/freeze9_pcair_results.tsv')                  [, NWD_Id := sample.id]                                                                ),
-    list(by= 'TOM_Id', y=fread('metabolomics/sample_info.csv')                          [, TOM_Id := sample_id]                                                                ),
-    list(by= 'TOM_Id', y=fread('metabolomics/QCd/merged_QCd.csv')                                                                                                              )) # Merge metabolomics last b/c it adds tons of cols
+    list(by='mesa_id', y=fread('phenotypes/nmr_metabolites.csv')                 [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
+    list(by='mesa_id', y=fread('phenotypes/mesa5_phenos_diet.csv')               [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
+    list(by='mesa_id', y=fread('phenotypes/mesa5_phenos_basic.csv')              [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
+    list(by='mesa_id', y=fread('phenotypes/id_match_file.csv')                   [, mesa_id := as.character(Cohort_Specific_Id)][!duplicated(mesa_id)]                  ), # Duplicated mesa_ids due to TOR replicates. We aren't using RNAseq data so just pick whichever.
+    list(by='mesa_id', y=fread('phenotypes/freeze9b_sample_annot_2020-08-20.txt')[, mesa_id := subject_id][!duplicated(mesa_id)]                                        ),
+    list(by='mesa_id', y=fread('phenotypes/SHARe_AncilMesaNMR_LP4_DS.txt')       [, mesa_id := as.character(subject_id)]                                                ),
+    list(by= 'NWD_Id', y=fread('genotypes.csv')                                  [, NWD_Id := NWD_ID]                                                                   ),
+    list(by= 'NWD_Id', y=fread('phenotypes/freeze9_pcair_results.tsv')           [, NWD_Id := sample.id]                                                                ),
+    list(by= 'TOM_Id', y=fread('metabolomics/sample_info.csv')                   [, TOM_Id := sample_id]                                                                ),
+    list(by= 'TOM_Id', y=fread('metabolomics/QCd/merged_QCd.csv')                                                                                                       )) # Merge metabolomics last b/c it adds tons of cols
 )
 ```
 
 # Rename columns
 ```{r rename}
 data <- data |>
-setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) |> # Fixes some names e.g. '\\phs000209\\pht001116\\phv00084442\\age1c\\' -> 'age1c'
-setnames(\(nm) gsub(      '\\\\'     ,  '',   nm)) |> # Rm remaining backslashes
-setnames(\(nm)  sub('^PC'            , 'gPC', nm)) |> # 'PC#' -> 'gPC#' To distinguish genetic PCs from metabolite PCs we'll add later
-coalesce_samenames(force_coalesce=T)                  # Merge any columns whose names are now duplicated after renaming stuff
+  setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) |> # Fixes some names e.g. '\phs000209\phv00084442\age1c\' -> 'age1c'
+  setnames(\(nm) gsub(      '\\\\'     ,  '',   nm)) |> # Rm remaining backslashes
+  setnames(\(nm)  sub('^PC'            , 'gPC', nm)) |> # 'PC#' -> 'gPC#' To distinguish genetic PCs from metabolite PCs we'll add later
+  coalesce_samenames(force_coalesce=T)                  # Merge any columns whose names are now duplicated after renaming stuff
 data <- data[, `:=`(                                  # Manually pretty up some names
-   # SHARe...txt      #primary...csv    #nmr...csv           #covariates.csv           
-   HDL_C=nhdlc1,      hdl=hdl1,         HDL_C_lp3=nhdlc31c,  ses_score=F1_PC2_1,
-   HDL_P=chdlp1,      ldl=ldl1,         HDL_P_lp3= hdlp31c,  drinks_per_week=alcwkc1,
-   HDL_size=hdlz1,    chol=chol1,       HDL_size_lp3=hz31,   ahei_score=ahei_2010_1,
-   L_HDL_P=l_chdlp1,  tg=trig1,         L_HDL_P_lp3=hl31,    dash_score=dash_sodium1,
-   M_HDL_P=m_chdlp1,      pa=exercm1c,  M_HDL_P_lp3=hm31,
-   S_HDL_P=s_chdlp1,  mod_pa= pamcm1c,  S_HDL_P_lp3=hs31,    #basic...csv
-   H1P=h1p1,          vig_pa= pavcm1c,                       age=age1c,
-   H2P=h2p1,            mvpa=pamvcm1c,                       bmi=bmi1c,
-   H3P=h3p1,  #id_match_file.csv         #draw_dates...xlsx
-   H4P=h4p1,  prop_African=African,      month=`exam1:month`,   
-   H5P=h5p1,  prop_American=American,    season=`exam1:season`, 
-   H6P=h6p1,  prop_Eas_Asian=East_Asian,
-   H7P=h7p1,  prop_European=European
-)]
+   # SHARe...txt      #nmr...csv
+   HDL_C=nhdlc1,      HDL_C_lp3=nhdlc31c,
+   HDL_P=chdlp1,      HDL_P_lp3= hdlp31c,
+   HDL_size=hdlz1,    HDL_size_lp3=hz31,
+   L_HDL_P=l_chdlp1,  L_HDL_P_lp3=hl31,
+   M_HDL_P=m_chdlp1,  M_HDL_P_lp3=hm31,
+   S_HDL_P=s_chdlp1,  S_HDL_P_lp3=hs31,
+   H1P=h1p1,
+   H2P=h2p1,  #id_match_file.csv
+   H3P=h3p1,  prop_African=African,
+   H4P=h4p1,  prop_American=American,
+   H5P=h5p1,  prop_Eas_Asian=East_Asian,
+   H6P=h6p1,  prop_European=European,
+   H7P=h7p1
+)]#[, c('TOM_Id','TOP_Id','TOE_Id','NWD_Id','mesa_id', 'exam',
+  #     'income','ahei_score','dash_score','ses_score','drinks_per_week','smoking','educ1',
+  #     'age','bmi','site','race1c', 'gender1','Sex','SEX',
+  #     'hdl', 'rs295849', 'pa','mod_pa','mvpa','vig_pa')]
 ```
 
 # Edit columns
@@ -159,28 +187,26 @@ data <- data[, `:=`(                                  # Manually pretty up some 
 # We want winsorization/imputation to be based on data without duplicated individuals,
 # otherwise samples with more TOM_Ids would unfairly contribute more to quantiles, or medians, etc.
 # because their phenotype measurements would appear more than once.
-data_mesa_ids_unique <-
-  data[
-     # Deduplicate mesa_ids
-     # Now there is one unique individual per row. No person has repeater phenotype measurements.
-     ][ !duplicated(mesa_id)
+data_mesa_ids_unique <- data[
+  # Deduplicate mesa_ids
+  # Now there is one unique individual per row. No person has repeater phenotype measurements.
+  ][ !duplicated(mesa_id)
 
-     # Subset to only the phenotype cols we plan to edit. If we keep all columns, when merging later,
-     # TOM_Ids would get overwritten by the one-per-sample that was arbitrarily chosen when we deduplicated mesa_id above.
-     ][, .(mesa_id,
-           pa, mod_pa, vig_pa, mvpa,
-           ses_score, drinks_per_week, ahei_score, dash_score)
+  # Subset to only the phenotype cols we plan to edit. If we keep all columns, when merging later,
+  # all a sample's TOM_Ids would get overwritten by whichever single TOM_Id was arbitrarily chosen while deduplicating the mesa_ids. 
+  ][, .(mesa_id, pa,mod_pa,mvpa,vig_pa, ahei_score,dash_score,ses_score,drinks_per_week)
 
-     # PA variables: divide by 60 then winsorize to 5 SDs
-     ][, .SDcols=c('pa', 'mod_pa', 'vig_pa', 'mvpa'),
-                 c('pa', 'mod_pa', 'vig_pa', 'mvpa') :=
-          lapply(.SD, \(x) winsorizeBySd(x/60))
+  # PA variables: divide by 60 then winsorize to 5 SDs
+  ][, .SDcols=c('pa','mvpa','mod_pa','vig_pa'),
+              c('pa','mvpa','mod_pa','vig_pa') :=
+       lapply(.SD, \(x) winsorizeBySd(x/60))
 
-     # Select covariates: winsorize to 5 SDs then median-impute
-     ][, .SDcols = c('ses_score','drinks_per_week','ahei_score','dash_score'),
-                   c('ses_score','drinks_per_week','ahei_score','dash_score') :=
-         lapply( .SD, \(x) { x <- winsorizeBySd(x); fifelse(is.na(x), median(x,na.rm=T), x) })
-     ][, pa_bin := pa > 3.75
+  ][, pa_bin := pa > 3.75
+
+  # Select covariates: winsorize to 5 SDs then median-impute
+  ][, .SDcols = c('ahei_score','dash_score','ses_score','drinks_per_week'),
+                c('ahei_score','dash_score','ses_score','drinks_per_week') :=
+      lapply( .SD, \(x) { x <- winsorizeBySd(x); fifelse(is.na(x), median(x,na.rm=T), x) })
 ]
 
 # The first df's columns take precedence when coalescing.
@@ -193,27 +219,31 @@ winsor      <- \(v, bounds=quantile(v,c(0,0.9),na.rm=T)) pmin(pmax(v,bounds[1]),
 na_outliers <- \(v, bounds=quantile(v,c(0,0.9),na.rm=T)) fifelse(v<bounds[1] | v>bounds[2], NA, v)
 
 data <- data[
+  ][is.na(smoking) | smoking=='', smoking := 'NEVER'
+  ][is.na(income)  |  income=='', income  := 'Missing'
+
   ][, hdl_log   := log(hdl) 
   ][, race      := fifelse(race1c==1, 'WHITE, CAUCASIAN',
                    fifelse(race1c==2, 'CHINESE AMERICAN',
                    fifelse(race1c==3, 'BLACK, AFRICAN-AMERICAN',
-                   fifelse(race1c==4, 'HISPANIC', race1c)))) |>
-                   as.factor()
-  ][, site      := factor(site1c,  levels=3:8, labels=c('s3','s4','s5','s6','s7','s8'))
-  ][, smoking   := factor(cig1c,   levels=0:2, labels=c('NEVER','FORMER','CURRENT')) ## There's also a 'Smoking Status' column but it has no additional info, and it's not clear what exam it's from so I'm sticking with cig1c.
-  ][, income    := factor(income1, levels=c('< $5,000', '$5,000 - 7,999', '$8,000 - 11,999', '$12,000 - 15,999', '$16,000 - 19,999', '$20,000 - 24,999', '$25,000 - 29,999', '$30,000 - 34,999', '$35,000 - 39,999', '$40,000 - 49,999', '$50,000 - 74,999', '$75,000 - 99,999', '$100,000 +'))
-  ][, education := factor(educ1,   levels=c('NO_SCHOOLING','GRADES 1-8','GRADES 9-11','COMPLETED HIGH SCHOOL/GED','SOME COLLEGE BUT NO DEGREE','ASSOCIATE DEGREE','TECHNICAL SCHOOL CERTIFICATE',"BACHELOR'S DEGREE",'GRADUATE OR PROFESSIONAL SCHOOL'))
+                   fifelse(race1c==4, 'HISPANIC', race1c)))) |> as.factor()
+  ][, smoking   := fifelse(smoking==0, 'NEVER',
+                   fifelse(smoking==1, 'FORMER',
+                   fifelse(smoking==2, 'CURRENT', smoking))) |> as.factor()
+  ][, income    := income |>
+                   gsub(pattern='$', replacement='', fixed=T) |> # Harmonize inconsistent formatting ($1,000 / $1000 / 1000).
+                   gsub(pattern=',', replacement='', fixed=T) |>
+                   as.factor() # Treating income as unordered factor for simplicity, and b/c it might not have a monotonic relationship w/ outcomes.
+  ][, education := factor(educ1,  levels=c('NO_SCHOOLING','GRADES 1-8','GRADES 9-11','COMPLETED HIGH SCHOOL/GED','SOME COLLEGE BUT NO DEGREE','ASSOCIATE DEGREE','TECHNICAL SCHOOL CERTIFICATE',"BACHELOR'S DEGREE",'GRADUATE OR PROFESSIONAL SCHOOL'))
+  ][, site      := factor(site,   levels=c('COL','JHU','NWU','UCLA','UMN','WFU'))
 
   ][, sex := fcoalesce(gender1,Sex,SEX) |>
-        sub(pattern='^F.*', replacement='FEMALE', ignore.case=T) |>
-        sub(pattern='^M.*', replacement=  'MALE', ignore.case=T) |>
+        sub(pattern='0|^F.*', replacement='FEMALE', ignore.case=T) |>
+        sub(pattern='1|^M.*', replacement=  'MALE', ignore.case=T) |>
         factor(levels=c('FEMALE','MALE'))
       # There is an existing `sex` col in freeze9b_sample_annot_2020-08-20.txt,
       #   but it disagrees with the other `Sex`, `SEX`, and `gender1` cols. Ignoring it.
 
-  # Imputation
-  ][is.na(income),  income  := 'Missing'
-  ][is.na(smoking), smoking := 'NEVER'
 
   # Transformed variables
   ][,     pa_trunc := na_outliers(    pa)
@@ -239,9 +269,9 @@ PCA is intolerant to missing values, so we remove samples who have any missing v
 ```{r mPCA, cache=T}
 met_nms <- names(fread('metabolomics/QCd/merged_QCd.csv',nrows=0,drop=1))
 met_mtx <- data[
-   ][ rowSums(is.na(data[,..met_nms]))==0 # Only samples with data for ALL metabolomics methods CP/CN/HP/AN, because PCA can't handle NAs
-   ][ metabolomics_exam == 1
-   ][, c('TOM_Id', ..met_nms)
+  ][ rowSums(is.na(data[,..met_nms]))==0 # Only samples with data for ALL metabolomics methods CP/CN/HP/AN, because PCA can't handle NAs
+  ][ exam==1 # TODO concider a way to include all exams' met data into the PCs? mPCs only used for rough exploration to probably not important, but idk.
+  ][, c('TOM_Id', ..met_nms)
 ] |> as.matrix(rownames=1)
 
 pca <- prcomp(met_mtx, center=T, scale=T)
