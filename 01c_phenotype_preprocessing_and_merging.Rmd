@@ -112,27 +112,27 @@ mergecoalesce(by='mesa_id', all=T, force_coalesce=T,
   coalesce_samenames(force_coalesce=T)               |>
   melt(
     variable.name = 'exam',
-    value.name = c('TOM_Id','TOP_Id','TOE_Id', 'hdl', 'income','ses_score','ahei_score','dash_score','drinks_per_week','age','bmi','smoking','site','season','month', 'pa','mod_pa','mvpa','vig_pa'),
+    value.name = c('TOM_Id','TOP_Id','TOE_Id', 'hdl', 'season','month', 'income','ses_score','ahei_score','dash_score','drinks_per_week','age','bmi','smoking','site', 'pa','mod_pa','mvpa','vig_pa'),
     measure.vars = list(
-      c(      'tomid1',   'tomid2',    'tomid3',    'tomid4',    'tomid5' ),
-      c(      'topid1',   'topid2',    'topid3',    'topid4',    'topid5' ),
-      c(      'toeid1',   'toeid2',    'toeid3',    'toeid4',    'toeid5' ),
-      c(        'hdl1',     'hdl2',      'hdl3',      'hdl4',      'hdl5' ),
-      c(     'income1',  'income2',   'income3',      'NONE',   'income5' ),
-      c(    'F1_PC2_1', 'F1_PC2_2',  'F1_PC2_3',  'F1_PC2_4',  'F1_PC2_5' ),
-      c( 'ahei_2010_1'                                                    ),
-      c('dash_sodium1'                                                    ),
-      c(      'alcwk1c'                                                   ),
-      c(        'age1c',    'age2c',     'age3c',     'age4c',     'age5c'),
-      c(        'bmi1c',    'bmi2c',     'bmi3c',     'bmi4c',     'bmi5c'),
-      c(        'cig1c',    'cig2c',     'cig3c',     'cig4c',     'cig5c'),
-      c(       'site1c',   'site2c',    'site3c',    'site4c',    'site5c'),
-      c(     'season1',  'season2',   'season3',   'season4',   'season5' ),
-      c(      'month1',   'month2',    'month3',    'month4',    'month5' ),
-      c(     'exercm1c', 'exercm2c',  'exercm3c',      'NONE',  'exercm5c'),
-      c(      'pamcm1c',  'pamcm2c',   'pamcm3c',      'NONE',   'pamcm5c'),
-      c(     'pamvcm1c', 'pamvcm2c',  'pamvcm3c',      'NONE',  'pamvcm5c'),
-      c(      'pavcm1c',  'pavcm2c',   'pavcm3c',      'NONE',   'pavcm5c'))) |> suppressWarnings()
+      c(      'tomid1',       'tomid2',       'tomid3',       'tomid4',       'tomid5' ),
+      c(      'topid1',       'topid2',       'topid3',       'topid4',       'topid5' ),
+      c(      'toeid1',       'toeid2',       'toeid3',       'toeid4',       'toeid5' ),
+      c(        'hdl1',         'hdl2',         'hdl3',         'hdl4',         'hdl5' ),
+      c(     'season1',     'season2',       'season3',      'season4',      'season5' ),
+      c(      'month1',      'month2',        'month3',       'month4',       'month5' ),
+      c(     'income1',      'income2',      'income3',         'NONE',      'income5' ),
+      c(    'F1_PC2_1',     'F1_PC2_2',     'F1_PC2_3',     'F1_PC2_4',     'F1_PC2_5' ),
+      c( 'ahei_2010_1',  'ahei_2010_1',  'ahei_2010_1',  'ahei_2010_1',  'ahei_2010_1' ), # < These variables were only measured in exam 1.
+      c('dash_sodium1', 'dash_sodium1', 'dash_sodium1', 'dash_sodium1', 'dash_sodium1' ), # < We use the exam 1 value for all exams.
+      c(      'alcwk1c',      'alcwk1c',      'alcwk1c',      'alcwk1c',      'alcwk1c'), # <
+      c(        'age1c',       'age2c',         'age3c',        'age4c',        'age5c'),
+      c(        'bmi1c',       'bmi2c',         'bmi3c',        'bmi4c',        'bmi5c'),
+      c(        'cig1c',       'cig2c',         'cig3c',        'cig4c',        'cig5c'),
+      c(       'site1c',      'site2c',        'site3c',       'site4c',       'site5c'),
+      c(     'exercm1c',    'exercm2c',      'exercm3c',         'NONE',     'exercm5c'),
+      c(      'pamcm1c',     'pamcm2c',       'pamcm3c',         'NONE',      'pamcm5c'),
+      c(     'pamvcm1c',    'pamvcm2c',      'pamvcm3c',         'NONE',     'pamvcm5c'),
+      c(      'pavcm1c',     'pavcm2c',       'pavcm3c',         'NONE',      'pavcm5c'))) |> suppressWarnings()
 data <- data[
   ][ !(duplicated(mesa_id) & is.na(TOM_Id)) # Only keep 1 row per TOM_Id. Or, 1 row if a mesa_id has no TOM_Ids
   ][, NWD_Id := fcoalesce(nwdid2,nwdid1)    # Merge NWD_Id (genotype ID) columns. Prefer the exam 2 genotype (more recent).
@@ -182,45 +182,22 @@ data <- data[, `:=`(                                  # Manually pretty up some 
   #     'hdl', 'rs295849', 'pa','mod_pa','mvpa','vig_pa')]
 ```
 
-# Edit columns
-## Winsorization, median imputation
-```{r}
-# Data may have duplicated individuals, e.g. because some individuals have multiple TOM_Ids.
-# We want winsorization/imputation to be based on data without duplicated individuals,
-# otherwise samples with more TOM_Ids would unfairly contribute more to quantiles, or medians, etc.
-# because their phenotype measurements would appear more than once.
-data_mesa_ids_unique <- data[
-  # Deduplicate mesa_ids
-  # Now there is one unique individual per row. No person has repeater phenotype measurements.
-  ][ !duplicated(mesa_id)
-
-  # Subset to only the phenotype cols we plan to edit. If we keep all columns, when merging later,
-  # all a sample's TOM_Ids would get overwritten by whichever single TOM_Id was arbitrarily chosen while deduplicating the mesa_ids. 
-  ][, .(mesa_id, pa,mod_pa,mvpa,vig_pa, ahei_score,dash_score,ses_score,drinks_per_week)
-
-  # PA variables: divide by 60 then winsorize to 5 SDs
-  ][, .SDcols=c('pa','mvpa','mod_pa','vig_pa'),
-              c('pa','mvpa','mod_pa','vig_pa') :=
-       lapply(.SD, \(x) winsorizeBySd(x/60))
-
-  ][, pa_bin := pa > 3.75
-
-  # Select covariates: winsorize to 5 SDs then median-impute
-  ][, .SDcols = c('ahei_score','dash_score','ses_score','drinks_per_week'),
-                c('ahei_score','dash_score','ses_score','drinks_per_week') :=
-      lapply( .SD, \(x) { x <- winsorizeBySd(x); fifelse(is.na(x), median(x,na.rm=T), x) })
-]
-
-# The first df's columns take precedence when coalescing.
-data <- mergecoalesce(data_mesa_ids_unique, data, all.y=T, by='mesa_id', force_coalesce=T)
-```
-
-## Conversion to factors, imputation, transformed PA variables.
+## Winsorization, imputation, transformation
 ```{r factorize-impute}
 winsor      <- \(v, bounds=quantile(v,c(0,0.9),na.rm=T)) pmin(pmax(v,bounds[1]),bounds[2])
 na_outliers <- \(v, bounds=quantile(v,c(0,0.9),na.rm=T)) fifelse(v<bounds[1] | v>bounds[2], NA, v)
 
 data <- data[
+  # Winsorization and imputation
+  ][, .SDcols = c('ahei_score','dash_score','ses_score','drinks_per_week'),
+                c('ahei_score','dash_score','ses_score','drinks_per_week') :=
+      lapply( .SD, \(x) { x <- winsorizeBySd(x); fifelse(is.na(x), median(x,na.rm=T), x) })
+
+  ][, .SDcols=c('pa','mvpa','mod_pa','vig_pa'),
+              c('pa','mvpa','mod_pa','vig_pa') :=
+       lapply(.SD, \(x) winsorizeBySd(x/60))
+     # TODO some sort of imputation for exam 4 PA variables
+
   ][is.na(smoking) | smoking=='', smoking := 'NEVER'
   ][is.na(income)  |  income=='', income  := 'Missing'
 
@@ -228,6 +205,8 @@ data <- data[
   ][is.na(month)   |   month=='', month   := 'Unknown'
   ][is.na(season)  |  season=='', season  := 'Unknown' # All the same samples are missing season/month/site. 117 samps '', 21 sams NA. Should these be kept as 'Unknown' or discoarded? Only 2 have genotype data so doesn't relaly matter.
 
+  # Definitions
+  ][, pa_bin    := pa > 3.75
   ][, hdl_log   := log(hdl) 
   ][, race      := fifelse(race1c==1, 'WHITE, CAUCASIAN',
                    fifelse(race1c==2, 'CHINESE AMERICAN',
@@ -252,8 +231,7 @@ data <- data[
       # There is an existing `sex` col in freeze9b_sample_annot_2020-08-20.txt,
       #   but it disagrees with the other `Sex`, `SEX`, and `gender1` cols. Ignoring it.
 
-
-  # Transformed variables
+  # Transformed PA variables
   ][,     pa_trunc := na_outliers(    pa)
   ][,   mvpa_trunc := na_outliers(  mvpa)
   ][, mod_pa_trunc := na_outliers(mod_pa)
