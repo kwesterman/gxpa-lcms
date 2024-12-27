@@ -17,13 +17,13 @@ library(gtsummary)
 library(parallel)
 
 options(datatable.na.strings=c('NA',''))
-data <- fread('analysis_df.csv')[metabolomics_exam==1] # Only Exam1 metabolomics individuals
+data <- fread('analysis_df.csv')[,exam:=as.factor(exam)]
 ```
 
 # Summary table of relevant variables
 ```{r summary-tbl, cache=T, cache.depend=digest::digest(data)}
 data[
-  ][, .(bmi, sex, pa, mod_pa, mvpa, vig_pa, age, ses_score, drinks_per_week, ahei_score, dash_score, rs295849)
+  ][, .(age, bmi, sex, pa, mod_pa, mvpa, vig_pa, ahei_score, dash_score, ses_score, drinks_per_week, rs295849)
   ][, has_metabolomics := !is.na(data$TOM_Id)
   ][ is.na(sex), sex := 'Unknown'
   ] |>
@@ -44,7 +44,7 @@ heatmap_covars <- c(
   paste0('gPC', 1:11),
   'site', 'season', 'month',
   'age', 'bmi', 'sex', 'race',
-  'ses_score', 'ahei_score', 'dash_score',
+  'ahei_score', 'dash_score', 'ses_score', 
   'income', 'drinks_per_week', 'smoking')
 
 runs <- CJ(heatmap_covars, mPC=paste0('mPC',1:20), sorted=F)[
@@ -83,28 +83,29 @@ covar_sets <- list(
 # Inspect Variable Transformations
 HDL vs various transformations of mvpa as in `gxe-omics` workspace's `preliminary-analysis.ipynb`
 ```{r mvpa-tfs, cache=2, cache.depend=digest::digest(data), fig.height=14, fig.width=10}
-data <- data[
-  ][, mvpa_resid             := resid(lm(mvpa       ~ ., data[, .SD, .SDcols=        covar_sets$`+gPCs`       ], na.action=na.exclude))
-  ][, mvpa_log_resid         := resid(lm(mvpa_log   ~ ., data[, .SD, .SDcols=        covar_sets$`+gPCs`       ], na.action=na.exclude))
-  ][, mvpa_wins_resid        := resid(lm(mvpa_wins  ~ ., data[, .SD, .SDcols=        covar_sets$`+gPCs`       ], na.action=na.exclude))
-  ][, mvpa_trunc_resid       := resid(lm(mvpa_trunc ~ ., data[, .SD, .SDcols=        covar_sets$`+gPCs`       ], na.action=na.exclude))
-  ][, mvpa_resid_nosex       := resid(lm(mvpa       ~ ., data[, .SD, .SDcols=setdiff(covar_sets$`+gPCs`,'sex')], na.action=na.exclude))
-  ][, mvpa_log_resid_nosex   := resid(lm(mvpa_log   ~ ., data[, .SD, .SDcols=setdiff(covar_sets$`+gPCs`,'sex')], na.action=na.exclude))
-  ][, mvpa_wins_resid_nosex  := resid(lm(mvpa_wins  ~ ., data[, .SD, .SDcols=setdiff(covar_sets$`+gPCs`,'sex')], na.action=na.exclude))
-  ][, mvpa_trunc_resid_nosex := resid(lm(mvpa_trunc ~ ., data[, .SD, .SDcols=setdiff(covar_sets$`+gPCs`,'sex')], na.action=na.exclude))
+tmp <- data[exam==1]
+tmp <- tmp[
+  ][, mvpa_resid             := resid(lm(mvpa       ~ ., tmp[, .SD, .SDcols=        covar_sets$`+gPCs`       ], na.action=na.exclude))
+  ][, mvpa_log_resid         := resid(lm(mvpa_log   ~ ., tmp[, .SD, .SDcols=        covar_sets$`+gPCs`       ], na.action=na.exclude))
+  ][, mvpa_wins_resid        := resid(lm(mvpa_wins  ~ ., tmp[, .SD, .SDcols=        covar_sets$`+gPCs`       ], na.action=na.exclude))
+  ][, mvpa_trunc_resid       := resid(lm(mvpa_trunc ~ ., tmp[, .SD, .SDcols=        covar_sets$`+gPCs`       ], na.action=na.exclude))
+  ][, mvpa_resid_nosex       := resid(lm(mvpa       ~ ., tmp[, .SD, .SDcols=setdiff(covar_sets$`+gPCs`,'sex')], na.action=na.exclude))
+  ][, mvpa_log_resid_nosex   := resid(lm(mvpa_log   ~ ., tmp[, .SD, .SDcols=setdiff(covar_sets$`+gPCs`,'sex')], na.action=na.exclude))
+  ][, mvpa_wins_resid_nosex  := resid(lm(mvpa_wins  ~ ., tmp[, .SD, .SDcols=setdiff(covar_sets$`+gPCs`,'sex')], na.action=na.exclude))
+  ][, mvpa_trunc_resid_nosex := resid(lm(mvpa_trunc ~ ., tmp[, .SD, .SDcols=setdiff(covar_sets$`+gPCs`,'sex')], na.action=na.exclude))
 ]
 
-rbind(data[, .(sex, hdl, d1=mvpa,            d2=mvpa,                 f='identity'   ) ],
-      data[, .(sex, hdl,    mvpa_resid,         mvpa_resid_nosex,       'resid'      ) ],
-      data[, .(sex, hdl,    mvpa_log,           mvpa_log,               'log'        ) ],
-      data[, .(sex, hdl,    mvpa_log_resid,     mvpa_log_resid_nosex,   'resid_log'  ) ],
-      data[, .(sex, hdl,    mvpa_wins,          mvpa_wins,              'winsor'     ) ],
-      data[, .(sex, hdl,    mvpa_wins_resid,    mvpa_wins_resid_nosex,  'resid_wins' ) ],
-      data[, .(sex, hdl,    mvpa_trunc,         mvpa_trunc,             'trunc'      ) ],
-      data[, .(sex, hdl,    mvpa_trunc_resid,   mvpa_trunc_resid_nosex, 'resid_trunc') ],
+rbind(tmp[, .(sex, hdl_log, d1=mvpa,            d2=mvpa,                 f='identity'   ) ],
+      tmp[, .(sex, hdl_log,    mvpa_resid,         mvpa_resid_nosex,       'resid'      ) ],
+      tmp[, .(sex, hdl_log,    mvpa_log,           mvpa_log,               'log'        ) ],
+      tmp[, .(sex, hdl_log,    mvpa_log_resid,     mvpa_log_resid_nosex,   'resid_log'  ) ],
+      tmp[, .(sex, hdl_log,    mvpa_wins,          mvpa_wins,              'winsor'     ) ],
+      tmp[, .(sex, hdl_log,    mvpa_wins_resid,    mvpa_wins_resid_nosex,  'resid_wins' ) ],
+      tmp[, .(sex, hdl_log,    mvpa_trunc,         mvpa_trunc,             'trunc'      ) ],
+      tmp[, .(sex, hdl_log,    mvpa_trunc_resid,   mvpa_trunc_resid_nosex, 'resid_trunc') ],
       use.names=F)[
     ][, f := factor(f,levels=unique(f)) ] |>
-  ggplot(aes(y=hdl)) +
+  ggplot(aes(y=hdl_log)) +
   geom_smooth(aes(x=d1           ), method = 'gam', formula = y ~ s(x, bs='cs'), se=T, na.rm=T) +
   geom_smooth(aes(x=d2, color=sex), method = 'gam', formula = y ~ s(x, bs='cs'), se=T, na.rm=T) +
   facet_wrap(vars(f), ncol=2, scales='free') +
@@ -135,7 +136,7 @@ runs <- runs[, fmlas := paste0('scale(',ys,')','~','scale(',xs,')','+',sapply(co
 
 runs[
   ][, lm_coefs := mcmapply(fmlas, FUN = \(fmla)
-        lm(fmla,data) |> (\(model) summary(model)$coefficients)(),
+        lm(fmla,data[exam==1]) |> (\(model) summary(model)$coefficients)(),
       SIMPLIFY=F,     # ↑ Pipe into a function to extract only the coefs. Don't need
       mc.cores=4)     #   all of lm's output. Keeping everything eats up a lot of memory.
   # Extract the results we want
@@ -186,18 +187,21 @@ runs[ys=='hdl_log' &
 
 # Histograms
 ```{r hist-prep, warning=F}
-vars2hist_quant <- c('bmi','pa','mod_pa','mvpa','vig_pa','age','ses_score','drinks_per_week','ahei_score','dash_score','hdl','hdl_log')
-data4hists_quant <- melt(data[, c('sex', ..vars2hist_quant)],
+vars2hist_quant <- c('pa','mod_pa','mvpa','vig_pa', 'age','bmi','ahei_score','dash_score','ses_score','drinks_per_week', 'hdl','hdl_log')
+data2hist_quant <- melt(data[, c('exam','sex', ..vars2hist_quant)],
   measure.vars  = vars2hist_quant,
   variable.name = 'var',
   value.name    = 'val'
-)[, means := mean(val,na.rm=T),       by=.(var,sex)
-][, `-1sd`:= means - sd(val,na.rm=T), by=.(var,sex)
-][, `+1sd`:= means + sd(val,na.rm=T), by=.(var,sex)
+)[, exam_means := mean(val,na.rm=T),            by=.(var,exam)
+][, `exam_-1sd`:= exam_means - sd(val,na.rm=T), by=.(var,exam)
+][, `exam_+1sd`:= exam_means + sd(val,na.rm=T), by=.(var,exam)
+][, sex_means := mean(val,na.rm=T),           by=.(var,sex)
+][, `sex_-1sd`:= sex_means - sd(val,na.rm=T), by=.(var,sex)
+][, `sex_+1sd`:= sex_means + sd(val,na.rm=T), by=.(var,sex)
 ]
 
 vars2hist_categ <- c('race','smoking','income','rs295849')
-data4hists_categ <- melt(data[, c('sex', ..vars2hist_categ)],
+data2hist_categ <- melt(data[, c('exam','sex', ..vars2hist_categ)],
   measure.vars  = vars2hist_categ,
   variable.name = 'var',
   value.name    = 'val'
@@ -205,21 +209,28 @@ data4hists_categ <- melt(data[, c('sex', ..vars2hist_categ)],
     '0','1','2',
     'NEVER', 'FORMER', 'CURRENT',
     'BLACK, AFRICAN-AMERICAN', 'CHINESE AMERICAN', 'HISPANIC', 'WHITE, CAUCASIAN',
-    'Missing', '< $5,000', '$5,000 - 7,999', '$8,000 - 11,999', '$12,000 - 15,999', '$16,000 - 19,999', '$20,000 - 24,999', '$25,000 - 29,999', '$30,000 - 34,999', '$35,000 - 39,999', '$40,000 - 49,999', '$50,000 - 74,999', '$75,000 - 99,999', '$100,000 +'
+    'Missing', '< 5000', '5000 - 7999', '8000 - 11999', '12000 - 15999', '16000 - 19999', '20000 - 24999', '25000 - 29999', '30000 - 34999', '35000 - 39999', '40000 - 49999', '50000 - 74999', '75000 - 99999', '100000 +', '100000 - 124999', '125000 - 149999', '150000 OR MORE'
 ))]
 ```
 ```{r hist-quant, cache=T, cache.extra=digest::digest(data4hists_quant), message=F, warning=F, fig.width=16, fig.height=8}
-ggplot(data4hists_quant, aes(x=val, fill=sex)) + 
-  geom_density(alpha=0.5) +
+ggplot(data2hist_quant, aes(x=val, fill=sex)) +
+  geom_density(alpha=0.3) +
   facet_wrap(vars(var), scales = 'free') +
-  geom_vline(aes(xintercept= means, color=sex)) +
-  geom_vline(aes(xintercept=`-1sd`, color=sex), linetype='dashed') +
-  geom_vline(aes(xintercept=`+1sd`, color=sex), linetype='dashed')
+  geom_vline(aes(xintercept= sex_means, color=sex)) +
+  geom_vline(aes(xintercept=`sex_-1sd`, color=sex), linetype='dashed') +
+  geom_vline(aes(xintercept=`sex_+1sd`, color=sex), linetype='dashed')
+
+ggplot(data2hist_quant, aes(x=val, fill=exam)) +
+  geom_density(alpha=0.3) +
+  facet_wrap(vars(var), scales = 'free') +
+  geom_vline(aes(xintercept= exam_means, color=exam)) +
+  geom_vline(aes(xintercept=`exam_-1sd`, color=exam), linetype='dashed') +
+  geom_vline(aes(xintercept=`exam_+1sd`, color=exam), linetype='dashed')
 ```
-```{r hist-categ, cache=T, cache.depend=digest::digest(data4hists_categ), message=F, warning=F}
-ggplot(data4hists_categ, aes(x=val)) + 
+```{r hist-categ, cache=T, cache.depend=digest::digest(data4hists_categ), message=F, warning=F, fig.width=16}
+ggplot(data2hist_categ, aes(x=val)) + 
   geom_histogram(aes(fill=sex), stat='count', position='dodge', alpha=0.5) +
-  facet_wrap(vars(var), scales = 'free') +
+  facet_wrap(vars(var), nrow=1, scales = 'free') +
   theme_bw() + theme(axis.text.x = element_text(angle=30, hjust=0.9))
 ```
 
