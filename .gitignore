@@ -15,3 +15,4 @@ bcftools/
 *.vcf
 *.bcf
 *.png
+*.RData

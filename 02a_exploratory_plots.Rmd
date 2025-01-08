@@ -212,7 +212,7 @@ data2hist_categ <- melt(data[, c('exam','sex', ..vars2hist_categ)],
     'Missing', '< 5000', '5000 - 7999', '8000 - 11999', '12000 - 15999', '16000 - 19999', '20000 - 24999', '25000 - 29999', '30000 - 34999', '35000 - 39999', '40000 - 49999', '50000 - 74999', '75000 - 99999', '100000 +', '100000 - 124999', '125000 - 149999', '150000 OR MORE'
 ))]
 ```
-```{r hist-quant, cache=T, cache.extra=digest::digest(data4hists_quant), message=F, warning=F, fig.width=16, fig.height=8}
+```{r hist-quant, cache=T, cache.extra=digest::digest(data2hist_quant), message=F, warning=F, fig.width=16, fig.height=8}
 ggplot(data2hist_quant, aes(x=val, fill=sex)) +
   geom_density(alpha=0.3) +
   facet_wrap(vars(var), scales = 'free') +
@@ -227,7 +227,7 @@ ggplot(data2hist_quant, aes(x=val, fill=exam)) +
   geom_vline(aes(xintercept=`exam_-1sd`, color=exam), linetype='dashed') +
   geom_vline(aes(xintercept=`exam_+1sd`, color=exam), linetype='dashed')
 ```
-```{r hist-categ, cache=T, cache.depend=digest::digest(data4hists_categ), message=F, warning=F, fig.width=16}
+```{r hist-categ, cache=T, cache.depend=digest::digest(data2hist_categ), message=F, warning=F, fig.width=16}
 ggplot(data2hist_categ, aes(x=val)) + 
   geom_histogram(aes(fill=sex), stat='count', position='dodge', alpha=0.5) +
   facet_wrap(vars(var), nrow=1, scales = 'free') +
