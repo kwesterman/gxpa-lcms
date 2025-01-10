@@ -107,24 +107,24 @@ data <-
 mergecoalesce(by='mesa_id', all=T, force_coalesce=T,
   fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')[, mesa_id := sidno],
   fread('phenotypes/MESA_HDL_PA_covars_12345.csv')     [, mesa_id := `\\phs000209\\pht001116\\phv00084441\\sidno\\`]
-  )[,NONE:=NA][,mesa_id:=as.character(mesa_id)]      |> # Add an NA column, useful for filling in variables with no measurements in a MESA exam later.
+  )[,NONE:=NA][,mesa_id:=as.character(mesa_id)]      |> # Add an NA column, will be useful to fill variables with no measurements for a particular MESA exam.
   setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) |> # Fixes some names e.g. '\phs000209\phv00084442\age1c\' -> 'age1c'
   coalesce_samenames(force_coalesce=T)               |>
   melt(
     variable.name = 'exam',
     value.name = c('TOM_Id','TOP_Id','TOE_Id', 'hdl', 'season','month', 'income','ses_score','ahei_score','dash_score','drinks_per_week','age','bmi','smoking','site', 'pa','mod_pa','mvpa','vig_pa'),
     measure.vars = list(
-      c(      'tomid1',       'tomid2',       'tomid3',       'tomid4',       'tomid5' ),
-      c(      'topid1',       'topid2',       'topid3',       'topid4',       'topid5' ),
-      c(      'toeid1',       'toeid2',       'toeid3',       'toeid4',       'toeid5' ),
-      c(        'hdl1',         'hdl2',         'hdl3',         'hdl4',         'hdl5' ),
+      c(      'tomid1',      'tomid2',        'tomid3',       'tomid4',       'tomid5' ),
+      c(      'topid1',      'topid2',        'topid3',       'topid4',       'topid5' ),
+      c(      'toeid1',      'toeid2',        'toeid3',       'toeid4',       'toeid5' ),
+      c(        'hdl1',        'hdl2',          'hdl3',         'hdl4',         'hdl5' ),
       c(     'season1',     'season2',       'season3',      'season4',      'season5' ),
       c(      'month1',      'month2',        'month3',       'month4',       'month5' ),
-      c(     'income1',      'income2',      'income3',         'NONE',      'income5' ),
-      c(    'F1_PC2_1',     'F1_PC2_2',     'F1_PC2_3',     'F1_PC2_4',     'F1_PC2_5' ),
-      c( 'ahei_2010_1',  'ahei_2010_1',  'ahei_2010_1',  'ahei_2010_1',  'ahei_2010_1' ), # < These variables were only measured in exam 1.
-      c('dash_sodium1', 'dash_sodium1', 'dash_sodium1', 'dash_sodium1', 'dash_sodium1' ), # < We use the exam 1 value for all exams.
-      c(      'alcwk1c',      'alcwk1c',      'alcwk1c',      'alcwk1c',      'alcwk1c'), # <
+      c(     'income1',     'income2',       'income3',         'NONE',      'income5' ),
+      c(    'F1_PC2_1',    'F1_PC2_2',      'F1_PC2_3',     'F1_PC2_4',     'F1_PC2_5' ),
+      c( 'ahei_2010_1',         'NONE',         'NONE',         'NONE',         'NONE' ),
+      c('dash_sodium1',         'NONE',         'NONE',         'NONE',         'NONE' ),
+      c(      'alcwk1c',        'NONE',         'NONE',         'NONE',         'NONE' ),
       c(        'age1c',       'age2c',         'age3c',        'age4c',        'age5c'),
       c(        'bmi1c',       'bmi2c',         'bmi3c',        'bmi4c',        'bmi5c'),
       c(        'cig1c',       'cig2c',         'cig3c',        'cig4c',        'cig5c'),
@@ -178,7 +178,7 @@ data <- data[, `:=`(                                  # Manually pretty up some 
    H7P=h7p1
 )]#[, c('TOM_Id','TOP_Id','TOE_Id','NWD_Id','mesa_id', 'exam',
   #     'income','ahei_score','dash_score','ses_score','drinks_per_week','smoking','educ1',
-  #     'age','bmi','site','race1c', 'gender1','Sex','SEX',
+  #     'age','bmi','season','month','site','race1c', 'gender1','Sex','SEX',
   #     'hdl', 'rs295849', 'pa','mod_pa','mvpa','vig_pa')]
 ```
 
@@ -186,24 +186,46 @@ data <- data[, `:=`(                                  # Manually pretty up some 
 ```{r factorize-impute}
 winsor      <- \(v, bounds=quantile(v,c(0,0.9),na.rm=T)) pmin(pmax(v,bounds[1]),bounds[2])
 na_outliers <- \(v, bounds=quantile(v,c(0,0.9),na.rm=T)) fifelse(v<bounds[1] | v>bounds[2], NA, v)
+nafill2 <- \(x) c(NA,x[!is.na(x)])[cumsum(!is.na(x))+1] # nafill(type='locf') but can handle non-numeric
 
+setorder(data,exam)
 data <- data[
-  # Winsorization and imputation
-  ][, .SDcols = c('ahei_score','dash_score','ses_score','drinks_per_week'),
-                c('ahei_score','dash_score','ses_score','drinks_per_week') :=
-      lapply( .SD, \(x) { x <- winsorizeBySd(x); fifelse(is.na(x), median(x,na.rm=T), x) })
-
+  # Winsorization
   ][, .SDcols=c('pa','mvpa','mod_pa','vig_pa'),
-              c('pa','mvpa','mod_pa','vig_pa') :=
-       lapply(.SD, \(x) winsorizeBySd(x/60))
-     # TODO some sort of imputation for exam 4 PA variables
+      names(.SD) := lapply(.SD, \(x) winsorizeBySd(x/60))
+  ][, .SDcols = c('bmi','ahei_score','dash_score','ses_score','drinks_per_week'),
+      names(.SD) := lapply(.SD, \(x) winsorizeBySd(x   ))
 
-  ][is.na(smoking) | smoking=='', smoking := 'NEVER'
-  ][is.na(income)  |  income=='', income  := 'Missing'
+  # (Median) imputation of covariates if not present in any exam (i.e. not present in exam 1)
+  # (Making sure to take the median of the original set of non-missing values, NOT recalculating the median after each imputation!)
+  ][, {  #age_median <<- median(            age, na.rm=T);
+         #bmi_median <<- median(            bmi, na.rm=T);
+        ahei_median <<- median(     ahei_score, na.rm=T);
+         ses_median <<- median(      ses_score, na.rm=T);
+        dash_median <<- median(     dash_score, na.rm=T);
+       drink_median <<- median(drinks_per_week, na.rm=T); .SD }
 
-  ][is.na(site)    |    site=='', site    := 'Unknown'
-  ][is.na(month)   |   month=='', month   := 'Unknown'
-  ][is.na(season)  |  season=='', season  := 'Unknown' # All the same samples are missing season/month/site. 117 samps '', 21 sams NA. Should these be kept as 'Unknown' or discoarded? Only 2 have genotype data so doesn't relaly matter.
+  #][ exam==1 & is.na(            age),             age :=   age_median # No median imputation for age nor bmi
+  #][ exam==1 & is.na(            bmi),             bmi :=   bmi_median
+  ][ exam==1 & is.na(     ahei_score),      ahei_score :=  ahei_median
+  ][ exam==1 & is.na(      ses_score),       ses_score :=   ses_median
+  ][ exam==1 & is.na(     dash_score),      dash_score :=  dash_median
+  ][ exam==1 & is.na(drinks_per_week), drinks_per_week := drink_median
+
+  ][ exam==1 & is.na(smoking) | smoking=='', smoking := 'NEVER'
+  ][ exam==1 & is.na(income)  |  income=='', income  := 'Missing'
+  ][ exam==1 & is.na(season)  |  season=='', season  := 'Unknown' # All the same samples are missing season/month/site. 117 samps '', 21 sams NA. Should these be kept as 'Unknown' or discoarded? Only 2 have genotype data so doesn't relaly matter.
+  ][ exam==1 & is.na(month)   |   month=='', month   := 'Unknown'
+  ][ exam==1 & is.na(site)    |    site=='', site    := 'Unknown'
+
+  # Carry-over-from-previous-exam imputation (this is why we setorder()'d by exam before
+  ][, .SDcols=c('pa','mvpa','mod_pa','vig_pa',
+                'age', # Technically we have the information to impute this more accurately but I am too lazy and it's only for 117 samples
+                'bmi','sex',
+                'ahei_score','dash_score','ses_score','drinks_per_week',
+                'smoking','income','site','month','season'),
+      names(.SD) := lapply(.SD, nafill2), # We preiviously setorder()'d by exam so this will fill exams in starting from the first.
+      by=mesa_id
 
   # Definitions
   ][, pa_bin    := pa > 3.75
