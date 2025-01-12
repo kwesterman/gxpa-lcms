@@ -59,8 +59,6 @@ Models:
 p_thresh_mwas <- 0.05/calc_eff_n_metabolites(mwas[,unique_met_id])
 
 i <- 0
-#replicate(3,{
-#t0<-Sys.time()
 mwas <- mwas[
   # Define all the formulas for the models we'll run
   ][, lm_fmla          := paste0(unique_met_id,' ~ ',                                    'mvpa_wins',             ' + ',paste(covars,collapse='+'))
@@ -104,15 +102,6 @@ mwas <- mwas[
         summary( lmerTest::lmer(fmla,data) )$coefficients[term,]
       }))
 
-  # Define p-value thresholds. Only significant mets will undergo (moderated) mediation analysis.
-  ][, {p_thresh_med_lm     <<- 0.05/calc_eff_n_metabolites(        unique_met_id[lm_p           < p_thresh_mwas     ] ); .SD}
-  ][, {p_thresh_med_lmm    <<- 0.05/calc_eff_n_metabolites(        unique_met_id[lmm_p          < p_thresh_mwas     ] ); .SD}
-  ][, {p_thresh_intrx_lm   <<- 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[med_lm_acme_p  < p_thresh_med_lm   ])); .SD}
-  ][, {p_thresh_intrx_lmm  <<- 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[med_lmm_acme_p < p_thresh_med_lmm  ])); .SD}
-  #][, {p_thresh_modmed_lm  <<- 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[intrx_lm_p     < p_thresh_intrx_lm ])); .SD}
-  ][, {p_thresh_modmed_lm  <<- 0.05; .SD} # 0.05 b/c there are only 9 mets w/ signif intrx_p, and that causes an error in SVD calculation.
-  ][, {p_thresh_modmed_lmm <<- 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[intrx_lmm_p    < p_thresh_intrx_lmm])); .SD}
-
   # Run LM mediation on metabolites significant from the LM MWAS, exam 1 only.
   ][lm_p < p_thresh_mwas
     , c('med_lm_acme_p','med_lm_prop','med_lm_n_samples') := transpose(mcMap(med_lm_fmla_m,med_lm_fmla_y,unique_met_id, f=\(fmla_m,fmla_y,met) {
@@ -140,10 +129,21 @@ mwas <- mwas[
           sims=500 # Enough sims to reach the p-val threshold
         )[c('d0.p', 'n0', 'nobs')]
       }))
+  ][, .SDcols = \(col) any(lengths(col)==0), # NULL -> NA for rows with calculations skipped.
+      (names(.SD)) := lapply(.SD, \(col) fifelse(lengths(col)==0, list(NA), col) |> unlist())
+
+  # Define p-value thresholds. Only significant mets will undergo (moderated) mediation analysis.
+  ][, {p_thresh_med_lm     <<- 0.05/calc_eff_n_metabolites(        unique_met_id[lm_p           < p_thresh_mwas     ] ); .SD}
+  ][, {p_thresh_med_lmm    <<- 0.05/calc_eff_n_metabolites(        unique_met_id[lmm_p          < p_thresh_mwas     ] ); .SD}
+  ][, {p_thresh_intrx_lm   <<- 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[med_lm_acme_p  < p_thresh_med_lm   ])); .SD}
+  ][, {p_thresh_intrx_lmm  <<- 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[med_lmm_acme_p < p_thresh_med_lmm  ])); .SD}
+  #][, {p_thresh_modmed_lm  <<- 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[intrx_lm_p     < p_thresh_intrx_lm ])); .SD}
+  ][, {p_thresh_modmed_lm  <<- 0.05; .SD} # 0.05 b/c there are only 9 mets w/ signif intrx_p, and that causes an error in SVD calculation.
+  ][, {p_thresh_modmed_lmm <<- 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[intrx_lmm_p    < p_thresh_intrx_lmm])); .SD}
 
   # Run LM moderated mediation on metabolites significant from the interaction LM, exam 1 only.
-  #][intrx_lm_p < p_thresh_intrx_lm
-  ][intrx_lmm_p < p_thresh_intrx_lmm # Running using the lmm threshold (which has more significant metabolites) because test.modmed does not implement support for LMMs yet: https://github.com/kosukeimai/mediation/issues/69
+  ][intrx_lm_p  < p_thresh_intrx_lm  | # Running using both p thresholds because test.modmed does not implement support for LMMs yet: https://github.com/kosukeimai/mediation/issues/69
+    intrx_lmm_p < p_thresh_intrx_lmm 
     , c('modmed_lm_acme_p','modmed_lm_ade_p') := transpose(mcMap(modmed_lm_fmla_m,modmed_lm_fmla_y,unique_met_id, f=\(fmla_m,fmla_y,met) {
         #cat(i<<-i+1,'/',.N,'\r')
         mediate(
@@ -157,95 +157,25 @@ mwas <- mwas[
         test.modmed(list(rs295849_bin=0), list(rs295849_bin=1), sims=100) |>
         (\(results) c(results[[1]]$p.value, results[[2]]$p.value))() # Get just the ACME & ADE p-vals
       }))
-
-  # Run LMM moderated mediation on metabolites significant from the interaction LMM. 
-  #   NOTE: unfortunately this does not work because test.modmed does not support LMMs yet: https://github.com/kosukeimai/mediation/issues/69
-  #][intrx_lmm_p < p_thresh_intrx_lmm
-  #  , c('modmed_lmm_acme_p','modmed_lmm_ade_p') := transpose(Map(modmed_lmm_fmla_m,modmed_lmm_fmla_y,unique_met_id, f=\(fmla_m,fmla_y,met) {
-  #      #cat(i<<-i+1,'/',.N,'\r')
-  #      mediate(
-  #        lme4::lmer(fmla_m, data[!is.na(hdl_log)]),
-  #        lme4::lmer(fmla_y, data                 ),
-  #        treat='mvpa_wins',
-  #        mediator=met,
-  #        robustSE=TRUE,
-  #        sims=10 # N_sims doesn't need to be high for this step
-  #      ) |>
-  #      test.modmed(list(rs295849_bin=0), list(rs295849_bin=1), sims=100) |>
-  #      (\(results) c(results[[1]]$p.value, results[[2]]$p.value))()
-  #    }))
-
-
-  # Other LMM functions I tried
-  #][, c('lmm_est', 'lmm_se', 'lmm_df', 'lmm_t', 'lmm_p') := transpose(mcMap(lm_fmla, f=\(fmla) {
-  #      summary( nlme::lme(fmla,data, ~1|mesa_id, na.action=na.omit) )$tTable['mvpa_wins',]
-  #    }))
-
-  #][, c('lmm_est', 'lmm_se', 'lmm_t', 'lmm_p') := transpose(mcMap(lmm_fmla, f=\(fmla,fmla2,fmla3) {
-  #      summary( glmmTMB(fmla,data) )$coefficients$cond['mvpa_wins',]
-  #      #summary( glmmTMB(fmla,data, control=glmmTMBControl(eigval_check=F)) )$coefficients$cond['mvpa_wins',]
-  #    }))
-
-  #][, bam_fmla := paste(lm_fmla,'+ s(1+mesa_id, bs="re")') |> sapply(as.formula)
-  #][, c('lmm_est', 'lmm_se', 'lmm_t', 'lmm_p') := transpose(mcMap(bam_fmla, f=\(fmla) {
-  #      summary( mgcv::bam(fmla,data=data, discrete=T, use.chol=T) )$p.table['mvpa_wins',]
-  #    }))
-
-  # TODO this one I didn't finish trying.
-  #][, tmp := mapply(unique_met_id, FUN = \(met) {
-  #      y <- unlist(data[,unique_met_id,with=F])
-  #      x <- as.numeric(unlist(data[,'mvpa_wins']))
-  #      id <- as.integer(unlist(data$mesa_id))
-  #      print(dim(x))
-  #      print(dim(y))
-  #      print(dim(id))
-  #      Rfast::rint.reg(y,x,id)
-  #    })
-
+  ][, .SDcols = \(col) any(lengths(col)==0), # Again, NULL -> NA for rows with calculations skipped.
+      (names(.SD)) := lapply(.SD, \(col) fifelse(lengths(col)==0, list(NA), col) |> unlist())
 ]
-#Sys.time()-t0
-#}) |> mean()
+```
 
-# Messy reformatting
-mwas[lengths(med_lm_acme_p)    ==0, med_lm_acme_p     := NA]
-mwas[lengths(med_lm_prop)      ==0, med_lm_prop       := NA]
-mwas[lengths(med_lm_n_samples) ==0, med_lm_n_samples  := NA]
-mwas[lengths(med_lmm_acme_p)   ==0, med_lmm_acme_p    := NA]
-mwas[lengths(med_lmm_prop)     ==0, med_lmm_prop      := NA]
-mwas[lengths(med_lmm_n_samples)==0, med_lmm_n_samples := NA]
-
-mwas[,med_lm_acme_p     := unlist(med_lm_acme_p)]
-mwas[,med_lm_prop       := unlist(med_lm_prop)]
-mwas[,med_lm_n_samples  := unlist(med_lm_n_samples)]
-mwas[,med_lmm_acme_p    := unlist(med_lmm_acme_p)]
-mwas[,med_lmm_prop      := unlist(med_lmm_prop)]
-mwas[,med_lmm_n_samples := unlist(med_lmm_n_samples)]
-
-setcolorder(mwas, c('Method','MZ','RT','HMDB_ID','Metabolite','unique_met_id',
-                    'lm_fmla',  'med_lm_fmla_m',  'med_lm_fmla_y',  'intrx_lm_fmla',  'modmed_lm_fmla_m',  'modmed_lm_fmla_y',
-                    'lmm_fmla', 'med_lmm_fmla_m', 'med_lmm_fmla_y', 'intrx_lmm_fmla', 'modmed_lmm_fmla_m', 'modmed_lmm_fmla_y',
-                    'intrx_term',
-                    'lm_est',  'lm_se',            'lm_t',  'lm_p',
-                    'lmm_est', 'lmm_se', 'lmm_df', 'lmm_t', 'lmm_p',
-                    'med_lm_acme_p',  'med_lm_prop',  'med_lm_n_samples',
-                    'med_lmm_acme_p', 'med_lmm_prop', 'med_lmm_n_samples',
-                    'intrx_lm_est',  'intrx_lm_se',                  'intrx_lm_t',  'intrx_lm_p',
-                    'intrx_lmm_est', 'intrx_lmm_se', 'intrx_lmm_df', 'intrx_lmm_t', 'intrx_lmm_p',
-                    'modmed_lm_acme_p',  'modmed_lm_ade_p',
-                    'modmed_lmm_acme_p', 'modmed_lmm_ade_p'
-                    ))
-
-save.image('final_results_250108.RData')
-
-mwas[      lmm_p < .1 &       lm_p < .1, plot(      lm_est/      lm_se,       lmm_est/      lmm_se, col=rgb(0,0,0,0.2),pch=16)] + abline(0,1,col='red') + abline(0,999) + abline(0,0)
-mwas[intrx_lmm_p < .1 & intrx_lm_p < .1, plot(intrx_lm_est/intrx_lm_se, intrx_lmm_est/intrx_lmm_se, col=rgb(0,0,0,0.2),pch=16)] + abline(0,1,col='red') + abline(0,999) + abline(0,0)
+```{r}
+mwas[lm_p < .1,       plot(      lm_est/      lm_se,       lmm_est/      lmm_se, col=rgb(0,0,0,0.2),pch=16)] + abline(0,1,col='red') + abline(0,999) + abline(0,0)
+mwas[intrx_lm_p < .1, plot(intrx_lm_est/intrx_lm_se, intrx_lmm_est/intrx_lmm_se, col=rgb(0,0,0,0.2),pch=16)] + abline(0,1,col='red') + abline(0,999) + abline(0,0)
 mwas[                                  , plot(-log10(med_lm_acme_p+1e-24), -log10(med_lmm_acme_p+1e-24), col=rgb(0,0,0,0.2),pch=16)] + abline(0,1,col='red')
 mwas[                                  , plot(-log10(fifelse(is.na(med_lm_acme_p), 1,med_lm_acme_p +1e-24)),
                                               -log10(fifelse(is.na(med_lmm_acme_p),1,med_lmm_acme_p+1e-24)),
                                               col=rgb(0,0,0,0.2),pch=16)] + abline(0,1,col='red')
 
+# histograms of these
 cat(mwas[order(      lm_p)[1:30],       lm_p/      lmm_p],sep='\n')
 cat(mwas[order(intrx_lm_p)[1:30], intrx_lm_p/intrx_lmm_p],sep='\n')
+
+mwas[hist(log((lmm_est/lmm_se)/(lm_est/lm_se)))]
+mwas[lm_p<0.05, hist(log((lmm_est/lmm_se)/(lm_est/lm_se)))]
 
 # Note that in later steps, the increased number of significant mets may just be because more were tested because they passed the threshold of the previous step.
 # Although the p thresholds do control for the # of effective metabolites.
