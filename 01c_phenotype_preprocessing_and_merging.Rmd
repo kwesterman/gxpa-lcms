@@ -198,17 +198,17 @@ data <- data[
 
   # (Median) imputation of covariates if not present in any exam (i.e. not present in exam 1)
   # (Making sure to take the median of the original set of non-missing values, NOT recalculating the median after each imputation!)
-  ][, {  #age_median <<- median(            age, na.rm=T);
-         #bmi_median <<- median(            bmi, na.rm=T);
-        ahei_median <<- median(     ahei_score, na.rm=T);
+  ][, {  age_median <<- median(            age, na.rm=T);
+         bmi_median <<- median(            bmi, na.rm=T);
          ses_median <<- median(      ses_score, na.rm=T);
+        ahei_median <<- median(     ahei_score, na.rm=T);
         dash_median <<- median(     dash_score, na.rm=T);
        drink_median <<- median(drinks_per_week, na.rm=T); .SD }
 
-  #][ exam==1 & is.na(            age),             age :=   age_median # No median imputation for age nor bmi
-  #][ exam==1 & is.na(            bmi),             bmi :=   bmi_median
-  ][ exam==1 & is.na(     ahei_score),      ahei_score :=  ahei_median
+  ][ exam==1 & is.na(            age),             age :=   age_median # Technically we have the information to impute this more accurately but I am too lazy and it's only for 117 samples
+  ][ exam==1 & is.na(            bmi),             bmi :=   bmi_median
   ][ exam==1 & is.na(      ses_score),       ses_score :=   ses_median
+  ][ exam==1 & is.na(     ahei_score),      ahei_score :=  ahei_median
   ][ exam==1 & is.na(     dash_score),      dash_score :=  dash_median
   ][ exam==1 & is.na(drinks_per_week), drinks_per_week := drink_median
 
@@ -219,9 +219,8 @@ data <- data[
   ][ exam==1 & is.na(site)    |    site=='', site    := 'Unknown'
 
   # Carry-over-from-previous-exam imputation (this is why we setorder()'d by exam before
-  ][, .SDcols=c('pa','mvpa','mod_pa','vig_pa',
-                'age', # Technically we have the information to impute this more accurately but I am too lazy and it's only for 117 samples
-                'bmi','sex',
+  ][, .SDcols=c('hdl', 'pa','mvpa','mod_pa','vig_pa',
+                'age','bmi','sex',
                 'ahei_score','dash_score','ses_score','drinks_per_week',
                 'smoking','income','site','month','season'),
       names(.SD) := lapply(.SD, nafill2), # We preiviously setorder()'d by exam so this will fill exams in starting from the first.

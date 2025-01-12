@@ -23,7 +23,7 @@ data <- fread('analysis_df.csv')[,exam:=as.factor(exam)]
 # Summary table of relevant variables
 ```{r summary-tbl, cache=T, cache.depend=digest::digest(data)}
 data[
-  ][, .(age, bmi, sex, pa, mod_pa, mvpa, vig_pa, ahei_score, dash_score, ses_score, drinks_per_week, rs295849)
+  ][, .(age, bmi, sex, hdl, pa, mod_pa, mvpa, vig_pa, ahei_score, dash_score, ses_score, drinks_per_week, rs295849)
   ][, has_metabolomics := !is.na(data$TOM_Id)
   ][ is.na(sex), sex := 'Unknown'
   ] |>
