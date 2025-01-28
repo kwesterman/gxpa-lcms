@@ -29,6 +29,10 @@ data[
   ][, rs295849_bin := fifelse(rs295849-1==0, 0, 1) # TODO: currently rs295849 is encoded as 1/2/3, fix this in script 01c. Moderated mediation can only handle a binary moderators.
 ]
 data_exam1 <- data[exam==1]
+data_exam2 <- data[exam==2]
+data_exam3 <- data[exam==3]
+data_exam4 <- data[exam==4]
+data_exam5 <- data[exam==5]
 
 met_nms <- names(fread('metabolomics/QCd/merged_QCd.csv',nrows=0,drop=1))
 covars <- c('site', 'sex', 'age', 'ses_score', 'income', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', paste0('gPC', 1:5), 'race')
@@ -44,10 +48,10 @@ calc_eff_n_metabolites <- \(met_nms) {
 ```
 
 # MWAS on genotypes and exposures
-Models:
-* __Linear Model__  only  using exam 1   data: `lm  (  met   ~  mvpa_wins   + covars)`
-* __Linear Mixed Model__  using exam 1-5 data: `lmer(  met   ~  mvpa_wins   + covars + (1 | mesa_id))`
-* __Interaction Model__   using exam 1   data: `lm  (hdl_log ~ met*rs295849 + covars + sex*rs295849 )`
+Models:\
+* __Linear Model__  only  using exam 1   data: `lm  (  met   ~  mvpa_wins   + covars)`\
+* __Linear Mixed Model__  using exam 1-5 data: `lmer(  met   ~  mvpa_wins   + covars + (1 | mesa_id))`\
+* __Interaction Model__   using exam 1   data: `lm  (hdl_log ~ met*rs295849 + covars + sex*rs295849 )`\
 * __Mediation Model__     using exam 1-5 data: Comparing models:\
   `lm(  met   ~       mvpa_wins + covars)` and\
   `lm(hdl_log ~ met + mvpa_wins + covars)`\
@@ -55,7 +59,7 @@ Models:
 * __Moderated Mediation__ using exam 1-5 data: Comparing models:\
   `lm(  met       ~                mvpa_wins*rs295849_bin + covars)` and\
   `lm(hdl_log ~ met*rs295849_bin + mvpa_wins*rs295849_bin + covars)`.
-```{r mwas, cache=T, cache.depend=digest::digest(mwas), results='hide'}
+```{r mwas, cache=T, cache.depend=digest::digest(mwas), results='hide', eval=F}
 p_thresh_mwas <- 0.05/calc_eff_n_metabolites(mwas[,unique_met_id])
 
 i <- 0
@@ -72,8 +76,8 @@ mwas <- mwas[
   ][, intrx_lmm_fmla    := paste(intrx_lm_fmla,   '+ (1 | mesa_id)')
   ][, med_lmm_fmla_m    := paste(med_lm_fmla_m,   '+ (1 | mesa_id)')
   ][, med_lmm_fmla_y    := paste(med_lm_fmla_y,   '+ (1 | mesa_id)')
-  ][, modmed_lmm_fmla_m := paste(modmed_lm_fmla_m,'+ (1 | mesa_id)')
-  ][, modmed_lmm_fmla_y := paste(modmed_lm_fmla_y,'+ (1 | mesa_id)')
+  #][, modmed_lmm_fmla_m := paste(modmed_lm_fmla_m,'+ (1 | mesa_id)') # Unfortunately test.modmed can't handle LMMs yet: https://github.com/kosukeimai/mediation/issues/69
+  #][, modmed_lmm_fmla_y := paste(modmed_lm_fmla_y,'+ (1 | mesa_id)')
 
   # LM on all metabolites, exam 1 only.
   ][, c('lm_est', 'lm_se', 'lm_t', 'lm_p') := transpose(mcMap(lm_fmla, f=\(fmla) {
@@ -163,19 +167,24 @@ mwas <- mwas[
 ```
 
 ```{r}
-mwas[lm_p < .1,       plot(      lm_est/      lm_se,       lmm_est/      lmm_se, col=rgb(0,0,0,0.2),pch=16)] + abline(0,1,col='red') + abline(0,999) + abline(0,0)
-mwas[intrx_lm_p < .1, plot(intrx_lm_est/intrx_lm_se, intrx_lmm_est/intrx_lmm_se, col=rgb(0,0,0,0.2),pch=16)] + abline(0,1,col='red') + abline(0,999) + abline(0,0)
-mwas[                                  , plot(-log10(med_lm_acme_p+1e-24), -log10(med_lmm_acme_p+1e-24), col=rgb(0,0,0,0.2),pch=16)] + abline(0,1,col='red')
-mwas[                                  , plot(-log10(fifelse(is.na(med_lm_acme_p), 1,med_lm_acme_p +1e-24)),
-                                              -log10(fifelse(is.na(med_lmm_acme_p),1,med_lmm_acme_p+1e-24)),
-                                              col=rgb(0,0,0,0.2),pch=16)] + abline(0,1,col='red')
+load('250112_modmed_lmm_done.RData')
 
-# histograms of these
-cat(mwas[order(      lm_p)[1:30],       lm_p/      lmm_p],sep='\n')
-cat(mwas[order(intrx_lm_p)[1:30], intrx_lm_p/intrx_lmm_p],sep='\n')
+{ mwas[      lm_p < .05, plot(      lm_est/      lm_se,       lmm_est/      lmm_se, col=rgb(0,0,0,0.2),pch=16,main='Metabolites whose LM p-value was < 0.1')] + abline(0,1,col='red') + abline(0,999) + abline(0,0) }
+{ mwas[intrx_lm_p < .05, plot(intrx_lm_est/intrx_lm_se, intrx_lmm_est/intrx_lmm_se, col=rgb(0,0,0,0.2),pch=16,main='Metabolites whose **Interaction** LM p-value was < 0.1')] + abline(0,1,col='red') + abline(0,999) + abline(0,0) }
+#mwas[lm_p < .1 & lm_est>0, boxplot(lm_est/lm_se, lmm_est/lmm_se, names=c('LM','LMM'), ylab='Z-score', main='Metabolites whose LM p-value was < 0.1\nPOSITIVE Z-scores')]
+#mwas[lm_p < .1 & lm_est<0, boxplot(lm_est/lm_se, lmm_est/lmm_se, names=c('LM','LMM'), ylab='Z-score', main='Metabolites whose LM p-value was < 0.1\nNEGATIVE Z-scores')]
+{ mwas[lm_p < .05, boxplot(abs(      lm_est/      lm_se), abs(      lmm_est/      lmm_se), names=c('LM','LMM'), ylab='|Z-score|', main='Metabolites whose LM p-value was < 0.1')] }
+{ mwas[lm_p < .05, boxplot(abs(intrx_lm_est/intrx_lm_se), abs(intrx_lmm_est/intrx_lmm_se), names=c('LM','LMM'), ylab='|Z-score|', main='Metabolites whose **Interaction** LM p-value was < 0.1')] }
+#mwas[                                  , plot(-log10(med_lm_acme_p+1e-24), -log10(med_lmm_acme_p+1e-24), col=rgb(0,0,0,0.2),pch=16)] + abline(0,1,col='red')
+#mwas[                                  , plot(-log10(fifelse(is.na(med_lm_acme_p), 1,med_lm_acme_p +1e-24)),
+#                                              -log10(fifelse(is.na(med_lmm_acme_p),1,med_lmm_acme_p+1e-24)),
+#                                              col=rgb(0,0,0,0.2),pch=16)] + abline(0,1,col='red')
 
-mwas[hist(log((lmm_est/lmm_se)/(lm_est/lm_se)))]
-mwas[lm_p<0.05, hist(log((lmm_est/lmm_se)/(lm_est/lm_se)))]
+#cat(mwas[order(      lm_p)[1:30],       lm_p/      lmm_p],sep='\n')
+#cat(mwas[order(intrx_lm_p)[1:30], intrx_lm_p/intrx_lmm_p],sep='\n')
+
+{ mwas[      lm_p<.05, hist(log(abs(      lmm_est/      lmm_se)/abs(      lm_est/      lm_se)), xlab='log(LMM_Z / LM_Z)', breaks=40L, main='Metabolites whose LM p-value was < 0.1\nLog LMM/LM Z-score ratios') ]; abline(0,1e10,col='red') }
+{ mwas[intrx_lm_p<.05, hist(log(abs(intrx_lmm_est/intrx_lmm_se)/abs(intrx_lm_est/intrx_lm_se)), xlab='log(LMM_Z / LM_Z)', breaks=40L, main='Metabolites whose **Interaction** LM p-value was < 0.1\nLog Interaction LMM/LM Z-score ratios') ]; abline(0,1e24,col='red')}
 
 # Note that in later steps, the increased number of significant mets may just be because more were tested because they passed the threshold of the previous step.
 # Although the p thresholds do control for the # of effective metabolites.
@@ -197,7 +206,10 @@ mwas[lmm_p < p_thresh_mwas                                                      
 mwas[                                                                                            , sum( intrx_lm_p       < p_thresh_mwas     )]
 mwas[                                                                                            , sum( intrx_lmm_p      < p_thresh_mwas     )]
 mwas[intrx_lm_p  < p_thresh_mwas                                                                 , .SD, .SDcols=patterns('Met|met|MZ|RT|_est|_se|_p')]
-mwas[intrx_lmm_p < p_thresh_mwas                                                                 , .SD, .SDcols=patterns('Met|met|MZ|RT|_est|_se|_p')]
+mwas[intrx_lmm_p < p_thresh_mwas                                                                 , .SD, .SDcols=patterns('Met|met|MZ|RT|_est|_se|_p')][order(intrx_lm_p)]
+
+#tmp <- mwas[intrx_lmm_p < p_thresh_mwas                                                                 , .SD, .SDcols=patterns('met|_est|_p')][order(intrx_lm_p)]
+#tmp <- mwas[order(unique_met_id %ni% c('QI48826_C18_neg','QI7292_C8_pos','QI46325_C18_neg','QI42688_C18_neg','QI54634_C18_neg','QI45506_C18_neg','QI5007_C8_pos','QI14471_HILIC_pos',  'QI3365_C8_pos','QI5103_C8_pos','QI13024_C18_neg'))]
 ```
 ```{r}
 # TODO: knitr tables like this: knitr::kable(mwas[lm_p   <p_thresh_mwas, .(MZ,RT,HMDB_ID,Metabolite,unique_met_id,lm_p   )][order(lm_p   )] )

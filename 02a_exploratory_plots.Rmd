@@ -235,6 +235,20 @@ ggplot(data2hist_categ, aes(x=val)) +
 ```
 
 
+# Correlated metabolites
+```{r}
+met <- fread('metabolomics/QCd/merged_QCd.csv')[,-1]
+met_info <- fread('metabolomics/met_info.csv')
+cor_mtx <- cor(met,met,use='complete.obs')
+cor_mtx[1:10,1:10]
+signif_mets <- c('QI3365_C8_pos', 'QI5103_C8_pos', 'QI13024_C18_neg', 'QI48826_C18_neg', 'QI7292_C8_pos', 'QI46325_C18_neg', 'QI42688_C18_neg', 'QI54634_C18_neg', 'QI45506_C18_neg', 'QI5007_C8_pos', 'QI14471_HILIC_pos')
+mtx2 <- as.data.table(cor_mtx[,signif_mets], keep.rownames='unique_met_id')
+mtx2 <- as.data.table(cor_mtx, keep.rownames='unique_met_id') |> setcolorder(c('unique_met_id',signif_mets))
+mtx2 <- merge(met_info,mtx2)
+mtx3 <- mtx2[!is.na(Metabolite) | unique_met_id %in% signif_mets,1:22]
+fwrite(mtx3, 'mets_w_metadata2.csv')
+```
+
 
 
 
