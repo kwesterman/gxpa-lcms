@@ -34,6 +34,12 @@ data_exam3 <- data[exam==3]
 data_exam4 <- data[exam==4]
 data_exam5 <- data[exam==5]
 
+numeric_colnms  <- names(data)[sapply(data,is.numeric)]
+baseline_colnms <- paste0(numeric_colnms,'_0')
+delta_colnms    <- paste0(numeric_colnms,'_Δ')
+data[, (baseline_colnms) := Map(.SD,f=min),     .SDcols=numeric_colnms,     by='mesa_id'           ]
+data[, (   delta_colnms) := data[,.SDcols=numeric_colnms,.SD] - data[,.SDcols=baseline_colnms,.SD] ]
+
 met_nms <- names(fread('metabolomics/QCd/merged_QCd.csv',nrows=0,drop=1))
 covars <- c('site', 'sex', 'age', 'ses_score', 'income', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', paste0('gPC', 1:5), 'race')
 
@@ -72,12 +78,14 @@ mwas <- mwas[
   ][, modmed_lm_fmla_m := paste0(unique_met_id,' ~ ',                                    'mvpa_wins*rs295849_bin',' + ',paste(covars,collapse='+'))
   ][, modmed_lm_fmla_y := paste0(  'hdl_log',  ' ~ ',unique_met_id,'*rs295849_bin',' + ','mvpa_wins*rs295849_bin',' + ',paste(covars,collapse='+'))
 
-  ][, lmm_fmla          := paste(lm_fmla,         '+ (1 | mesa_id)')
-  ][, intrx_lmm_fmla    := paste(intrx_lm_fmla,   '+ (1 | mesa_id)')
-  ][, med_lmm_fmla_m    := paste(med_lm_fmla_m,   '+ (1 | mesa_id)')
-  ][, med_lmm_fmla_y    := paste(med_lm_fmla_y,   '+ (1 | mesa_id)')
+  ][, lmm_fmla         := paste(lm_fmla,         '+ (1 | mesa_id)')
+  ][, intrx_lmm_fmla   := paste(intrx_lm_fmla,   '+ (1 | mesa_id)')
+  ][, med_lmm_fmla_m   := paste(med_lm_fmla_m,   '+ (1 | mesa_id)')
+  ][, med_lmm_fmla_y   := paste(med_lm_fmla_y,   '+ (1 | mesa_id)')
   #][, modmed_lmm_fmla_m := paste(modmed_lm_fmla_m,'+ (1 | mesa_id)') # Unfortunately test.modmed can't handle LMMs yet: https://github.com/kosukeimai/mediation/issues/69
   #][, modmed_lmm_fmla_y := paste(modmed_lm_fmla_y,'+ (1 | mesa_id)')
+
+  ][, Δ_intrx_lmm_fmla := paste0(  'hdl_log_Δ',' ~ ',unique_met_id,'_0*rs295849',' + ',unique_met_id,'_Δ*rs295849',' + ','sex*rs295849',' + ',paste(covars,collapse='+'),' + (1 | mesa_id)')
 
   # LM on all metabolites, exam 1 only.
   ][, c('lm_est', 'lm_se', 'lm_t', 'lm_p') := transpose(mcMap(lm_fmla, f=\(fmla) {
@@ -100,11 +108,29 @@ mwas <- mwas[
         summary( lm(fmla,data_exam1) )$coefficients[term,]
       }))
 
+  # Interaction LM for other exams
+  #][, c('intrx_lm_est_2', 'intrx_lm_se_2', 'intrx_lm_t_2', 'intrx_lm_p_2') := transpose(mcMap(intrx_lm_fmla,intrx_term, f=\(fmla,term) {
+  #      #cat(i<<-i+1,'/',.N,'\r')
+  #      summary( lm(fmla,data_exam2) )$coefficients[term,]
+  #    }))
+
   # Interaction LMM on all metabolites.
   ][, c('intrx_lmm_est', 'intrx_lmm_se', 'intrx_lmm_df', 'intrx_lmm_t', 'intrx_lmm_p') := transpose(mcMap(intrx_lmm_fmla,intrx_term, f=\(fmla,term) {
         #cat(i<<-i+1,'/',.N,'\r')
         summary( lmerTest::lmer(fmla,data) )$coefficients[term,]
       }))
+
+  # Interaction LMM with metabolite decomposed into baseline and delta terms
+  #][, intrx_term_0 := paste0(unique_met_id,'_0:rs295849')
+  #][, intrx_term_Δ := paste0('rs295849:',unique_met_id,'_Δ') # Nor sure what determines the syntax of interaction terms
+  #][ unique_met_id %in% c('QI3365_C8_pos', 'QI5103_C8_pos', 'QI13024_C18_neg', 'QI48826_C18_neg', 'QI7292_C8_pos', 'QI46325_C18_neg', 'QI42688_C18_neg', 'QI54634_C18_neg', 'QI45506_C18_neg', 'QI5007_C8_pos', 'QI14471_HILIC_pos')
+  #  , c('intrx_lmm_est_0', 'intrx_lmm_se_0', 'intrx_lmm_df_0', 'intrx_lmm_t_0', 'intrx_lmm_p_0',
+  #      'intrx_lmm_est_Δ', 'intrx_lmm_se_Δ', 'intrx_lmm_df_Δ', 'intrx_lmm_t_Δ', 'intrx_lmm_p_Δ'
+  #    ) := transpose(Map(Δ_intrx_lmm_fmla,intrx_term_0,intrx_term_Δ, f=\(fmla,term0,termΔ) {
+  #      #cat(i<<-i+1,'/',.N,'\r')
+  #      coefs <- summary(lmerTest::lmer(fmla,data))$coefficients
+  #      unlist(c(coefs[term0,], coefs[termΔ,]))
+  #    }))
 
   # Run LM mediation on metabolites significant from the LM MWAS, exam 1 only.
   ][lm_p < p_thresh_mwas
@@ -167,10 +193,11 @@ mwas <- mwas[
 ```
 
 ```{r}
-load('250112_modmed_lmm_done.RData')
+#load('250112_modmed_lmm_done.RData')
+load('250224-modemed_lmm_done-delta_cols.RData')
 
-{ mwas[      lm_p < .05, plot(      lm_est/      lm_se,       lmm_est/      lmm_se, col=rgb(0,0,0,0.2),pch=16,main='Metabolites whose LM p-value was < 0.1')] + abline(0,1,col='red') + abline(0,999) + abline(0,0) }
-{ mwas[intrx_lm_p < .05, plot(intrx_lm_est/intrx_lm_se, intrx_lmm_est/intrx_lmm_se, col=rgb(0,0,0,0.2),pch=16,main='Metabolites whose **Interaction** LM p-value was < 0.1')] + abline(0,1,col='red') + abline(0,999) + abline(0,0) }
+{ mwas[      lm_p < .05, plot(      lm_est/      lm_se,       lmm_est/      lmm_se, col=rgb(0,0,0,0.2),pch=16,main='LM vs. LMM MWAS Z-scores\n       (metabolites with MWAS LM p<0.1)',xlab='LM Z',ylab='LMM Z')] + abline(0,1,col='red') + abline(0,999) + abline(0,0) }
+{ mwas[intrx_lm_p < .05, plot(intrx_lm_est/intrx_lm_se, intrx_lmm_est/intrx_lmm_se, col=rgb(0,0,0,0.2),pch=16,main='LM vs. LMM Interaction Z-scores\n(metabolites with GxM  LM p<0.1)',xlab='LM Z',ylab='LMM Z')] + abline(0,1,col='red') + abline(0,999) + abline(0,0) }
 #mwas[lm_p < .1 & lm_est>0, boxplot(lm_est/lm_se, lmm_est/lmm_se, names=c('LM','LMM'), ylab='Z-score', main='Metabolites whose LM p-value was < 0.1\nPOSITIVE Z-scores')]
 #mwas[lm_p < .1 & lm_est<0, boxplot(lm_est/lm_se, lmm_est/lmm_se, names=c('LM','LMM'), ylab='Z-score', main='Metabolites whose LM p-value was < 0.1\nNEGATIVE Z-scores')]
 { mwas[lm_p < .05, boxplot(abs(      lm_est/      lm_se), abs(      lmm_est/      lmm_se), names=c('LM','LMM'), ylab='|Z-score|', main='Metabolites whose LM p-value was < 0.1')] }
@@ -199,7 +226,7 @@ mwas[lmm_p < p_thresh_mwas & med_lmm_acme_p < p_thresh_med_lmm & intrx_lmm_p < p
 mwas[lmm_p < p_thresh_mwas & med_lmm_acme_p < p_thresh_med_lmm & intrx_lmm_p < p_thresh_intrx_lmm, sum(modmed_lm_acme_p  < .1                )]
 
 mwas[lmm_p < p_thresh_mwas & med_lmm_acme_p < p_thresh_med_lmm & intrx_lmm_p < p_thresh_intrx_lmm, .SD, .SDcols=patterns('Met|met|MZ|RT|_est|_se|_p')]
-mwas[lmm_p < p_thresh_mwas & med_lmm_acme_p < p_thresh_med_lmm                                   , .SD, .SDcols=patterns('Met|met|MZ|RT|_est|_se|_p')]
+mwas[lmm_p < p_thresh_mwas & med_lmm_acme_p < p_thresh_med_lmm                                   , .SD, .SDcols=patterns('Met|met|MZ|RT|_est|_se|_p')][order()]
 mwas[lmm_p < p_thresh_mwas                                                                       , .SD, .SDcols=patterns('Met|met|MZ|RT|_est|_se|_p')]
 
 # If we pretend we meant to do an interaction mwas
@@ -209,7 +236,8 @@ mwas[intrx_lm_p  < p_thresh_mwas                                                
 mwas[intrx_lmm_p < p_thresh_mwas                                                                 , .SD, .SDcols=patterns('Met|met|MZ|RT|_est|_se|_p')][order(intrx_lm_p)]
 
 #tmp <- mwas[intrx_lmm_p < p_thresh_mwas                                                                 , .SD, .SDcols=patterns('met|_est|_p')][order(intrx_lm_p)]
-#tmp <- mwas[order(unique_met_id %ni% c('QI48826_C18_neg','QI7292_C8_pos','QI46325_C18_neg','QI42688_C18_neg','QI54634_C18_neg','QI45506_C18_neg','QI5007_C8_pos','QI14471_HILIC_pos',  'QI3365_C8_pos','QI5103_C8_pos','QI13024_C18_neg'))]
+"%ni%" <- Negate("%in%")
+tmp <- mwas[order(unique_met_id %ni% c('QI48826_C18_neg','QI7292_C8_pos','QI46325_C18_neg','QI42688_C18_neg','QI54634_C18_neg','QI45506_C18_neg','QI5007_C8_pos','QI14471_HILIC_pos',  'QI3365_C8_pos','QI5103_C8_pos','QI13024_C18_neg'))]
 ```
 ```{r}
 # TODO: knitr tables like this: knitr::kable(mwas[lm_p   <p_thresh_mwas, .(MZ,RT,HMDB_ID,Metabolite,unique_met_id,lm_p   )][order(lm_p   )] )
@@ -244,4 +272,15 @@ ggplot(mwas, aes(x=lmm_est, y=-log10(lmm_p), color=lmm_p<p_thresh_mwas)) +
   geom_text_repel(data=mwas[lmm_p==p_thresh_mwas], aes(label=Metabolite), size=3, show.legend=F) +
   scale_color_manual(name="Significant?\n(p<0.05/n_eff_metabolites)",values=c("FALSE"="black","TRUE"="red")) +
   guides(color = guide_legend(override.aes = list(size=5)))
+```
+
+
+```{r}
+mwas[unique_met_id%in%c('QI3365_C8_pos', 'QI5103_C8_pos', 'QI13024_C18_neg', 'QI48826_C18_neg'),
+     .(unique_met_id,MZ,RT,Metabolite,lm_p,lmm_p,intrx_lmm_p,intrx_lmm_p,med_lmm_prop)
+]
+
+
+cor(mwas$intrx_lmm_est,mwas$intrx_lmm_est_0,use='complete.obs')
+cor(mwas$intrx_lmm_est,mwas$intrx_lmm_est_Δ,use='complete.obs')
 ```
