@@ -16,7 +16,7 @@ library(lmerTest) # so lmer() returns p-vals
 library(mediation)
 library(parallel)
 
-options(mc.cores=4L)
+options(mc.cores=6L)
 
 options(datatable.na.strings=c('NA',''))
 data <- fread('analysis_df.csv')
@@ -37,8 +37,11 @@ data_exam5 <- data[exam==5]
 numeric_colnms  <- names(data)[sapply(data,is.numeric)]
 baseline_colnms <- paste0(numeric_colnms,'_0')
 delta_colnms    <- paste0(numeric_colnms,'_Δ')
-data[, (baseline_colnms) := Map(.SD,f=min),     .SDcols=numeric_colnms,     by='mesa_id'           ]
+#data[, (baseline_colnms) := Map(.SD,f=min),     .SDcols=numeric_colnms,     by='mesa_id'           ]
+data[, (baseline_colnms) := .SD[exam==1],    .SDcols=numeric_colnms,     by='mesa_id'           ]
 data[, (   delta_colnms) := data[,.SDcols=numeric_colnms,.SD] - data[,.SDcols=baseline_colnms,.SD] ]
+
+#data[, .SD, .SDcols=grepl('QI19074_HI|exam',names(data))]
 
 met_nms <- names(fread('metabolomics/QCd/merged_QCd.csv',nrows=0,drop=1))
 covars <- c('site', 'sex', 'age', 'ses_score', 'income', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', paste0('gPC', 1:5), 'race')
@@ -85,18 +88,25 @@ mwas <- mwas[
   #][, modmed_lmm_fmla_m := paste(modmed_lm_fmla_m,'+ (1 | mesa_id)') # Unfortunately test.modmed can't handle LMMs yet: https://github.com/kosukeimai/mediation/issues/69
   #][, modmed_lmm_fmla_y := paste(modmed_lm_fmla_y,'+ (1 | mesa_id)')
 
-  ][, Δ_intrx_lmm_fmla := paste0(  'hdl_log_Δ',' ~ ',unique_met_id,'_0*rs295849',' + ',unique_met_id,'_Δ*rs295849',' + ','sex*rs295849',' + ',paste(covars,collapse='+'),' + (1 | mesa_id)')
+  ][, Δ_intrx_lmm_fmla := paste0(  'hdl_log',' ~ ',unique_met_id,'_0*rs295849',' + ',unique_met_id,'_Δ*rs295849',' + ','sex*rs295849',' + ',paste(covars,collapse='+'),' + (1 | mesa_id)')
+  ][, main_lmm_fmla := paste0(unique_met_id,' ~ ','rs295849',' + ',paste(covars,collapse='+'),' + (1 | mesa_id)')
+  ][, sq_lmm_fmla := paste0('hdl_log ~ ',unique_met_id,' + I(',unique_met_id,'^2) + ',paste(covars,collapse='+'),' + (1 | mesa_id)')
+
+  ][, hdl_gxpa_lmm_fmla :=       paste0('hdl_log ~ rs295849*mvpa_wins + rs295849*sex + ', paste(covars,collapse='+'),' + (1 | mesa_id)')
+  ][, hdl_gxpa_nosex_lmm_fmla := paste0('hdl_log ~ rs295849*mvpa_wins + ',                paste(covars,collapse='+'),' + (1 | mesa_id)')
+  ][, hdl_gxpa_lm_fmla :=       paste0('hdl_log ~ rs295849*mvpa_wins + rs295849*sex + ', paste(covars,collapse='+'))
+  ][, hdl_gxpa_nosex_lm_fmla := paste0('hdl_log ~ rs295849*mvpa_wins + ',                paste(covars,collapse='+'))
+
+  ][, hdl_pa_lm_fmla := paste0('hdl_log ~ mvpa_wins + ', paste(covars,collapse='+'))
+  ][, hdl_pa_lmm_fmla := paste(hdl_pa_lm_fmla,'+ (1 | mesa_id)')
 
   # LM on all metabolites, exam 1 only.
   ][, c('lm_est', 'lm_se', 'lm_t', 'lm_p') := transpose(mcMap(lm_fmla, f=\(fmla) {
-        #cat(i<<-i+1,'/',.N,'\r') # Progress bar
         summary( lm(fmla,data_exam1) )$coefficients['mvpa_wins',]
       }))
 
   # LMM on all metabolites.
-  # Maybe TODO: Can grab summary(model)$optinfo$conv$lme4$messages to see if singular fit warning. Probably prefer to not have warnings in the first place though.
   ][, c('lmm_est', 'lmm_se', 'lmm_df', 'lmm_t', 'lmm_p') := transpose(mcMap(lmm_fmla, f=\(fmla) {
-        #cat(i<<-i+1,'/',.N,'\r')
         summary( lmerTest::lmer(fmla,data) )$coefficients['mvpa_wins',] # lmerTest::lmer adds p-values
         #summary( lmer(fmla,data, control=lmerControl(calc.derivs=F,optimizer='nloptwrap')) )$coefficients['mvpa_wins',]
       }))
@@ -104,30 +114,26 @@ mwas <- mwas[
   # Interaction LM on all metabolites, exam 1 only.
   ][, intrx_term := paste0(unique_met_id,':rs295849')
   ][, c('intrx_lm_est', 'intrx_lm_se', 'intrx_lm_t', 'intrx_lm_p') := transpose(mcMap(intrx_lm_fmla,intrx_term, f=\(fmla,term) {
-        #cat(i<<-i+1,'/',.N,'\r')
         summary( lm(fmla,data_exam1) )$coefficients[term,]
       }))
 
   # Interaction LM for other exams
   #][, c('intrx_lm_est_2', 'intrx_lm_se_2', 'intrx_lm_t_2', 'intrx_lm_p_2') := transpose(mcMap(intrx_lm_fmla,intrx_term, f=\(fmla,term) {
-  #      #cat(i<<-i+1,'/',.N,'\r')
   #      summary( lm(fmla,data_exam2) )$coefficients[term,]
   #    }))
 
   # Interaction LMM on all metabolites.
   ][, c('intrx_lmm_est', 'intrx_lmm_se', 'intrx_lmm_df', 'intrx_lmm_t', 'intrx_lmm_p') := transpose(mcMap(intrx_lmm_fmla,intrx_term, f=\(fmla,term) {
-        #cat(i<<-i+1,'/',.N,'\r')
         summary( lmerTest::lmer(fmla,data) )$coefficients[term,]
       }))
 
   # Interaction LMM with metabolite decomposed into baseline and delta terms
   #][, intrx_term_0 := paste0(unique_met_id,'_0:rs295849')
   #][, intrx_term_Δ := paste0('rs295849:',unique_met_id,'_Δ') # Nor sure what determines the syntax of interaction terms
-  #][ unique_met_id %in% c('QI3365_C8_pos', 'QI5103_C8_pos', 'QI13024_C18_neg', 'QI48826_C18_neg', 'QI7292_C8_pos', 'QI46325_C18_neg', 'QI42688_C18_neg', 'QI54634_C18_neg', 'QI45506_C18_neg', 'QI5007_C8_pos', 'QI14471_HILIC_pos')
-  #  , c('intrx_lmm_est_0', 'intrx_lmm_se_0', 'intrx_lmm_df_0', 'intrx_lmm_t_0', 'intrx_lmm_p_0',
+  #][ unique_met_id %in% c('QI48826_C18_neg','QI7292_C8_pos','QI46325_C18_neg','QI42688_C18_neg','QI54634_C18_neg','QI45506_C18_neg','QI5007_C8_pos','QI14471_HILIC_pos','QI3365_C8_pos','QI5103_C8_pos','QI13024_C18_neg')
+  #   , c('intrx_lmm_est_0', 'intrx_lmm_se_0', 'intrx_lmm_df_0', 'intrx_lmm_t_0', 'intrx_lmm_p_0',
   #      'intrx_lmm_est_Δ', 'intrx_lmm_se_Δ', 'intrx_lmm_df_Δ', 'intrx_lmm_t_Δ', 'intrx_lmm_p_Δ'
   #    ) := transpose(Map(Δ_intrx_lmm_fmla,intrx_term_0,intrx_term_Δ, f=\(fmla,term0,termΔ) {
-  #      #cat(i<<-i+1,'/',.N,'\r')
   #      coefs <- summary(lmerTest::lmer(fmla,data))$coefficients
   #      unlist(c(coefs[term0,], coefs[termΔ,]))
   #    }))
@@ -135,7 +141,6 @@ mwas <- mwas[
   # Run LM mediation on metabolites significant from the LM MWAS, exam 1 only.
   ][lm_p < p_thresh_mwas
     , c('med_lm_acme_p','med_lm_prop','med_lm_n_samples') := transpose(mcMap(med_lm_fmla_m,med_lm_fmla_y,unique_met_id, f=\(fmla_m,fmla_y,met) {
-        #cat(i<<-i+1,'/',.N,'\r')
         mediate(
           lm(fmla_m, data_exam1[!is.na(hdl_log)]),
           lm(fmla_y, data_exam1                 ),
@@ -149,7 +154,6 @@ mwas <- mwas[
   # Run LMM mediation on metabolites significant from the LMM MWAS.
   ][lmm_p < p_thresh_mwas
     , c('med_lmm_acme_p','med_lmm_prop','med_lmm_n_samples') := transpose(mcMap(med_lmm_fmla_m,med_lmm_fmla_y,unique_met_id, f=\(fmla_m,fmla_y,met) {
-        #cat(i<<-i+1,'/',.N,'\r')
         mediate(
           lme4::lmer(fmla_m, data[!is.na(hdl_log)]), # Need to use lme4::lmer() not lmerTest::lmer(). lmerTest changes the output format s.t. mediate() doesn't recognize it anymore.
           lme4::lmer(fmla_y, data                 ),
@@ -161,6 +165,16 @@ mwas <- mwas[
       }))
   ][, .SDcols = \(col) any(lengths(col)==0), # NULL -> NA for rows with calculations skipped.
       (names(.SD)) := lapply(.SD, \(col) fifelse(lengths(col)==0, list(NA), col) |> unlist())
+
+  # Run LMM genetic main effect model (met ~ SNP + covars)
+  ][, c('main_lmm_est', 'main_lmm_se', 'main_lmm_df', 'main_lmm_t', 'main_lmm_p') := transpose(mcMap(main_lmm_fmla, f=\(fmla) {
+        summary( lmerTest::lmer(fmla,data) )$coefficients['rs295849',] # lmerTest::lmer adds p-values
+      }))
+
+  # Run LMM hdl_log ~ met + met^2 + covars (adding a nonlinear term)
+  ][, c('sq_lmm_est', 'sq_lmm_se', 'sq_lmm_df', 'sq_lmm_t', 'sq_lmm_p') := transpose(mcMap(sq_lmm_fmla,paste0('I(',unique_met_id,'^2)'), f=\(fmla,term) {
+        summary( lmerTest::lmer(fmla,data) )$coefficients[term,]
+      }))
 
   # Define p-value thresholds. Only significant mets will undergo (moderated) mediation analysis.
   ][, {p_thresh_med_lm     <<- 0.05/calc_eff_n_metabolites(        unique_met_id[lm_p           < p_thresh_mwas     ] ); .SD}
@@ -190,11 +204,37 @@ mwas <- mwas[
   ][, .SDcols = \(col) any(lengths(col)==0), # Again, NULL -> NA for rows with calculations skipped.
       (names(.SD)) := lapply(.SD, \(col) fifelse(lengths(col)==0, list(NA), col) |> unlist())
 ]
+
+# Run LMM hdl_log ~ GxPA model
+#tmp <- mwas[1
+#  ][, c('hdl_gxpa_lmm_est', 'hdl_gxpa_lmm_se', 'hdl_gxpa_lmm_df', 'hdl_gxpa_lmm_t', 'hdl_gxpa_lmm_p') := transpose(mcMap(hdl_gxpa_lmm_fmla, f=\(fmla) {
+#        summary( lmerTest::lmer(fmla,data) )$coefficients['rs295849:mvpa_wins',] }))
+#  ][, c('hdl_gxpa_nosex_lmm_est', 'hdl_gxpa_nosex_lmm_se', 'hdl_gxpa_nosex_lmm_df', 'hdl_gxpa_nosex_lmm_t', 'hdl_gxpa_nosex_lmm_p') := transpose(mcMap(hdl_gxpa_nosex_lmm_fmla, f=\(fmla) {
+#        summary( lmerTest::lmer(fmla,data) )$coefficients['rs295849:mvpa_wins',] }))
+#  ][, c('hdl_gxpa_lm_est', 'hdl_gxpa_lm_se', 'hdl_gxpa_lm_t', 'hdl_gxpa_lm_p') := transpose(mcMap(hdl_gxpa_lm_fmla, f=\(fmla) {
+#        summary( lm(fmla,data_exam1) )$coefficients['rs295849:mvpa_wins',] }))
+#  ][, c('hdl_gxpa_nosex_lm_est', 'hdl_gxpa_nosex_lm_se', 'hdl_gxpa_nosex_lm_t', 'hdl_gxpa_nosex_lm_p') := transpose(mcMap(hdl_gxpa_nosex_lm_fmla, f=\(fmla) {
+#        summary( lm(fmla,data_exam1) )$coefficients['rs295849:mvpa_wins',] }))
+#]
+#  # Run LM vs. LMM hdl_log ~ mvpa_wins model
+#tmp <- mwas[1
+#  ][, c('hdl_pa_lm_est', 'hdl_pa_lm_se', 'hdl_pa_lm_t', 'hdl_pa_lm_p') := transpose(Map(hdl_pa_lm_fmla, f=\(fmla) {
+#        summary( lm(fmla,data_exam1) )$coefficients['mvpa_wins',] }))
+#  ][, c('hdl_pa_lmm_est', 'hdl_pa_lmm_se', 'hdl_pa_lmm_df', 'hdl_pa_lmm_t', 'hdl_pa_lmm_p') := transpose(mcMap(hdl_pa_lmm_fmla, f=\(fmla) {
+#        summary( lmerTest::lmer(fmla,data) )$coefficients['mvpa_wins',] }))
+#]
 ```
 
+
+
+
+
+
+# Junk
 ```{r}
 #load('250112_modmed_lmm_done.RData')
-load('250224-modemed_lmm_done-delta_cols.RData')
+#load('250224-modemed_lmm_done-delta_cols.RData')
+load('250227-mwas_mainG-mwas_sq.RData')
 
 { mwas[      lm_p < .05, plot(      lm_est/      lm_se,       lmm_est/      lmm_se, col=rgb(0,0,0,0.2),pch=16,main='LM vs. LMM MWAS Z-scores\n       (metabolites with MWAS LM p<0.1)',xlab='LM Z',ylab='LMM Z')] + abline(0,1,col='red') + abline(0,999) + abline(0,0) }
 { mwas[intrx_lm_p < .05, plot(intrx_lm_est/intrx_lm_se, intrx_lmm_est/intrx_lmm_se, col=rgb(0,0,0,0.2),pch=16,main='LM vs. LMM Interaction Z-scores\n(metabolites with GxM  LM p<0.1)',xlab='LM Z',ylab='LMM Z')] + abline(0,1,col='red') + abline(0,999) + abline(0,0) }
@@ -283,4 +323,129 @@ mwas[unique_met_id%in%c('QI3365_C8_pos', 'QI5103_C8_pos', 'QI13024_C18_neg', 'QI
 
 cor(mwas$intrx_lmm_est,mwas$intrx_lmm_est_0,use='complete.obs')
 cor(mwas$intrx_lmm_est,mwas$intrx_lmm_est_Δ,use='complete.obs')
+cor(abs(mwas_new$intrx_lmm_est),abs(mwas_new$intrx_lmm_est_0),use='complete.obs')
+cor(abs(mwas_new$intrx_lmm_est),abs(mwas_new$intrx_lmm_est_Δ),use='complete.obs')
+ggplot(mwas_new, aes(x=intrx_lmm_est/intrx_lmm_se,y=intrx_lmm_est_0/intrx_lmm_se_0)) + geom_point() + geom_text_repel(data=mwas_new, aes(label=unique_met_id), size=3, show.legend=F) + geom_abline(slope=1)
+ggplot(mwas_new, aes(x=intrx_lmm_est/intrx_lmm_se,y=intrx_lmm_est_Δ/intrx_lmm_se_Δ)) + geom_point() + geom_text_repel(data=mwas_new, aes(label=unique_met_id), size=3, show.legend=F) + geom_abline(slope=1)
+
+ggplot(mwas_new, aes(x=intrx_lmm_est_0/intrx_lmm_se_0,y=intrx_lmm_est_Δ/intrx_lmm_se_Δ)) + geom_point() + geom_text_repel(data=mwas, aes(label=unique_met_id), size=3, show.legend=F) + geom_abline(slope=1)
+
+plot(abs(mwas$intrx_lmm_est),abs(mwas$intrx_lmm_est_0), main='baseline')
+plot(abs(mwas$intrx_lmm_est),abs(mwas$intrx_lmm_est_Δ), main='delta')
+#unique_met_id %in% c('QI3365_C8_pos', 'QI5103_C8_pos', 'QI13024_C18_neg', 'QI48826_C18_neg', 'QI7292_C8_pos', 'QI46325_C18_neg', 'QI42688_C18_neg', 'QI54634_C18_neg', 'QI45506_C18_neg', 'QI5007_C8_pos', 'QI14471_HILIC_pos')
+
+
+
+{ mwas[unique_met_id %in% mets, plot(      lm_est/      lm_se,       lmm_est/      lmm_se, col=rgb(0,0,0,0.2),pch=16,main='LM vs. LMM MWAS Z-scores\n       (metabolites with MWAS LM p<0.1)',xlab='LM Z',ylab='LMM Z')] + abline(0,1,col='red') + abline(0,999) + abline(0,0) }
+{ mwas[unique_met_id %in% mets, plot(intrx_lm_est/intrx_lm_se, intrx_lmm_est/intrx_lmm_se, col=rgb(0,0,0,0.2),pch=16,main='LM vs. LMM Interaction Z-scores\n(metabolites with GxM  LM p<0.1)',xlab='LM Z',ylab='LMM Z')] + abline(0,1,col='red') + abline(0,999) + abline(0,0) }
+
+{ mwas[unique_met_id %in% mets, plot(      lm_est,       lmm_est, col=rgb(0,0,0,0.2),pch=16,main='LM vs. LMM MWAS Z-scores\n       (metabolites with MWAS LM p<0.1)',xlab='LM Z',ylab='LMM Z')] + abline(0,1,col='red') + abline(0,999) + abline(0,0) }
+{ mwas[unique_met_id %in% mets, plot(intrx_lm_est, intrx_lmm_est, col=rgb(0,0,0,0.2),pch=16,main='LM vs. LMM Interaction Z-scores\n(metabolites with GxM  LM p<0.1)',xlab='LM Z',ylab='LMM Z')] + abline(0,1,col='red') + abline(0,999) + abline(0,0) }
+
+
+# df w/ ests and z for LM & LMM, decomposed lmm baseline and delta... 
+# Plot w/ the 11 mets as the x axis, and above each is a colored dot for each of the above stats.
+# will prolly ned long format
+mets <- c('QI48826_C18_neg','QI7292_C8_pos','QI46325_C18_neg','QI42688_C18_neg','QI54634_C18_neg','QI45506_C18_neg','QI5007_C8_pos','QI14471_HILIC_pos',  'QI3365_C8_pos','QI5103_C8_pos','QI13024_C18_neg')
+df <- mwas[
+  ][ unique_met_id %in% mets
+    , .(unique_met_id,
+        intrx_lm_est,
+        intrx_lmm_est_0,
+        intrx_lmm_est,
+        intrx_lmm_est_Δ,
+        intrx_lm_z    = intrx_lm_est   /intrx_lm_se   ,
+        intrx_lmm_z_0 = intrx_lmm_est_0/intrx_lmm_se_0,
+        intrx_lmm_z   = intrx_lmm_est  /intrx_lmm_se  ,
+        intrx_lmm_z_Δ = intrx_lmm_est_Δ/intrx_lmm_se_Δ
+      )
+] #|>
+  melt(id.vars='unique_met_id')
+
+ggplot(df[grepl('z',variable)], aes(x=unique_met_id,y=value,fill=variable)) + geom_bar(stat='identity',position='dodge') + theme(axis.text.x=element_text(angle=45, hjust = 1))
+ggplot(df[grepl('est',variable)], aes(x=unique_met_id,y=value,fill=variable)) + geom_bar(stat='identity',position='dodge') + theme(axis.text.x=element_text(angle=45, hjust = 1))
+
+
+ggplot(mwas_new, aes(x=unique_met_id,y=intrx_lm_est)) + geom_bar(stat='identity',position='dodge')
+
+df[,unique_met_id:=NULL]
+df[, names(.SD) := NULL, .SDcols=patterns('z')]
+setnames(df,c('LM estimates','LMM estimates (baseline)','LMM estimates','LMM estimates (delta)'))#, 'LM z-scores','LMM z-scores (baseline)','LMM z-scores','LMM z-scores (delta)'))
+Heatmap(
+  cor_mtx <- cor(df,method='pearson'),
+  col=colorRamp2(c(0.5, 1), c("white", "red")),
+  cell_fun = \(j,i,x,y,w,h,col) grid.text(cor_mtx[i,j]|>round(digits=2),x,y,gp=gpar(fontsize=10)),
+  show_heatmap_legend=F,
+  column_title='Pearson correlations'
+)
+
+
+
+
+mwas_old <- copy(mwas)
+
+mwas_new <- mwas[unique_met_id %in%  c('QI48826_C18_neg','QI7292_C8_pos','QI46325_C18_neg','QI42688_C18_neg','QI54634_C18_neg','QI45506_C18_neg','QI5007_C8_pos','QI14471_HILIC_pos',  'QI3365_C8_pos','QI5103_C8_pos','QI13024_C18_neg')]
+
+mwas_new$Δ_intrx_lmm_fmla
+
+
+
+
 ```
+
+# Comparisons of variants significant in overlapping categories
+```{r}
+dt <- data.table(
+#signif_mvpa_proxy      = mwas[,          lmm_p < p_thresh_mwas],
+#signif_SNP_assoc       = mwas[,     main_lmm_p < p_thresh_mwas],
+##signif_mediator        = mwas[, med_lmm_acme_p < p_thresh_mwas],
+#signif_GxM             = mwas[,    intrx_lmm_p < p_thresh_mwas],
+#signif_nonlinear       = mwas[,       sq_lmm_p < p_thresh_mwas],
+#
+#signif_mediator_loose  = mwas[, med_lmm_acme_p < p_thresh_med_lmm  ]
+#signif_SNP_assoc_loose = mwas[,     main_lmm_p < p_thresh_intrx_lmm],
+#signif_GxM_loose       = mwas[,    intrx_lmm_p < p_thresh_intrx_lmm],
+#signif_nonlinear_loose = mwas[,       sq_lmm_p < p_thresh_intrx_lmm]
+
+#mediators_w_signif_SNP_assoc = mwas[med_lmm_acme_p < p_thresh_med_lmm,     main_lmm_p < p_thresh_intrx_lmm],
+#mediators_w_signif_GxM       = mwas[med_lmm_acme_p < p_thresh_med_lmm,    intrx_lmm_p < p_thresh_intrx_lmm],
+#mediators_w_signif_nonlinear = mwas[med_lmm_acme_p < p_thresh_med_lmm,       sq_lmm_p < p_thresh_intrx_lmm]
+
+signif_mvpa_proxy_.01= mwas[,          lmm_p < 0.01],
+signif_SNP_assoc_.01 = mwas[,     main_lmm_p < 0.01],
+signif_GxM_.01       = mwas[,    intrx_lmm_p < 0.01],
+signif_nonlinear_.01 = mwas[,       sq_lmm_p < 0.01],
+signif_mediator_.01  = mwas[, med_lmm_acme_p < 0.01]
+)
+dt[is.na(dt)] <- F
+dt[, names(.SD) := lapply(.SD,as.numeric), .SDcols=is.logical]
+
+upset(dt)
+
+sum(signif_mediator        & signif_GxM_loose, na.rm=T)
+sum(signif_nonlinear_loose & signif_GxM_loose, na.rm=T)
+
+which(signif_mediator        & signif_GxM_loose)
+which(signif_nonlinear_loose & signif_GxM_loose)
+
+sum(signif_mediator_loose, na.rm=T)
+
+
+library(UpSetR)
+movies <- read.csv( system.file("extdata", "movies.csv", package = "UpSetR"), header=T, sep=";" )
+mutations <- read.csv( system.file("extdata", "mutations.csv", package = "UpSetR"), header=T, sep = ",")
+upset(mutations)
+movies
+
+#cat(i<<-i+1,'/',.N,'\r') # Progress bar
+
+
+
+
+
+
+
+
+
+```
+
