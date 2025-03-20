@@ -20,13 +20,14 @@ options(mc.cores=6L)
 
 options(datatable.na.strings=c('NA',''))
 data <- fread('analysis_df.csv')
+variants <- grep('^rs[0-9]+', names(data), value=T)
 data[
   ][, mesa_id      := as.factor(mesa_id)
   ][, exam         := as.factor(exam)
-  ][, rs295849     := as.factor(rs295849) # rs295849 is numeric, but we temporarily set it to factor so it didn't get scaled.
-  ][, (names(.SD)) := lapply(.SD,scale), .SDcols=sapply(data,is.numeric)
-  ][, rs295849     := as.numeric(rs295849)
-  ][, rs295849_bin := fifelse(rs295849-1==0, 0, 1) # TODO: currently rs295849 is encoded as 1/2/3, fix this in script 01c. Moderated mediation can only handle a binary moderators.
+  ][, names(.SD)   := lapply(.SD, as.character), .SDcols=variants # Variants are numeric (0/1/2), but we temporarily set to character so they don't get scaled.
+  ][, names(.SD)   := lapply(.SD, scale       ), .SDcols=is.numeric
+  ][, names(.SD)   := lapply(.SD, as.numeric  ), .SDcols=variants
+  ][, paste0(names(.SD),'_bin') := lapply(.SD, \(geno) fifelse(geno==0,0,1)), .SDcols=variants # test.modmed only supports binary covariates apparently, so make binary versions of the variants.
 ]
 data_exam1 <- data[exam==1]
 data_exam2 <- data[exam==2]
@@ -37,11 +38,10 @@ data_exam5 <- data[exam==5]
 numeric_colnms  <- names(data)[sapply(data,is.numeric)]
 baseline_colnms <- paste0(numeric_colnms,'_0')
 delta_colnms    <- paste0(numeric_colnms,'_Δ')
-#data[, (baseline_colnms) := Map(.SD,f=min),     .SDcols=numeric_colnms,     by='mesa_id'           ]
-data[, (baseline_colnms) := .SD[exam==1],    .SDcols=numeric_colnms,     by='mesa_id'           ]
-data[, (   delta_colnms) := data[,.SDcols=numeric_colnms,.SD] - data[,.SDcols=baseline_colnms,.SD] ]
+data[, (baseline_colnms) := .SD[exam==1],    .SDcols=numeric_colnms,     by='mesa_id'              ]
+data[, (   delta_colnms) := data[,.SD,.SDcols=numeric_colnms] - data[,.SD,.SDcols=baseline_colnms] ]
 
-#data[, .SD, .SDcols=grepl('QI19074_HI|exam',names(data))]
+#data[mesa_id %in% mesa_id[duplicated(mesa_id)], .SD, .SDcols=grepl('QI19074_HI|exam',names(data)), by='mesa_id'] # Sanity check
 
 met_nms <- names(fread('metabolomics/QCd/merged_QCd.csv',nrows=0,drop=1))
 covars <- c('site', 'sex', 'age', 'ses_score', 'income', 'drinks_per_week', 'smoking', 'ahei_score', 'dash_score', paste0('gPC', 1:5), 'race')
