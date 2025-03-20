@@ -133,7 +133,9 @@ mwas <- mwas[
         summary( lmerTest::lmer(fmla,data) )$coefficients['mvpa_wins',] # lmerTest::lmer adds p-values
       }))
 
-  ][, {p_thresh_mwas <<- 0.05/calc_eff_n_metabolites(unique_met_id); .SD}
+  ][, p_thresh_mwas    := 0.05/calc_eff_n_metabolites(unique_met_id)
+  ][, p_thresh_med_lm  := 0.05/calc_eff_n_metabolites(unique_met_id[lm_p  < p_thresh_mwas])
+  ][, p_thresh_med_lmm := 0.05/calc_eff_n_metabolites(unique_met_id[lmm_p < p_thresh_mwas])
 
   # LM mediation on metabolites significant from the LM MWAS, exam 1 only.
   ][lm_p < p_thresh_mwas
@@ -162,9 +164,6 @@ mwas <- mwas[
       }))
   ][, .SDcols = \(col) any(lengths(col)==0), # NULL -> NA for rows with calculations skipped.
       (names(.SD)) := lapply(.SD, \(col) fifelse(lengths(col)==0, list(NA), col) |> unlist())
-
-  ][, {p_thresh_med_lm  <<- 0.05/calc_eff_n_metabolites(unique_met_id[lm_p  < p_thresh_mwas]); .SD}
-  ][, {p_thresh_med_lmm <<- 0.05/calc_eff_n_metabolites(unique_met_id[lmm_p < p_thresh_mwas]); .SD}
 
   # Other models
   ## LMM hdl_log ~ met + met^2 + covars (adding a nonlinear term)
@@ -198,15 +197,17 @@ for(variant in variants) {
             coefs[grepl(pat,rownames(coefs)),]
           }))
 
-    ][, {p_thresh_intrx_lm  <<- 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[med_lm_acme_p  < p_thresh_med_lm ])); .SD}
-    ][, {p_thresh_intrx_lmm <<- 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[med_lmm_acme_p < p_thresh_med_lmm])); .SD}
+    ][, paste0('p_thresh_intrx_lm_', variant) := 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[med_lm_acme_p  < p_thresh_med_lm ]))
+    ][, paste0('p_thresh_intrx_lmm_',variant) := 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[med_lmm_acme_p < p_thresh_med_lmm]))
+    #][, p_thresh_modmed_lm  := 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[intrx_lm_p < p_thresh_intrx_lm ]))
+    ][, paste0('p_thresh_modmed_lm', variant) := 0.05 # Hardcoded 0.05 b/c there are very few mets w/ that make it this far, and that causes an error in SVD calculation.
+    ][, paste0('p_thresh_modmed_lmm',variant) := 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[intrx_lmm_p < p_thresh_intrx_lmm]))
 
     # Run LM moderated mediation on metabolites significant from the interaction LM, exam 1 only.
     ][intrx_lm_p  < p_thresh_intrx_lm  | # Actualaly run using both LM & LMM significant metabolites because test.modmed does not implement support for LMMs yet, so LM is the best we can do: https://github.com/kosukeimai/mediation/issues/69
       intrx_lmm_p < p_thresh_intrx_lmm 
       , paste0(c('modmed_lm_acme_p_','modmed_lm_ade_p_'),variant) :=
           transpose(mcMap(modmed_lm_fmla_m,modmed_lm_fmla_y,unique_met_id, f=\(fmla_m,fmla_y,met) {
-            #cat(i<<-i+1,'/',.N,'\r')
             mediate(
               lm(fmla_m, data_exam1[!is.na(hdl_log)]),
               lm(fmla_y, data_exam1                 ),
@@ -222,9 +223,6 @@ for(variant in variants) {
     ][, .SDcols = \(col) any(lengths(col)==0), # Again, NULL -> NA for rows with calculations skipped.
         (names(.SD)) := lapply(.SD, \(col) fifelse(lengths(col)==0, list(NA), col) |> unlist())
 
-    #][, {p_thresh_modmed_lm  <<- 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[intrx_lm_p     < p_thresh_intrx_lm ])); .SD}
-    ][, {p_thresh_modmed_lm  <<- 0.05; .SD} # 0.05 b/c there are only 9 mets w/ signif intrx_p, and that causes an error in SVD calculation.
-    ][, {p_thresh_modmed_lmm <<- 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[intrx_lmm_p    < p_thresh_intrx_lmm])); .SD}
 
     # Other models
     ## LM GxM for other exams
