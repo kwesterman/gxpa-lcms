@@ -92,14 +92,6 @@ coalesce_samenames <- \(dt, force_coalesce=F) {
 
 # Join all datasets
 ```{r join, cache=T}
-# TMP
-#tmp1 <- fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')
-#tmp2 <- fread('phenotypes/MESA_HDL_PA_covars_12345.csv') |>
-#  setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) |>
-#  coalesce_samenames()
-#sum(tmp1$sidno %in% tmp2$sidno)
-# TMP
-
 # Create one dt containing all the IDs we would ever want to annotate.
 # That is, TOM_Ids with metabolomics info, and mesa_ids with PA info. Note that one mesa_id may correspond to multiple TOM_Ids.
 # Then, can merge with impunity using all.x=T for everything, without fear of losing any info.
@@ -107,32 +99,31 @@ data <-
 mergecoalesce(by='mesa_id', all=T, force_coalesce=T,
   fread('phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')[, mesa_id := sidno],
   fread('phenotypes/MESA_HDL_PA_covars_12345.csv')     [, mesa_id := `\\phs000209\\pht001116\\phv00084441\\sidno\\`]
-  )[,NONE:=NA][,mesa_id:=as.character(mesa_id)]      |> # Add an NA column, will be useful to fill variables with no measurements for a particular MESA exam.
+  )[,NONE:=NA][,mesa_id:=as.character(mesa_id)]      |> # Add an NA "NONE" column, useful to fill variables with no measurements for a particular MESA exam.
   setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) |> # Fixes some names e.g. '\phs000209\phv00084442\age1c\' -> 'age1c'
   coalesce_samenames(force_coalesce=T)               |>
   melt(
     variable.name = 'exam',
-    value.name = c('TOM_Id','TOP_Id','TOE_Id', 'hdl', 'season','month', 'income','ses_score','ahei_score','dash_score','drinks_per_week','age','bmi','smoking','site', 'pa','mod_pa','mvpa','vig_pa'),
     measure.vars = list(
-      c(      'tomid1',      'tomid2',        'tomid3',       'tomid4',       'tomid5' ),
-      c(      'topid1',      'topid2',        'topid3',       'topid4',       'topid5' ),
-      c(      'toeid1',      'toeid2',        'toeid3',       'toeid4',       'toeid5' ),
-      c(        'hdl1',        'hdl2',          'hdl3',         'hdl4',         'hdl5' ),
-      c(     'season1',     'season2',       'season3',      'season4',      'season5' ),
-      c(      'month1',      'month2',        'month3',       'month4',       'month5' ),
-      c(     'income1',     'income2',       'income3',         'NONE',      'income5' ),
-      c(    'F1_PC2_1',    'F1_PC2_2',      'F1_PC2_3',     'F1_PC2_4',     'F1_PC2_5' ),
-      c( 'ahei_2010_1',         'NONE',         'NONE',         'NONE',         'NONE' ),
-      c('dash_sodium1',         'NONE',         'NONE',         'NONE',         'NONE' ),
-      c(      'alcwk1c',        'NONE',         'NONE',         'NONE',         'NONE' ),
-      c(        'age1c',       'age2c',         'age3c',        'age4c',        'age5c'),
-      c(        'bmi1c',       'bmi2c',         'bmi3c',        'bmi4c',        'bmi5c'),
-      c(        'cig1c',       'cig2c',         'cig3c',        'cig4c',        'cig5c'),
-      c(       'site1c',      'site2c',        'site3c',       'site4c',       'site5c'),
-      c(     'exercm1c',    'exercm2c',      'exercm3c',         'NONE',     'exercm5c'),
-      c(      'pamcm1c',     'pamcm2c',       'pamcm3c',         'NONE',      'pamcm5c'),
-      c(     'pamvcm1c',    'pamvcm2c',      'pamvcm3c',         'NONE',     'pamvcm5c'),
-      c(      'pavcm1c',     'pavcm2c',       'pavcm3c',         'NONE',      'pavcm5c'))) |> suppressWarnings()
+      TOM_Id         =c(      'tomid1',      'tomid2',        'tomid3',       'tomid4',       'tomid5' ),
+      TOP_Id         =c(      'topid1',      'topid2',        'topid3',       'topid4',       'topid5' ),
+      TOE_Id         =c(      'toeid1',      'toeid2',        'toeid3',       'toeid4',       'toeid5' ),
+      hdl            =c(        'hdl1',        'hdl2',          'hdl3',         'hdl4',         'hdl5' ),
+      season         =c(     'season1',     'season2',       'season3',      'season4',      'season5' ),
+      month          =c(      'month1',      'month2',        'month3',       'month4',       'month5' ),
+      ses_score      =c(    'F1_PC2_1',    'F1_PC2_2',      'F1_PC2_3',     'F1_PC2_4',     'F1_PC2_5' ),
+      income         =c(     'income1',     'income2',       'income3',         'NONE',      'income5' ),
+      ahei_score     =c( 'ahei_2010_1',         'NONE',         'NONE',         'NONE',         'NONE' ),
+      dash_score     =c('dash_sodium1',         'NONE',         'NONE',         'NONE',         'NONE' ),
+      drinks_per_week=c(      'alcwk1c',        'NONE',         'NONE',         'NONE',         'NONE' ),
+      age            =c(        'age1c',       'age2c',         'age3c',        'age4c',        'age5c'),
+      bmi            =c(        'bmi1c',       'bmi2c',         'bmi3c',        'bmi4c',        'bmi5c'),
+      smoking        =c(        'cig1c',       'cig2c',         'cig3c',        'cig4c',        'cig5c'),
+      site           =c(       'site1c',      'site2c',        'site3c',       'site4c',       'site5c'),
+          pa         =c(     'exercm1c',    'exercm2c',      'exercm3c',         'NONE',     'exercm5c'),
+      mod_pa         =c(      'pamcm1c',     'pamcm2c',       'pamcm3c',         'NONE',      'pamcm5c'),
+        mvpa         =c(     'pamvcm1c',    'pamvcm2c',      'pamvcm3c',         'NONE',     'pamvcm5c'),
+      vig_pa         =c(      'pavcm1c',     'pavcm2c',       'pavcm3c',         'NONE',      'pavcm5c'))) |> suppressWarnings()
 data <- data[
   ][ !(duplicated(mesa_id) & is.na(TOM_Id)) # Only keep 1 row per TOM_Id. Or, 1 row if a mesa_id has no TOM_Ids
   ][, NWD_Id := fcoalesce(nwdid2,nwdid1)    # Merge NWD_Id (genotype ID) columns. Prefer the exam 2 genotype (more recent).
@@ -214,11 +205,11 @@ data <- data[
 
   ][ exam==1 & is.na(smoking) | smoking=='', smoking := 'NEVER'
   ][ exam==1 & is.na(income)  |  income=='', income  := 'Missing'
-  ][ exam==1 & is.na(season)  |  season=='', season  := 'Unknown' # All the same samples are missing season/month/site. 117 samps '', 21 sams NA. Should these be kept as 'Unknown' or discoarded? Only 2 have genotype data so doesn't relaly matter.
+  ][ exam==1 & is.na(season)  |  season=='', season  := 'Unknown' # All the same samples are missing season/month/site. 117 samps '', 21 samps NA. Should these be kept as 'Unknown' or discoarded? Only 2 have genotype data so doesn't really matter.
   ][ exam==1 & is.na(month)   |   month=='', month   := 'Unknown'
   ][ exam==1 & is.na(site)    |    site=='', site    := 'Unknown'
 
-  # Carry-over-from-previous-exam imputation (this is why we setorder()'d by exam before
+  # Carry-over-from-previous-exam imputation (this is why we setorder()'d by exam before)
   ][, .SDcols=c('hdl', 'pa','mvpa','mod_pa','vig_pa',
                 'age','bmi','sex',
                 'ahei_score','dash_score','ses_score','drinks_per_week',
@@ -232,7 +223,7 @@ data <- data[
   ][, race      := fifelse(race1c==1, 'WHITE, CAUCASIAN',
                    fifelse(race1c==2, 'CHINESE AMERICAN',
                    fifelse(race1c==3, 'BLACK, AFRICAN-AMERICAN',
-                   fifelse(race1c==4, 'HISPANIC', race1c)))) |> as.factor()
+                   fifelse(race1c==4, 'HISPANIC', as.character(race1c))))) |> as.factor()
   ][, smoking   := fifelse(smoking==0, 'NEVER',
                    fifelse(smoking==1, 'FORMER',
                    fifelse(smoking==2, 'CURRENT', smoking))) |> as.factor()
@@ -245,7 +236,7 @@ data <- data[
   ][, month     := as.factor(month)
   ][, site      := as.factor(site)
 
-  ][, sex := fcoalesce(gender1,Sex,SEX) |>
+  ][, sex := fcoalesce(as.character(gender1),Sex,SEX) |>
         sub(pattern='0|^F.*', replacement='FEMALE', ignore.case=T) |>
         sub(pattern='1|^M.*', replacement=  'MALE', ignore.case=T) |>
         factor(levels=c('FEMALE','MALE'))
@@ -277,7 +268,7 @@ PCA is intolerant to missing values, so we remove samples who have any missing v
 met_nms <- names(fread('metabolomics/QCd/merged_QCd.csv',nrows=0,drop=1))
 met_mtx <- data[
   ][ rowSums(is.na(data[,..met_nms]))==0 # Only samples with data for ALL metabolomics methods CP/CN/HP/AN, because PCA can't handle NAs
-  ][ exam==1 # TODO concider a way to include all exams' met data into the PCs? mPCs only used for rough exploration to probably not important, but idk.
+  ][ exam==1 # TODO consider a way to include all exams' met data into the PCs? mPCs only used for rough exploration to probably not important, but idk.
   ][, c('TOM_Id', ..met_nms)
 ] |> as.matrix(rownames=1)
 

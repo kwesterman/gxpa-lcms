@@ -1,4 +1,4 @@
-chr,fnm,drs,index_fnm,index_drs
+chr,bcf_fnm,bcf_drs,idx_fnm,idx_drs
 1,freeze.9b.chr1.pass_and_fail.gtonly.minDP0.bcf,drs://dg.4503:dg.4503/6a02bb01-f718-4fa4-a2da-33e86c925eb0,freeze.9b.chr1.pass_and_fail.gtonly.minDP0.bcf.csi,drs://dg.4503:dg.4503/00179aea-0677-4ab1-9003-8d1b009e6f05
 2,freeze.9b.chr2.pass_and_fail.gtonly.minDP0.bcf,drs://dg.4503:dg.4503/1f163ab2-85d4-4cbe-ba71-c2a33c6d1965,freeze.9b.chr2.pass_and_fail.gtonly.minDP0.bcf.csi,drs://dg.4503:dg.4503/e9d27cad-d016-4c94-94be-f1d3f9a1ddd2
 3,freeze.9b.chr3.pass_and_fail.gtonly.minDP0.bcf,drs://dg.4503:dg.4503/973739e5-54ec-4c63-8ec3-e072a4d2f438,freeze.9b.chr3.pass_and_fail.gtonly.minDP0.bcf.csi,drs://dg.4503:dg.4503/ab00285e-5b94-4acf-b641-5ade7dd0f9ec
