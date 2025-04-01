@@ -1,20 +1,45 @@
-# Lib
+NOTE: As this notebook access protected TOPMed genetic data files, this notebook will only work if run in the gxpa-lcms-mediation workspace.
 ```{r}
 library(data.table)
 if(!file.exists("bcftools/bcftools")) system("git clone --recurse-submodules https://github.com/samtools/htslib.git; git clone https://github.com/samtools/bcftools.git; cd bcftools; make")
+
+vs <- fread('variants_of_interest.csv')[,chr:=as.character(chr)]
+geno <- fread('freeze9b_geno_files_drs.csv')
+dt <- geno[vs,on='chr']
 ```
 
 ```{r}
-# Variant of interest: rs295849 (chr17:36804493)
-bcf_drs <- "drs://dg.4503:dg.4503/5e649ac5-cf10-4cea-9003-3f9f585cf31b"
-idx_drs <- "drs://dg.4503:dg.4503/9742725a-b4d7-4b66-a517-4588295df747"
-bcf_url <- system(paste("tnu drs access", bcf_drs), intern=T)
-idx_url <- system(paste("tnu drs access", idx_drs), intern=T)
+dt[1, by=chr, {
+  writeLines(paste0(chr,'\t',pos), 'var_regions.txt')
+  writeLines(rsid,                 'var_ids.txt'    )
+  bcf_drs <- bcf_drs[1]
+  idx_drs <- idx_drs[1]
+  bcf_url <- system(paste('tnu drs access', bcf_drs), intern=T)
+  idx_url <- system(paste('tnu drs access', idx_drs), intern=T)
+  system(paste0("curl '",idx_url,"' -o idx.csi")) # Download index file, name it idx.csi
+  fread(cmd = paste0(
+    "bcftools/bcftools view",
+      " -R var_regions.txt",
+      " -i'ID=@var_ids.txt'",
+      " '",bcf_url,"##idx##idx.csi'", # bcf_url could have many funny characters, so I wrap it in single quotes so the shell won't interpret them.
+    " | ",
+    "bcftools/bcftools +bcftools/plugins/dosage.so"
+  ))
+}]
+```
+
+
+# Old
+```{r}
+bcf_drs <- 'drs://dg.4503:dg.4503/5e649ac5-cf10-4cea-9003-3f9f585cf31b'
+idx_drs <- 'drs://dg.4503:dg.4503/9742725a-b4d7-4b66-a517-4588295df747'
+bcf_url <- system(paste('tnu drs access', bcf_drs), intern=T)
+idx_url <- system(paste('tnu drs access', idx_drs), intern=T)
 system(paste0("curl '",idx_url,"' -o idx.csi"))
 tmp <- fread(cmd = paste0(
   "bcftools/bcftools view",
-    " -r chr17:36804493",
-    " -i'ID=\"rs295849\"'",
+    " -R var_regions.txt",
+    " -i'ID=@var_ids.txt'",
     " '",bcf_url,"##idx##idx.csi'",
   " | ",
   "bcftools/bcftools +bcftools/plugins/dosage.so"
@@ -27,4 +52,11 @@ dosages  <- data.table(
 )
 fwrite(dosages,"dosages.csv")
 # Samples as rows, SNPs as columns. For merging with pheno data later.
+```
+
+# TMP
+While TOPMed Exchange Area DRS URIs / terra-notebook-utils are still broken, using this
+```{r}
+#fwrite(readRDS("analysis_genotypes.rds")[c("NWD_ID","rs295849")], "genotypes.csv")
+fwrite(readRDS("old/analysis_genotypes.rds"), "genotypes.csv")
 ```
