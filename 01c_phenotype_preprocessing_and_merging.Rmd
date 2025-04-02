@@ -15,9 +15,10 @@ library(readxl)
 options(datatable.na.strings=c('NA',''))
 
 if(!file.exists('phenotypes/')) {
-  system('gsutil -m cp -r gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/phenotypes .')
-  system('gsutil    cp    gs://fc-secure-4b3e979d-ba8b-43c4-a5ec-b41ab42ce606/MesaMetabolomics_PilotX01_2023_02_16/MESA_PhenoUsmanSIDNO_20230214.txt phenotypes')
+  system('gcloud storage cp -r gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/phenotypes .')
+  system('gcloud storage cp    gs://fc-secure-4b3e979d-ba8b-43c4-a5ec-b41ab42ce606/MesaMetabolomics_PilotX01_2023_02_16/MESA_PhenoUsmanSIDNO_20230214.txt phenotypes/')
 }
+system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/dosages.csv .')
 
 winsorizeBySd <- function(x, SDs=5) {
   lower_bound <- mean(x,na.rm=T) - SDs*sd(x,na.rm=T)
@@ -138,7 +139,7 @@ Reduce(\(x,l) mergecoalesce(x, l$y, by=l$by, force_coalesce=T, all.x=T),
     list(by='mesa_id', y=fread('phenotypes/id_match_file.csv')                   [, mesa_id := as.character(Cohort_Specific_Id)][!duplicated(mesa_id)]                  ), # Duplicated mesa_ids due to TOR replicates. We aren't using RNAseq data so just pick whichever.
     list(by='mesa_id', y=fread('phenotypes/freeze9b_sample_annot_2020-08-20.txt')[, mesa_id := subject_id][!duplicated(mesa_id)]                                        ),
     list(by='mesa_id', y=fread('phenotypes/SHARe_AncilMesaNMR_LP4_DS.txt')       [, mesa_id := as.character(subject_id)]                                                ),
-    list(by= 'NWD_Id', y=fread('genotypes.csv')                                  [, NWD_Id := NWD_ID]                                                                   ),
+    list(by= 'NWD_Id', y=fread('dosages.csv')                                                                                                                           ),
     list(by= 'NWD_Id', y=fread('phenotypes/freeze9_pcair_results.tsv')           [, NWD_Id := sample.id]                                                                ),
     list(by= 'TOM_Id', y=fread('metabolomics/sample_info.csv')                   [, TOM_Id := sample_id]                                                                ),
     list(by= 'TOM_Id', y=fread('metabolomics/QCd/merged_QCd.csv')                                                                                                       )) # Merge metabolomics last b/c it adds tons of cols

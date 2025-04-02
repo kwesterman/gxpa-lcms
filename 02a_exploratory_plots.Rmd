@@ -23,7 +23,7 @@ data <- fread('analysis_df.csv')[,exam:=as.factor(exam)]
 # Summary table of relevant variables
 ```{r summary-tbl, cache=T, cache.depend=digest::digest(data)}
 data[
-  ][, .SD, .SDcols=patterns('^age$|bmi$|sex|hdl$|pa$|ahei|dash|ses|drinks|race$|^rs') #.(age, bmi, sex, hdl, pa, mod_pa, mvpa, vig_pa, ahei_score, dash_score, ses_score, drinks_per_week, race, rs295849)
+  ][, .SD, .SDcols=patterns('^age$|bmi$|sex|hdl$|pa$|ahei|dash|ses|drinks|race$|^chr') #.(age, bmi, sex, hdl, pa, mod_pa, mvpa, vig_pa, ahei_score, dash_score, ses_score, drinks_per_week, race, chr17_36804493_G_T)
   ][, has_metabolomics := !is.na(data$TOM_Id)
   #][ is.na(sex), sex := 'Unknown'
   ] |>
@@ -119,12 +119,12 @@ Another set of models is `hdl_log ~ pa_or_snp_variable_transformed + covar_set`,
 ```{r lms, cache=T, cache.depend=digest::digest(data)}
 # mPC ~ pa_or_snp + covars
 ys <- paste0('mPC',1:9)
-xs <- c('rs295849','pa_bin','pa','mod_pa','mvpa','vig_pa')
+xs <- c('chr17_36804493_G_T','pa_bin','pa','mod_pa','mvpa','vig_pa')
 lm_runs_w_mPC_outcome <- CJ(ys, xs, covar_sets, sorted=F)
 
 # hdl_log ~ transformed_pa_or_snp + covars
 ys <- 'hdl_log'
-xs <- c('rs295849', 'pa',       'mod_pa',       'mvpa',       'vig_pa',
+xs <- c('chr17_36804493_G_T', 'pa',       'mod_pa',       'mvpa',       'vig_pa',
                     'pa_log',   'mod_pa_log',   'mvpa_log',   'vig_pa_log',
                     'pa_wins',  'mod_pa_wins',  'mvpa_wins',  'vig_pa_wins',
                     'pa_trunc', 'mod_pa_trunc', 'mvpa_trunc', 'vig_pa_trunc')
@@ -176,7 +176,7 @@ ggplot(runs[grepl('hdl',ys)], aes(y=estimate, x=covar_sets, color=covar_sets)) +
 ```
 ```{r lm-plot3, cache=2, cache.depends=digest::digest(data), fig.width=12, fig.height=6}
 runs[ys=='hdl_log' &
-     xs != 'rs295849' &
+     xs != 'chr17_36804493_G_T' &
      covar_sets=='+gPCs'
    ][order(-t)
    ][, xs := factor(xs,levels=xs) # So ggplot doesn't alphabetically order things
@@ -200,7 +200,7 @@ data2hist_quant <- melt(data[, c('exam','sex', ..vars2hist_quant)],
 ][, `sex_+1sd`:= sex_means + sd(val,na.rm=T), by=.(var,sex)
 ]
 
-vars2hist_categ <- c('race','smoking','income','rs295849')
+vars2hist_categ <- c('race','smoking','income','chr17_36804493_G_T')
 data2hist_categ <- melt(data[, c('exam','sex', ..vars2hist_categ)],
   measure.vars  = vars2hist_categ,
   variable.name = 'var',

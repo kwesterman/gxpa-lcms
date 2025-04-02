@@ -3,60 +3,45 @@ NOTE: As this notebook access protected TOPMed genetic data files, this notebook
 library(data.table)
 if(!file.exists("bcftools/bcftools")) system("git clone --recurse-submodules https://github.com/samtools/htslib.git; git clone https://github.com/samtools/bcftools.git; cd bcftools; make")
 
-vs <- fread('variants_of_interest.csv')[,chr:=as.character(chr)]
-geno <- fread('freeze9b_geno_files_drs.csv')
-dt <- geno[vs,on='chr']
+vs  <- fread('variants_of_interest.csv')[,chr:=as.character(chr)]
+drs <- fread('mesa_geno_files_drs.csv')
+dt  <- drs[vs,on='chr']
 ```
 
 ```{r}
-dt[1, by=chr, {
-  writeLines(paste0(chr,'\t',pos), 'var_regions.txt')
-  writeLines(rsid,                 'var_ids.txt'    )
-  bcf_drs <- bcf_drs[1]
-  idx_drs <- idx_drs[1]
-  bcf_url <- system(paste('tnu drs access', bcf_drs), intern=T)
-  idx_url <- system(paste('tnu drs access', idx_drs), intern=T)
-  system(paste0("curl '",idx_url,"' -o idx.csi")) # Download index file, name it idx.csi
+get_dosage <- \(vcf_url, idx_fnm, chr) {
   fread(cmd = paste0(
     "bcftools/bcftools view",
-      " -R var_regions.txt",
-      " -i'ID=@var_ids.txt'",
-      " '",bcf_url,"##idx##idx.csi'", # bcf_url could have many funny characters, so I wrap it in single quotes so the shell won't interpret them.
+      " -R ",chr,"_var_regions.txt",
+      " -i'ID=@",chr,"_var_ids.txt'",
+      " '",vcf_url,"##idx##",idx_fnm,"'", # vcf_url could have funny characters, so wrap in single quotes so the shell won't interpret them.
     " | ",
     "bcftools/bcftools +bcftools/plugins/dosage.so"
-  ))
+))}
+
+# Extract genotypes (from both the HMB and HMB-NPU consent group files)
+dosages <- dt[, by=chr, {
+  writeLines(paste0(chr,'\t',pos), paste0(chr[1],'_var_regions.txt'))
+  writeLines(rsid,                 paste0(chr[1],'_var_ids.txt'    ))
+
+  # HMB                                                                     # HMB-NPU
+  vcf_hmb_drs <- vcf_hmb_drs[1];                                            vcf_npu_drs <- vcf_npu_drs[1]
+  csi_hmb_drs <- csi_hmb_drs[1];                                            csi_npu_drs <- csi_npu_drs[1]
+  vcf_hmb_url <- system(paste('tnu drs access', vcf_hmb_drs), intern=T);    vcf_npu_url <- system(paste('tnu drs access', vcf_npu_drs), intern=T)
+  csi_hmb_url <- system(paste('tnu drs access', csi_hmb_drs), intern=T);    csi_npu_url <- system(paste('tnu drs access', csi_npu_drs), intern=T)
+  system(paste0("curl '",csi_hmb_url,"' -o idx_hmb.csi"));                  system(paste0("curl '",csi_npu_url,"' -o idx_npu.csi")) # Download VCF index file to allow fast random access to VCF file of VCF file.
+  dosage_hmb <- get_dosage(vcf_hmb_url,  'idx_hmb.csi', chr[1]);            dosage_npu <- get_dosage(vcf_npu_url,  'idx_npu.csi', chr[1])
+
+  dosage <- merge(dosage_hmb, dosage_npu, all=T)
 }]
-```
 
+dosages <- vs[
+  ][dosages, on=c(chr='#[1]CHROM', pos='[2]POS')
+  ][, cpaid := paste(chr, pos, `[3]REF`, `[4]ALT`, sep='_') # Explicit chr_pos_ref_alt IDs, so will be robust to multiallelic sites.
+  ][, `:=`(gene=NULL, rsid=NULL, chr=NULL, i.chr=NULL, pos=NULL, analysis=NULL, `[3]REF`=NULL, `[4]ALT`=NULL)
+] |> transpose(make.names='cpaid', keep.names='NWD_Id')
+dosages[, NWD_Id := sub('^\\[[0-9]+\\]', '', NWD_Id) ] # "[123]NWD987" -> "NWD987"
 
-# Old
-```{r}
-bcf_drs <- 'drs://dg.4503:dg.4503/5e649ac5-cf10-4cea-9003-3f9f585cf31b'
-idx_drs <- 'drs://dg.4503:dg.4503/9742725a-b4d7-4b66-a517-4588295df747'
-bcf_url <- system(paste('tnu drs access', bcf_drs), intern=T)
-idx_url <- system(paste('tnu drs access', idx_drs), intern=T)
-system(paste0("curl '",idx_url,"' -o idx.csi"))
-tmp <- fread(cmd = paste0(
-  "bcftools/bcftools view",
-    " -R var_regions.txt",
-    " -i'ID=@var_ids.txt'",
-    " '",bcf_url,"##idx##idx.csi'",
-  " | ",
-  "bcftools/bcftools +bcftools/plugins/dosage.so"
-))
-
-tmp <- t(tmp[,5:length(tmp), with=F])
-dosages  <- data.table(
-  sample_id=sub("\\[[0-9]+\\]","",rownames(tmp)), # Remove "[#]" prefix from each name, strange artifact of bcftools dosage output
-  rs295849=as.numeric(tmp)
-)
-fwrite(dosages,"dosages.csv")
-# Samples as rows, SNPs as columns. For merging with pheno data later.
-```
-
-# TMP
-While TOPMed Exchange Area DRS URIs / terra-notebook-utils are still broken, using this
-```{r}
-#fwrite(readRDS("analysis_genotypes.rds")[c("NWD_ID","rs295849")], "genotypes.csv")
-fwrite(readRDS("old/analysis_genotypes.rds"), "genotypes.csv")
+fwrite(dosages, 'dosages.csv')
+system('gcloud storage cp dosages.csv $WORKSPACE_BUCKET')
 ```
