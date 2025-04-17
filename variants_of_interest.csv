@@ -1,18 +1,18 @@
-gene,rsid,chr,pos,analysis
-CLASP1,rs2862183,chr2,121657822,old
-LHX1,rs295849,chr17,36804493,old
-SNTA1,rs141588480,chr20,33426107,old
-CNTNAP2,rs190748049,chr7,146721168,old
-"",rs77810251,chr7,121864095,old
-intron variant - UVRAG,rs116729566,chr11,76132741,PA-Lipid
-intron variant - PDE4B,rs146595007,chr1,66325030,PA-Lipid
-3 prime UTR variant - VAMP4,rs7551845,chr1,171704481,PA-Lipid
-intron variant - ESRRG,rs112819402,chr1,216916109,PA-Lipid
-intergenic variant,rs7538720,chr1,232879490,PA-Lipid
-intron variant - EIF3B,rs1054062,chr7,2376199,PA-Lipid
-intergenic variant,rs112475136,chr7,98257147,PA-Lipid
-intron variant - IDO2,rs147034025,chr8,39963811,PA-Lipid
-intron variant - TSNARE1,rs78327102,chr8,142322713,PA-Lipid
-intergenic variant,rs550180470,chr12,54904589,PA-Lipid
-intron variant - KCNK10,rs10146950,chr14,88305056,PA-Lipid
-intron variant - RGS9,rs920732,chr17,65101281,PA-Lipid
+gene,rsid,chr,pos,analysis,annotation
+CLASP1,rs2862183,chr2,121657822,old,intron variant
+LHX1,rs295849,chr17,36804493,old,intergenic variant
+SNTA1,rs141588480,chr20,33426107,old,intron variant
+CNTNAP2,rs190748049,chr7,146721168,old,intron variant
+PTPRZ1,rs77810251,chr7,121864095,old,intergenic variant
+UVRAG,rs116729566,chr11,76132741,PA-Lipid,intron variant
+PDE4B,rs146595007,chr1,66325030,PA-Lipid,intron variant
+VAMP4,rs7551845,chr1,171704481,PA-Lipid,3 prime UTR variant
+ESRRG,rs112819402,chr1,216916109,PA-Lipid,intron variant
+PCNX2,rs7538720,chr1,232879490,PA-Lipid,intergenic variant
+EIF3B,rs1054062,chr7,2376199,PA-Lipid,intron variant
+TECPR1,rs112475136,chr7,98257147,PA-Lipid,intergenic variant
+IDO2,rs147034025,chr8,39963811,PA-Lipid,intron variant
+TSNARE1,rs78327102,chr8,142322713,PA-Lipid,intron variant
+NA,rs550180470,chr12,54904589,PA-Lipid,intergenic variant
+KCNK10,rs10146950,chr14,88305056,PA-Lipid,intron variant
+RGS9,rs920732,chr17,65101281,PA-Lipid,intron variant
