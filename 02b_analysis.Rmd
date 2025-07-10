@@ -7,10 +7,10 @@ pre code { overflow-x: scroll; white-space: pre; }
 
 ```{r setup, include=F}
 # Cheating and loading pre-computed results so that I don't have to wait 5hr to regenerate the render.
-knitr::opts_chunk$set(eval=F) # Comment this out to disable cheating mode
+#knitr::opts_chunk$set(eval=F) # Comment this out to disable cheating mode
 ```
-```{r cheat, eval=T, cache=T, cache.inval=file.mtime('mwas-250406.Rdata'), include=F}
-load('mwas-250429.RData') # Comment this out to disable cheating mode
+```{r cheat, eval=T, cache=T, cache.inval=file.mtime('mwas-250429.Rdata'), include=F}
+#load('mwas-250429.RData') # Comment this out to disable cheating mode
 ```
 
 # Setup
@@ -21,6 +21,7 @@ library(ggrepel)
 library(gtExtras)
 library(lme4)
 library(lmerTest) # so lmer() returns p-vals
+library(lmtest)
 library(mediation)
 library(parallel)
 
