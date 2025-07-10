@@ -7,10 +7,10 @@ pre code { overflow-x: scroll; white-space: pre; }
 
 ```{r setup, include=F}
 # Cheating and loading pre-computed results so that I don't have to wait 5hr to regenerate the render.
-#knitr::opts_chunk$set(eval=F) # Comment this out to disable cheating mode
+knitr::opts_chunk$set(eval=F) # Comment this out to disable cheating mode
 ```
 ```{r cheat, eval=T, cache=T, cache.inval=file.mtime('mwas-250406.Rdata'), include=F}
-#load('mwas-250418.RData') # Comment this out to disable cheating mode
+load('mwas-250429.RData') # Comment this out to disable cheating mode
 ```
 
 # Setup
@@ -138,11 +138,12 @@ one_offs <- mclapply(one_offs, \(fmla)
 
 ### Confirmation of HDL ~ PA assocation
 Model: `log_hdl ~ mvpa_wins + covariates + (1|mesa_id)`
+Only top 10 model terms are shown.
 ```{r, eval=T, echo=F}
 one_offs$hdl_pa_lm_fmla |>
   as.data.table(keep.rownames='term') |>
   (\(dt) dt[order(`Pr(>|t|)`)])() |>
-  head(n=10) |>
+  head(10) |>
   gt() |>
   gt_highlight_rows(rows=term=='mvpa_wins')
 ```
@@ -370,7 +371,7 @@ for(variant in variants) {
       , env = relevant_cols
     ][, names(.SD) := lapply(.SD,signif,2), .SDcols=is.numeric
   ] |> setnames(names(relevant_cols))
-  tbl <- sig |> head() |> gt()
+  tbl <- sig |> gt()
 
   cat('### ',variant,'\n')
   cat('Significant metabolites: ',nrow(sig),'\n\n')
@@ -379,7 +380,7 @@ for(variant in variants) {
 ```
 
 ## GxPA (MWAS)
-Total number of metabolites to start wtih: __`r nrow(mwas)`__ (effective # of tests: `r signif(0.05/mwas$p_thresh_mwas[1],3)`).
+Total number of metabolites to start with: __`r nrow(mwas)`__ (effective # of tests: `r signif(0.05/mwas$p_thresh_mwas[1],3)`).
 
 ```{r, echo=F, eval=T, results='asis'}
 for(variant in variants) {
@@ -405,7 +406,7 @@ for(variant in variants) {
       , env = relevant_cols
     ][, names(.SD) := lapply(.SD,signif,2), .SDcols=is.numeric
   ] |> setnames(names(relevant_cols))
-  tbl <- sig |> head() |> gt()
+  tbl <- sig |> gt()
 
   cat('### ',variant,'\n')
   cat('Significant metabolites: ',nrow(sig),'\n\n')
@@ -413,12 +414,40 @@ for(variant in variants) {
 }
 ```
 
+## Write
+```{r}
+fwrite(mwas,'mwas.csv')
+```
+
+## Correlations
+For metabolite identity exploration.
+```{r eval=F}
+signif_or_known_met_nms <- mwas[intrx_lmm_p_chr14_88305056_G_A  < p_thresh_mwas | !is.na(Metabolite), unique_met_id]
+signif_met_nms <- mwas[intrx_lmm_p_chr14_88305056_G_A  < p_thresh_mwas, unique_met_id]
+tmp <- data[, cor(.SD, method='pearson', use='complete.obs'), .SDcols=signif_or_known_met_nms]
+tmp2 <- as.data.table(tmp, keep.rownames='unique_met_id')
+tmp2 <- tmp2[, .SD, .SDcols=c('unique_met_id',signif_met_nms)]
+colnames(tmp2) <- paste0('cor_',colnames(tmp2))
+mwas_w_cors <- merge(mwas,tmp2,by.x='unique_met_id',by.y='cor_unique_met_id',all.x=T)
+fwrite(mwas_w_cors,'mwas_w_cors.csv')
+
+cats <- fread('metabolites_subclasses.csv')
+
+library(ComplexHeatmap)
+library(circlize)
+Heatmap(
+  cor_mtx <- tmp2[,-1],
+  col=colorRamp2(c(-1,0, 1), c('blue','white','red')),
+  #cell_fun = \(j,i,x,y,w,h,col) grid.text(cor_mtx[i,j]|>round(digits=2),x,y,gp=gpar(fontsize=10)),
+  #show_heatmap_legend=F,
+  column_title='Pearson correlations'
+)
+```
+
 # TODO
 ```{}
-LM/LMM comparison stuff
 Programmatic print out of moderated mediation results (even though I already know there are 0 significant)
 Add a couple lines to auto upload outputs to cloud at the end
-Talk w/ Kenny further about what's next, Δ vs. baseline bargraphs?
 ```
 
 
