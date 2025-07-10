@@ -20,7 +20,7 @@ data_csvs <- list(CP='metabolomics/raw/23_0207_MESA_Pilot_X01_Broad_C8-pos.csv',
                   HP='metabolomics/raw/23_0207_MESA_Pilot_X01_Broad_HILIC-pos.csv', # HILIC-positive
                   AN='metabolomics/raw/23_0210_MESA_Pilot_X01_BIDMC_Amide-neg.csv') # Amide-negative
 
-# Download original xlsx data and convert to csv, much faster to work with.
+# Download original xlsx data and convert to csv, faster to work with.
 if(!all(file.exists(unlist(data_csvs)))) {
   system("gsutil -m cp gs://fc-secure-4b3e979d-ba8b-43c4-a5ec-b41ab42ce606/MesaMetabolomics_PilotX01_2023_02_16/23_02* metabolomics/raw")
   data_xlsxs <- sub('.csv','.xlsx', data_csvs)

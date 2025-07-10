@@ -1,4 +1,4 @@
-NOTE: As this notebook access protected TOPMed genetic data files, this notebook will only work if run in the gxpa-lcms-mediation workspace.
+NOTE: As this notebook accesses protected TOPMed genetic data files, this notebook will only work if run in the gxpa-lcms-mediation workspace.
 ```{r}
 library(data.table)
 if(!file.exists("bcftools/bcftools")) system("git clone --recurse-submodules https://github.com/samtools/htslib.git; git clone https://github.com/samtools/bcftools.git; cd bcftools; make")
@@ -29,7 +29,7 @@ dosages <- dt[, by=chr, {
   csi_hmb_drs <- csi_hmb_drs[1];                                            csi_npu_drs <- csi_npu_drs[1]
   vcf_hmb_url <- system(paste('tnu drs access', vcf_hmb_drs), intern=T);    vcf_npu_url <- system(paste('tnu drs access', vcf_npu_drs), intern=T)
   csi_hmb_url <- system(paste('tnu drs access', csi_hmb_drs), intern=T);    csi_npu_url <- system(paste('tnu drs access', csi_npu_drs), intern=T)
-  system(paste0("curl '",csi_hmb_url,"' -o idx_hmb.csi"));                  system(paste0("curl '",csi_npu_url,"' -o idx_npu.csi")) # Download VCF index file to allow fast random access to VCF file of VCF file.
+  system(paste0("curl '",csi_hmb_url,"' -o idx_hmb.csi"));                  system(paste0("curl '",csi_npu_url,"' -o idx_npu.csi")) # Download VCF index files to allow fast random access.
   dosage_hmb <- get_dosage(vcf_hmb_url,  'idx_hmb.csi', chr[1]);            dosage_npu <- get_dosage(vcf_npu_url,  'idx_npu.csi', chr[1])
 
   dosage <- merge(dosage_hmb, dosage_npu, all=T)

@@ -76,7 +76,7 @@ coalesce_samenames <- \(dt, force_coalesce=F) {
       if(!force_coalesce) { 
         warning('Not coalescing these columns because their class doesn\'t match:\n', paste(capture.output(print(classes)), collapse='\n'))
         next
-      } else { # Force coalescing anyway (cast to character for maximum compatibility)
+      } else { # Force coalescing despite type mismatch (cast to character for maximum compatibility)
         cols_as.char <- dt[, lapply(.SD,as.character), .SDcols=patterns(exact_nm)]
         coalesced_col <- fcoalesce(cols_as.char)
       }
@@ -93,7 +93,7 @@ coalesce_samenames <- \(dt, force_coalesce=F) {
 
 # Join all datasets
 ```{r join, cache=T}
-# Create one dt containing all the IDs we would ever want to annotate.
+# Create one dt containing all the IDs we could want.
 # That is, TOM_Ids with metabolomics info, and mesa_ids with PA info. Note that one mesa_id may correspond to multiple TOM_Ids.
 # Then, can merge with impunity using all.x=T for everything, without fear of losing any info.
 data <-
@@ -136,7 +136,7 @@ Reduce(\(x,l) mergecoalesce(x, l$y, by=l$by, force_coalesce=T, all.x=T),
     list(by='mesa_id', y=fread('phenotypes/nmr_metabolites.csv')                 [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
     list(by='mesa_id', y=fread('phenotypes/mesa5_phenos_diet.csv')               [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
     list(by='mesa_id', y=fread('phenotypes/mesa5_phenos_basic.csv')              [, mesa_id := sub('phs000209.v13_', '', `\\_Parent Study Accession with Subject ID\\`)]),
-    list(by='mesa_id', y=fread('phenotypes/id_match_file.csv')                   [, mesa_id := as.character(Cohort_Specific_Id)][!duplicated(mesa_id)]                  ), # Duplicated mesa_ids due to TOR replicates. We aren't using RNAseq data so just pick whichever.
+    list(by='mesa_id', y=fread('phenotypes/id_match_file.csv')                   [, mesa_id := as.character(Cohort_Specific_Id)][!duplicated(mesa_id)]                  ), # Duplicated mesa_ids due to TOR id replicates. We aren't using RNAseq data so just pick whichever.
     list(by='mesa_id', y=fread('phenotypes/freeze9b_sample_annot_2020-08-20.txt')[, mesa_id := subject_id][!duplicated(mesa_id)]                                        ),
     list(by='mesa_id', y=fread('phenotypes/SHARe_AncilMesaNMR_LP4_DS.txt')       [, mesa_id := as.character(subject_id)]                                                ),
     list(by= 'NWD_Id', y=fread('dosages.csv')                                                                                                                           ),
@@ -152,8 +152,8 @@ data <- data |>
   setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) |> # Fixes some names e.g. '\phs000209\phv00084442\age1c\' -> 'age1c'
   setnames(\(nm) gsub(      '\\\\'     ,  '',   nm)) |> # Rm remaining backslashes
   setnames(\(nm)  sub('^PC'            , 'gPC', nm)) |> # 'PC#' -> 'gPC#' To distinguish genetic PCs from metabolite PCs we'll add later
-  coalesce_samenames(force_coalesce=T)                  # Merge any columns whose names are now duplicated after renaming stuff
-data <- data[, `:=`(                                  # Manually pretty up some names
+  coalesce_samenames(force_coalesce=T)                  # Coalesce any columns whose names are now duplicated after renaming stuff
+data <- data[, `:=`(                                    # Manually pretty up some names
    # SHARe...txt      #nmr...csv
    HDL_C=nhdlc1,      HDL_C_lp3=nhdlc31c,
    HDL_P=chdlp1,      HDL_P_lp3= hdlp31c,
@@ -197,7 +197,7 @@ data <- data[
         dash_median <<- median(     dash_score, na.rm=T);
        drink_median <<- median(drinks_per_week, na.rm=T); .SD }
 
-  ][ exam==1 & is.na(            age),             age :=   age_median # Technically we have the information to impute this more accurately but I am too lazy and it's only for 117 samples
+  ][ exam==1 & is.na(            age),             age :=   age_median # Technically we have the information to impute age more accurately but I am too lazy and it's only for 117 samples
   ][ exam==1 & is.na(            bmi),             bmi :=   bmi_median
   ][ exam==1 & is.na(      ses_score),       ses_score :=   ses_median
   ][ exam==1 & is.na(     ahei_score),      ahei_score :=  ahei_median
