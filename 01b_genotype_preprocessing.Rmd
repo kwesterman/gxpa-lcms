@@ -3,8 +3,8 @@ NOTE: As this notebook accesses protected TOPMed genetic data files, this notebo
 library(data.table)
 if(!file.exists("bcftools/bcftools")) system("git clone --recurse-submodules https://github.com/samtools/htslib.git; git clone https://github.com/samtools/bcftools.git; cd bcftools; make")
 
-vs  <- fread('variants_of_interest.csv')[,chr:=as.character(chr)]
-drs <- fread('mesa_geno_files_drs.csv')
+vs  <- fread(cmd='gcloud storage cat gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/variants_of_interest.csv')
+drs <- fread(cmd='gcloud storage cat gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/mesa_geno_files_drs.csv')
 dt  <- drs[vs,on='chr']
 ```
 

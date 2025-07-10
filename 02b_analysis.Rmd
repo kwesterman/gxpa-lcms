@@ -29,17 +29,18 @@ options(mc.cores=6L)
 options(datatable.na.strings=c('NA',''))
 ```
 ```{r data}
-variants <- fread('variants_of_interest.csv')$cpaid
+variants_of_interest <- fread(cmd='gcloud storage cat gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/variants_of_interest.csv')
+cpaids <- variants_of_interest$cpaid
 
 data <- fread('analysis_df.csv')[
   ][, mesa_id    := as.factor(mesa_id)
   ][, exam       := as.factor(exam)
   # Variants are numeric (0/1/2), but we temporarily set to character so they don't get scale()'d.
-  ][, names(.SD) := lapply(.SD, as.character), .SDcols=variants
+  ][, names(.SD) := lapply(.SD, as.character), .SDcols=cpaids
   ][, names(.SD) := lapply(.SD, scale       ), .SDcols=is.numeric
-  ][, names(.SD) := lapply(.SD, as.numeric  ), .SDcols=variants
-  # test.modmed() only supports binary covariates apparently, so make binary versions of the variants.
-  ][, paste0(names(.SD),'_bin') := lapply(.SD, \(geno) fifelse(geno==0,0,1)), .SDcols=variants
+  ][, names(.SD) := lapply(.SD, as.numeric  ), .SDcols=cpaids
+  # test.modmed() only supports binary covariates apparently, so make binary versions of the cpaids.
+  ][, paste0(names(.SD),'_bin') := lapply(.SD, \(geno) fifelse(geno==0,0,1)), .SDcols=cpaids
 ]
 
 data_exam1 <- data[exam==1]
@@ -90,24 +91,24 @@ mwas <- mwas[
   ][,                lm_fmla               :=  paste0(unique_met_id,' ~ ',                                        'mvpa_wins',         ' + ',paste(covars,collapse='+'))
   ][,            med_lm_fmla_m             :=  paste0(unique_met_id,' ~ ',                                        'mvpa_wins',         ' + ',paste(covars,collapse='+'))
   ][,            med_lm_fmla_y             :=  paste0(  'hdl_log'  ,' ~ ',unique_met_id,                    ' + ','mvpa_wins',         ' + ',paste(covars,collapse='+'))
-  ][, paste0( 'intrx_lm_fmla_',  variants) :=  lapply(variants, \(variant) paste0(  'hdl_log',  ' ~ ',unique_met_id,'*',variant,       ' + ','sex*',variant,' + ',paste(covars,collapse='+')))
-  ][, paste0('modmed_lm_fmla_m_',variants) :=  lapply(variants, \(variant) paste0(unique_met_id,' ~ ',                                       'sex*',variant,'_bin',' + ','mvpa_wins*',variant,'_bin',' + ',paste(covars,collapse='+')))
-  ][, paste0('modmed_lm_fmla_y_',variants) :=  lapply(variants, \(variant) paste0(  'hdl_log',  ' ~ ',unique_met_id,'*',variant,'_bin',' + ','sex*',variant,'_bin',' + ','mvpa_wins*',variant,'_bin',' + ',paste(covars,collapse='+')))
+  ][, paste0( 'intrx_lm_fmla_',  cpaids) :=  lapply(cpaids, \(cpaid) paste0(  'hdl_log',  ' ~ ',unique_met_id,'*',cpaid,       ' + ','sex*',cpaid,' + ',paste(covars,collapse='+')))
+  ][, paste0('modmed_lm_fmla_m_',cpaids) :=  lapply(cpaids, \(cpaid) paste0(unique_met_id,' ~ ',                                       'sex*',cpaid,'_bin',' + ','mvpa_wins*',cpaid,'_bin',' + ',paste(covars,collapse='+')))
+  ][, paste0('modmed_lm_fmla_y_',cpaids) :=  lapply(cpaids, \(cpaid) paste0(  'hdl_log',  ' ~ ',unique_met_id,'*',cpaid,'_bin',' + ','sex*',cpaid,'_bin',' + ','mvpa_wins*',cpaid,'_bin',' + ',paste(covars,collapse='+')))
 
   ## LMM (basically just adding a random intercept term to the LM formulas.)
   ][,                lmm_fmla               := paste(lm_fmla,       ' + (1|mesa_id)')
   ][,            med_lmm_fmla_m             := paste(med_lm_fmla_m, ' + (1|mesa_id)')
   ][,            med_lmm_fmla_y             := paste(med_lm_fmla_y, ' + (1|mesa_id)')
-  ][, paste0( 'intrx_lmm_fmla_',  variants) := lapply(.SD, paste,   ' + (1|mesa_id)'), .SDcols=paste0( 'intrx_lm_fmla_',  variants)
+  ][, paste0( 'intrx_lmm_fmla_',  cpaids) := lapply(.SD, paste,   ' + (1|mesa_id)'), .SDcols=paste0( 'intrx_lm_fmla_',  cpaids)
   ### Unfortunately test.modmed can't handle LMMs yet: https://github.com/kosukeimai/mediation/issues/69
-  #][, paste0('modmed_lmm_fmla_m_',variants) := lapply(.SD, paste,   ' + (1|mesa_id)'), .SDcols=paste0('modmed_lm_fmla_m_',variants)
-  #][, paste0('modmed_lmm_fmla_y_',variants) := lapply(.SD, paste,   ' + (1|mesa_id)'), .SDcols=paste0('modmed_lm_fmla_y_',variants)
+  #][, paste0('modmed_lmm_fmla_m_',cpaids) := lapply(.SD, paste,   ' + (1|mesa_id)'), .SDcols=paste0('modmed_lm_fmla_m_',cpaids)
+  #][, paste0('modmed_lmm_fmla_y_',cpaids) := lapply(.SD, paste,   ' + (1|mesa_id)'), .SDcols=paste0('modmed_lm_fmla_y_',cpaids)
 
   # Other models of interest.
   ## The GxM LMM above, except with the metabolite term decomponsed into...                              ...baseline ↓ (exam1)...         ...and delta ↓ (examX - exam1) terms.
-  ][, paste0('Δ_intrx_lmm_fmla_',variants) := lapply(variants, \(variant) paste0(  'hdl_log',  ' ~ ',unique_met_id,'_0*',variant,' + ',unique_met_id,'_Δ*',variant,' + ','sex*',variant,' + ',paste(covars,collapse='+'),' + (1|mesa_id)'))
+  ][, paste0('Δ_intrx_lmm_fmla_',cpaids) := lapply(cpaids, \(cpaid) paste0(  'hdl_log',  ' ~ ',unique_met_id,'_0*',cpaid,' + ',unique_met_id,'_Δ*',cpaid,' + ','sex*',cpaid,' + ',paste(covars,collapse='+'),' + (1|mesa_id)'))
   ## Metabolite ~ genotype main effect.
-  ][, paste0('g_main_lmm_fmla_',variants) := lapply(variants, \(variant) paste0(unique_met_id,' ~ ',variant,' + ',paste(covars,collapse='+'),' + (1|mesa_id)'))
+  ][, paste0('g_main_lmm_fmla_',cpaids) := lapply(cpaids, \(cpaid) paste0(unique_met_id,' ~ ',cpaid,' + ',paste(covars,collapse='+'),' + (1|mesa_id)'))
   ## Checking for metabolites' nonlinear effects on HDL, which could confound mediation.
   ][, sq_lmm_fmla := paste0('hdl_log ~ ',unique_met_id,' + I(',unique_met_id,'^2) + ',paste(covars,collapse='+'),' + (1|mesa_id)')
 ]
@@ -119,10 +120,10 @@ one_offs <- data.table()[
   ][, hdl_pa_lmm_fmla := paste(hdl_pa_lm_fmla,'+ (1|mesa_id)')
 
   # Confirming we can reproduce the HDL ~ SNP * MVPA interaction this whole analysis is based on.
-  ][, paste0(      'hdl_gxpa_lm_fmla_', variants) := as.list(paste0('hdl_log ~ ',variants,'*mvpa_wins + ',variants,'*sex + ',paste(covars,collapse='+')                 ))
-  ][, paste0('hdl_gxpa_nosex_lm_fmla_', variants) := as.list(paste0('hdl_log ~ ',variants,'*mvpa_wins + ',                   paste(covars,collapse='+')                 ))
-  ][, paste0(      'hdl_gxpa_lmm_fmla_',variants) := as.list(paste0('hdl_log ~ ',variants,'*mvpa_wins + ',variants,'*sex + ',paste(covars,collapse='+'),' + (1|mesa_id)'))
-  ][, paste0('hdl_gxpa_nosex_lmm_fmla_',variants) := as.list(paste0('hdl_log ~ ',variants,'*mvpa_wins + ',                   paste(covars,collapse='+'),' + (1|mesa_id)'))
+  ][, paste0(      'hdl_gxpa_lm_fmla_', cpaids) := as.list(paste0('hdl_log ~ ',cpaids,'*mvpa_wins + ',cpaids,'*sex + ',paste(covars,collapse='+')                 ))
+  ][, paste0('hdl_gxpa_nosex_lm_fmla_', cpaids) := as.list(paste0('hdl_log ~ ',cpaids,'*mvpa_wins + ',                   paste(covars,collapse='+')                 ))
+  ][, paste0(      'hdl_gxpa_lmm_fmla_',cpaids) := as.list(paste0('hdl_log ~ ',cpaids,'*mvpa_wins + ',cpaids,'*sex + ',paste(covars,collapse='+'),' + (1|mesa_id)'))
+  ][, paste0('hdl_gxpa_nosex_lmm_fmla_',cpaids) := as.list(paste0('hdl_log ~ ',cpaids,'*mvpa_wins + ',                   paste(covars,collapse='+'),' + (1|mesa_id)'))
 ] |> as.list(all.names=T)
 ```
 
@@ -157,7 +158,7 @@ one_offs[ grep('gxpa_lmm', names(one_offs)) ] |>                              # 
   as.data.table() |> transpose(keep.names='cpaid') |>                         # Arrange p-values into a table
   (\(dt) dt[
     ][, cpaid := sub('.*fmla_','',cpaid)                                      # Extract cpaid from fmla names
-    ][fread('variants_of_interest.csv'), on='cpaid'                           # Merge w/ variant annotations
+    ][variants_of_interest, on='cpaid'                                        # Merge w/ variant annotations
     ][, `:=`(ref=NULL,alt=NULL,chr=NULL,pos=NULL, GxPA_p=V1,V1=NULL)          # Rename/Remove columns
     ][order(GxPA_p)                                                           # Sort by p
   ])() |>
@@ -176,7 +177,7 @@ hdl_gxpa_lmm_coefs <-
 
 Moving foward with __only__ the two nomically-significant variants.
 ```{r}
-variants <- c('chr2_121657822_C_T','chr14_88305056_G_A')
+cpaids <- c('chr2_121657822_C_T','chr14_88305056_G_A')
 
 # Drop cols referring to variants that are not the two nominally-significant ones.
 cols2keep <- !grepl('chr',names(mwas)) | grepl('chr2_121657822_C_T|chr14_88305056_G_A', names(mwas))
@@ -240,23 +241,23 @@ mwas <- mwas[
 
 ## GxE models
 ```{r gxe-models}
-for(variant in variants) {
-  intrx_term_pats   <- paste0(variant,':',mwas$unique_met_id,  '|',mwas$unique_met_id,  ':',variant)
-  intrx_term_pats_0 <- paste0(variant,':',mwas$unique_met_id,'_0|',mwas$unique_met_id,'_0:',variant)
-  intrx_term_pats_Δ <- paste0(variant,':',mwas$unique_met_id,'_Δ|',mwas$unique_met_id,'_Δ:',variant)
+for(cpaid in cpaids) {
+  intrx_term_pats   <- paste0(cpaid,':',mwas$unique_met_id,  '|',mwas$unique_met_id,  ':',cpaid)
+  intrx_term_pats_0 <- paste0(cpaid,':',mwas$unique_met_id,'_0|',mwas$unique_met_id,'_0:',cpaid)
+  intrx_term_pats_Δ <- paste0(cpaid,':',mwas$unique_met_id,'_Δ|',mwas$unique_met_id,'_Δ:',cpaid)
 
   mwas <- mwas[
     ## LM GxM (on all metabolites).
-    ][, .SDcols = paste0('intrx_lm_fmla_',variant)
-      , paste0(c('intrx_lm_est_', 'intrx_lm_se_', 'intrx_lm_t_', 'intrx_lm_p_'), variant) :=
+    ][, .SDcols = paste0('intrx_lm_fmla_',cpaid)
+      , paste0(c('intrx_lm_est_', 'intrx_lm_se_', 'intrx_lm_t_', 'intrx_lm_p_'), cpaid) :=
           transpose(mcMap(.SD[[1]],intrx_term_pats, f=\(fmla,pat) {
             coefs <- summary( lm(fmla,data_exam1) )$coefficients
             coefs[grepl(pat,rownames(coefs)),]
           }))
 
     ## LMM GxM (on all metabolites).
-    ][, .SDcols = paste0('intrx_lmm_fmla_',variant)
-      , paste0(c('intrx_lmm_est_', 'intrx_lmm_se_', 'intrx_lmm_df_', 'intrx_lmm_t_', 'intrx_lmm_p_'), variant) :=
+    ][, .SDcols = paste0('intrx_lmm_fmla_',cpaid)
+      , paste0(c('intrx_lmm_est_', 'intrx_lmm_se_', 'intrx_lmm_df_', 'intrx_lmm_t_', 'intrx_lmm_p_'), cpaid) :=
           transpose(mcMap(.SD[[1]],intrx_term_pats, f=\(fmla,pat) {
             coefs <- summary( lmerTest::lmer(fmla,data) )$coefficients
             coefs[grepl(pat,rownames(coefs)),]
@@ -264,18 +265,18 @@ for(variant in variants) {
 
     ][, p_thresh_intrx_lm  := 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[med_lm_acme_p  < p_thresh_med_lm ]))
     ][, p_thresh_intrx_lmm := 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[med_lmm_acme_p < p_thresh_med_lmm]))
-    ][, .SDcols = c(paste0('intrx_lm_p_',variant),  'p_thresh_intrx_lm') # TODO unreadable, use env= instead of .SDcols?
-      , paste0('p_thresh_modmed_lm_', variant) := 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[.SD[[1]] < .SD[[2]]]))
-    ][, .SDcols = c(paste0('intrx_lmm_p_',variant), 'p_thresh_intrx_lmm')
-      , paste0('p_thresh_modmed_lmm_',variant) := 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[.SD[[1]] < .SD[[2]]]))
+    ][, .SDcols = c(paste0('intrx_lm_p_',cpaid),  'p_thresh_intrx_lm') # TODO unreadable, use env= instead of .SDcols?
+      , paste0('p_thresh_modmed_lm_', cpaid) := 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[.SD[[1]] < .SD[[2]]]))
+    ][, .SDcols = c(paste0('intrx_lmm_p_',cpaid), 'p_thresh_intrx_lmm')
+      , paste0('p_thresh_modmed_lmm_',cpaid) := 0.05/calc_eff_n_metabolites(na.omit(unique_met_id[.SD[[1]] < .SD[[2]]]))
 
     # LM moderated mediation (on metabolites significant from the interaction LM and/or LMM).
     ## test.modemed() does not implement support for LMMs yet, so LMs (using exam1 data only) is the best we can do.
     ## See https://github.com/kosukeimai/mediation/issues/69.
-    ][mwas[[paste0('intrx_lm_p_', variant)]] < p_thresh_intrx_lm  |
-      mwas[[paste0('intrx_lmm_p_',variant)]] < p_thresh_intrx_lmm
-      , .SDcols = paste0('modmed_lm_fmla_',c('m','y'),'_',variant)
-      , paste0(c('modmed_lm_acme_p_','modmed_lm_ade_p_'),variant) :=
+    ][mwas[[paste0('intrx_lm_p_', cpaid)]] < p_thresh_intrx_lm  |
+      mwas[[paste0('intrx_lmm_p_',cpaid)]] < p_thresh_intrx_lmm
+      , .SDcols = paste0('modmed_lm_fmla_',c('m','y'),'_',cpaid)
+      , paste0(c('modmed_lm_acme_p_','modmed_lm_ade_p_'),cpaid) :=
           transpose(mcMap(.SD[[1]],.SD[[2]],unique_met_id, f=\(fmla_m,fmla_y,met) {
             mediate(
               lm(fmla_m, data_exam1[!is.na(hdl_log)]), # Reminder: only using exam1!
@@ -285,8 +286,8 @@ for(variant in variants) {
               robustSE=TRUE,
               sims=10 # N_sims needn't be high for this step
             ) |>
-            test.modmed(setNames(list(0),paste0(variant,'_bin')), # TODO unreadable what list(0/1) means.
-                        setNames(list(1),paste0(variant,'_bin')), sims=1000) |>
+            test.modmed(setNames(list(0),paste0(cpaid,'_bin')), # TODO unreadable what list(0/1) means.
+                        setNames(list(1),paste0(cpaid,'_bin')), sims=1000) |>
             (\(results) c(results[[1]]$p.value, results[[2]]$p.value))() # Grab ACME & ADE p-vals.
           }))
     # Again, NULL -> NA for rows with calculations skipped.
@@ -295,17 +296,17 @@ for(variant in variants) {
 
     # Other models
     ## LM GxM for other exams
-    #][, .SDcols = paste0('intrx_lm_fmla_',variant)
-    #  , paste0(c('intrx_lm_est_', 'intrx_lm_se_', 'intrx_lm_t_', 'intrx_lm_p_'), variant,'_2') :=
+    #][, .SDcols = paste0('intrx_lm_fmla_',cpaid)
+    #  , paste0(c('intrx_lm_est_', 'intrx_lm_se_', 'intrx_lm_t_', 'intrx_lm_p_'), cpaid,'_2') :=
     #      transpose(mcMap(.SD[[1]],intrx_term_pats, f=\(fmla,pat) {
     #        coefs <- summary( lm(fmla,data_exam2) )$coefficients
     #        coefs[grepl(pat,rownames(coefs)),]
     #      }))
 
     ## LMM GxM with metabolite decomposed into baseline and delta terms (on all metabolties).
-    ][, .SDcols = paste0('Δ_intrx_lmm_fmla_',variant)
+    ][, .SDcols = paste0('Δ_intrx_lmm_fmla_',cpaid)
       , paste0(c('intrx_lmm_est_0_', 'intrx_lmm_se_0_', 'intrx_lmm_df_0_', 'intrx_lmm_t_0_', 'intrx_lmm_p_0_',
-                 'intrx_lmm_est_Δ_', 'intrx_lmm_se_Δ_', 'intrx_lmm_df_Δ_', 'intrx_lmm_t_Δ_', 'intrx_lmm_p_Δ_'), variant) :=
+                 'intrx_lmm_est_Δ_', 'intrx_lmm_se_Δ_', 'intrx_lmm_df_Δ_', 'intrx_lmm_t_Δ_', 'intrx_lmm_p_Δ_'), cpaid) :=
           transpose(mcMap(.SD[[1]],intrx_term_pats_0,intrx_term_pats_Δ, f=\(fmla,pat0,patΔ) {
             message(i<<-i+1,'/',.N,'\r',appendLF=F) # Progress bar
             coefs <- summary( lmerTest::lmer(fmla,data) )$coefficients
@@ -314,11 +315,11 @@ for(variant in variants) {
           }))
 
     ## LMM met~SNP (genetic main effect model) (on all metabolites).
-    ][, .SDcols = paste0('g_main_lmm_fmla_',variant)
-      , paste0(c('main_lmm_est', 'main_lmm_se', 'main_lmm_df', 'main_lmm_t', 'main_lmm_p'), variant) :=
+    ][, .SDcols = paste0('g_main_lmm_fmla_',cpaid)
+      , paste0(c('main_lmm_est', 'main_lmm_se', 'main_lmm_df', 'main_lmm_t', 'main_lmm_p'), cpaid) :=
           transpose(mcMap(.SD[[1]], f=\(fmla) {
               message(i<<-i+1,'/',.N,'\r',appendLF=F) # Progress bar
-              summary( lmerTest::lmer(fmla,data) )$coefficients[variant,]
+              summary( lmerTest::lmer(fmla,data) )$coefficients[cpaid,]
           }))
   ]
 }
@@ -345,17 +346,17 @@ Total number of metabolites to start wtih: __`r nrow(mwas)`__ (effective # of te
 Number of metabolites to start wtih: __`r mwas[,sum(med_lmm_acme_p<p_thresh_med_lmm,na.rm=T)]`__ (effective # of tests: `r signif(0.05/mwas$p_thresh_intrx_lmm[1],3)`).
 
 ```{r, echo=F, eval=T, results='asis'}
-for(variant in variants) {
+for(cpaid in cpaids) {
 
   relevant_cols <- list(
     met_id  = 'unique_met_id',
     met_nm  = 'Metabolite',
 
-    gxe_est = paste0('intrx_lmm_est_',variant),
-    gxe_p   = paste0('intrx_lmm_p_',  variant),
+    gxe_est = paste0('intrx_lmm_est_',cpaid),
+    gxe_p   = paste0('intrx_lmm_p_',  cpaid),
 
-    g_est   = paste0('g_main_lmm_est_',variant),
-    g_p     = paste0('g_main_lmm_p_',  variant),
+    g_est   = paste0('g_main_lmm_est_',cpaid),
+    g_p     = paste0('g_main_lmm_p_',  cpaid),
 
     sq_est  = 'sq_lmm_est',
     sq_p    = 'sq_lmm_p',
@@ -374,7 +375,7 @@ for(variant in variants) {
   ] |> setnames(names(relevant_cols))
   tbl <- sig |> gt()
 
-  cat('### ',variant,'\n')
+  cat('### ',cpaid,'\n')
   cat('Significant metabolites: ',nrow(sig),'\n\n')
   if(nrow(sig)>0) cat(sep='\n', knitr::knit_child(quiet=T, text=c('```{r, eval=T, echo=F}','tbl','```')))
 }
@@ -384,17 +385,17 @@ for(variant in variants) {
 Total number of metabolites to start with: __`r nrow(mwas)`__ (effective # of tests: `r signif(0.05/mwas$p_thresh_mwas[1],3)`).
 
 ```{r, echo=F, eval=T, results='asis'}
-for(variant in variants) {
+for(cpaid in cpaids) {
 
   relevant_cols <- list(
     met_id  = 'unique_met_id',
     met_nm  = 'Metabolite',
 
-    gxe_est = paste0('intrx_lmm_est_',variant),
-    gxe_p   = paste0('intrx_lmm_p_',  variant),
+    gxe_est = paste0('intrx_lmm_est_',cpaid),
+    gxe_p   = paste0('intrx_lmm_p_',  cpaid),
 
-    g_est   = paste0('g_main_lmm_est_',variant),
-    g_p     = paste0('g_main_lmm_p_',  variant),
+    g_est   = paste0('g_main_lmm_est_',cpaid),
+    g_p     = paste0('g_main_lmm_p_',  cpaid),
 
     sq_est  = 'sq_lmm_est',
     sq_p    = 'sq_lmm_p'
@@ -409,7 +410,7 @@ for(variant in variants) {
   ] |> setnames(names(relevant_cols))
   tbl <- sig |> gt()
 
-  cat('### ',variant,'\n')
+  cat('### ',cpaid,'\n')
   cat('Significant metabolites: ',nrow(sig),'\n\n')
   if(nrow(sig)>0) cat(sep='\n', knitr::knit_child(quiet=T, text=c('```{r, eval=T, echo=F}','tbl','```')))
 }
@@ -456,22 +457,22 @@ Add a couple lines to auto upload outputs to cloud at the end
 <!--
 ## GxE models:
 ```{r tbls2, eval=T, echo=F, results='asis'}
-for(variant in variants) {
-  cat('### ',variant,'\n')
+for(cpaid in cpaids) {
+  cat('### ',cpaid,'\n')
   v <- list(intrx_lm_p=NA, intrx_lmm_p=NA, modmed_lm_acme_p=NA, p_thresh_modmed_lm=NA, p_thresh_modmed_lmm=NA)
-  lapply(names(v), \(nm) mwas[, v[nm] <<- .SD, .SDcols=paste0(nm,'_',variant)])
+  lapply(names(v), \(nm) mwas[, v[nm] <<- .SD, .SDcols=paste0(nm,'_',cpaid)])
 
-  cat(paste('\n\n','Significant metabolites, GxE   MWAS  ',variant,'(LM) :', sum(na.rm=T, v$intrx_lm_p  < mwas$p_thresh_intrx_lm                                             ) ))
-  cat(paste('\n\n','Significant metabolites, GxE "funnel"',variant,'(LM) :', sum(na.rm=T, v$intrx_lm_p  < mwas$p_thresh_intrx_lm & mwas$med_lm_acme_p  < mwas$p_thresh_med_lm) ))
-  print(knitr::kable(mwas[, .SDcols = c('unique_met_id', paste0(c('intrx_lm_est_', 'intrx_lm_se_', 'intrx_lm_p_'),variant), 'p_thresh_intrx_lm'), .SD][ order(mwas[, .SD[[1]], .SDcols=paste0('intrx_lm_p_', variant)]) ][1:3] ))
+  cat(paste('\n\n','Significant metabolites, GxE   MWAS  ',cpaid,'(LM) :', sum(na.rm=T, v$intrx_lm_p  < mwas$p_thresh_intrx_lm                                             ) ))
+  cat(paste('\n\n','Significant metabolites, GxE "funnel"',cpaid,'(LM) :', sum(na.rm=T, v$intrx_lm_p  < mwas$p_thresh_intrx_lm & mwas$med_lm_acme_p  < mwas$p_thresh_med_lm) ))
+  print(knitr::kable(mwas[, .SDcols = c('unique_met_id', paste0(c('intrx_lm_est_', 'intrx_lm_se_', 'intrx_lm_p_'),cpaid), 'p_thresh_intrx_lm'), .SD][ order(mwas[, .SD[[1]], .SDcols=paste0('intrx_lm_p_', cpaid)]) ][1:3] ))
 
-  cat(paste('\n\n','Significant metabolites,   GxE    MWAS  ',variant,'(LMM):', sum(na.rm=T, v$intrx_lmm_p < mwas$p_thresh_intrx_lmm                                              ) ))
-  cat(paste('\n\n','Significant metabolites,   GxE  "funnel"',variant,'(LMM):', sum(na.rm=T, v$intrx_lmm_p < mwas$p_thresh_intrx_lmm & mwas$med_lmm_acme_p < mwas$p_thresh_med_lmm) ))
-  print(knitr::kable(mwas[, .SDcols = c('unique_met_id', paste0(c('intrx_lmm_est_', 'intrx_lmm_se_', 'intrx_lmm_p_'),variant), 'p_thresh_intrx_lmm'), .SD][ order(mwas[, .SD[[1]], .SDcols=paste0('intrx_lmm_p_',variant)]) ][1:3] ))
+  cat(paste('\n\n','Significant metabolites,   GxE    MWAS  ',cpaid,'(LMM):', sum(na.rm=T, v$intrx_lmm_p < mwas$p_thresh_intrx_lmm                                              ) ))
+  cat(paste('\n\n','Significant metabolites,   GxE  "funnel"',cpaid,'(LMM):', sum(na.rm=T, v$intrx_lmm_p < mwas$p_thresh_intrx_lmm & mwas$med_lmm_acme_p < mwas$p_thresh_med_lmm) ))
+  print(knitr::kable(mwas[, .SDcols = c('unique_met_id', paste0(c('intrx_lmm_est_', 'intrx_lmm_se_', 'intrx_lmm_p_'),cpaid), 'p_thresh_intrx_lmm'), .SD][ order(mwas[, .SD[[1]], .SDcols=paste0('intrx_lmm_p_',cpaid)]) ][1:3] ))
 
-  cat(paste('\n\n','Significant metabolites, modmed "funnel"',variant,'(LM) :', sum(na.rm=T, v$modmed_lm_acme_p < v$p_thresh_modmed_lm  & mwas$med_lm_acme_p  < mwas$p_thresh_med_lm ) ))
-  cat(paste('\n\n','Significant metabolites, modmed "funnel"',variant,'(LMM):', sum(na.rm=T, v$modmed_lm_acme_p < v$p_thresh_modmed_lmm & mwas$med_lmm_acme_p < mwas$p_thresh_med_lmm) ))
-  print(knitr::kable(mwas[, .SDcols = c('unique_met_id', paste0(c('modmed_lm_acme_p_', 'p_thresh_modmed_lm_'),variant)), .SD][ order(mwas[, .SD[[1]], .SDcols=paste0('modmed_lm_acme_p_',variant)]) ][1:3] ))
+  cat(paste('\n\n','Significant metabolites, modmed "funnel"',cpaid,'(LM) :', sum(na.rm=T, v$modmed_lm_acme_p < v$p_thresh_modmed_lm  & mwas$med_lm_acme_p  < mwas$p_thresh_med_lm ) ))
+  cat(paste('\n\n','Significant metabolites, modmed "funnel"',cpaid,'(LMM):', sum(na.rm=T, v$modmed_lm_acme_p < v$p_thresh_modmed_lmm & mwas$med_lmm_acme_p < mwas$p_thresh_med_lmm) ))
+  print(knitr::kable(mwas[, .SDcols = c('unique_met_id', paste0(c('modmed_lm_acme_p_', 'p_thresh_modmed_lm_'),cpaid)), .SD][ order(mwas[, .SD[[1]], .SDcols=paste0('modmed_lm_acme_p_',cpaid)]) ][1:3] ))
 }
 ```
 -->
