@@ -12,6 +12,7 @@ pre code { overflow-x: scroll; white-space: pre; }
 ```{r cheat, eval=T, cache=T, cache.inval=file.mtime('mwas-250710.RData'), include=F}
 #load('mwas-250429.RData') # Comment this out to disable cheating mode
 #load('mwas-250710.RData')
+#load('mwas-250721.RData')
 ```
 
 # Setup
@@ -89,15 +90,17 @@ All models are tried using both linear models via `lm()` (only able to use exam 
 mwas <- mwas[
   # Define models for the main analysis.
   ## LM
-  ][,                lm_fmla               :=  paste0(unique_met_id,' ~ ',                                        'mvpa_wins',         ' + ',paste(covars,collapse='+'))
-  ][,            med_lm_fmla_m             :=  paste0(unique_met_id,' ~ ',                                        'mvpa_wins',         ' + ',paste(covars,collapse='+'))
-  ][,            med_lm_fmla_y             :=  paste0(  'hdl_log'  ,' ~ ',unique_met_id,                    ' + ','mvpa_wins',         ' + ',paste(covars,collapse='+'))
-  ][, paste0( 'intrx_lm_fmla_',  cpaids) :=  lapply(cpaids, \(cpaid) paste0(  'hdl_log',  ' ~ ',unique_met_id,'*',cpaid,       ' + ','sex*',cpaid,' + ',paste(covars,collapse='+')))
-  ][, paste0('modmed_lm_fmla_m_',cpaids) :=  lapply(cpaids, \(cpaid) paste0(unique_met_id,' ~ ',                                       'sex*',cpaid,'_bin',' + ','mvpa_wins*',cpaid,'_bin',' + ',paste(covars,collapse='+')))
-  ][, paste0('modmed_lm_fmla_y_',cpaids) :=  lapply(cpaids, \(cpaid) paste0(  'hdl_log',  ' ~ ',unique_met_id,'*',cpaid,'_bin',' + ','sex*',cpaid,'_bin',' + ','mvpa_wins*',cpaid,'_bin',' + ',paste(covars,collapse='+')))
+  ][,                lm_fmla             := paste0(unique_met_id,' ~ ',                                        'mvpa_wins',         ' + ',paste(covars,collapse='+'))
+  ][,            hdl_lm_fmla             := paste0(unique_met_id,' ~ ',                                        'hdl_log',           ' + ',paste(covars,collapse='+'))
+  ][,            med_lm_fmla_m           := paste0(unique_met_id,' ~ ',                                        'mvpa_wins',         ' + ',paste(covars,collapse='+'))
+  ][,            med_lm_fmla_y           := paste0(  'hdl_log'  ,' ~ ',unique_met_id,                    ' + ','mvpa_wins',         ' + ',paste(covars,collapse='+'))
+  ][, paste0( 'intrx_lm_fmla_',  cpaids) := lapply(cpaids, \(cpaid) paste0(  'hdl_log',  ' ~ ',unique_met_id,'*',cpaid,       ' + ','sex*',cpaid,' + ',paste(covars,collapse='+')))
+  ][, paste0('modmed_lm_fmla_m_',cpaids) := lapply(cpaids, \(cpaid) paste0(unique_met_id,' ~ ',                                       'sex*',cpaid,'_bin',' + ','mvpa_wins*',cpaid,'_bin',' + ',paste(covars,collapse='+')))
+  ][, paste0('modmed_lm_fmla_y_',cpaids) := lapply(cpaids, \(cpaid) paste0(  'hdl_log',  ' ~ ',unique_met_id,'*',cpaid,'_bin',' + ','sex*',cpaid,'_bin',' + ','mvpa_wins*',cpaid,'_bin',' + ',paste(covars,collapse='+')))
 
   ## LMM (basically just adding a random intercept term to the LM formulas.)
   ][,                lmm_fmla               := paste(lm_fmla,       ' + (1|mesa_id)')
+  ][,            hdl_lmm_fmla               := paste(hdl_lm_fmla,   ' + (1|mesa_id)')
   ][,            med_lmm_fmla_m             := paste(med_lm_fmla_m, ' + (1|mesa_id)')
   ][,            med_lmm_fmla_y             := paste(med_lm_fmla_y, ' + (1|mesa_id)')
   ][, paste0( 'intrx_lmm_fmla_',  cpaids) := lapply(.SD, paste,   ' + (1|mesa_id)'), .SDcols=paste0( 'intrx_lm_fmla_',  cpaids)
@@ -203,6 +206,16 @@ mwas <- mwas[
   ][, p_thresh_mwas    := 0.05/calc_eff_n_metabolites(unique_met_id)
   ][, p_thresh_med_lm  := 0.05/calc_eff_n_metabolites(unique_met_id[lm_p  < p_thresh_mwas])
   ][, p_thresh_med_lmm := 0.05/calc_eff_n_metabolites(unique_met_id[lmm_p < p_thresh_mwas])
+
+  # LM: met~HDL (on all metabolites).
+  ][, c('hdl_lm_est', 'hdl_lm_se', 'hdl_lm_t', 'hdl_lm_p') := transpose(mcMap(hdl_lm_fmla, f=\(fmla) {
+        summary( lm(fmla,data) )$coefficients['hdl_log',]
+      }))
+
+  # LMM: met~HDL (on all metabolites).
+  ][, c('hdl_lmm_est', 'hdl_lmm_se', 'hdl_lmm_df', 'hdl_lmm_t', 'hdl_lmm_p') := transpose(mcMap(hdl_lmm_fmla, f=\(fmla) {
+        summary( lmerTest::lmer(fmla,data) )$coefficients['hdl_log',]
+      }))
 
   # LM: mediation (on metabolites significant from the LM met~PA MWAS).
   ][lm_p < p_thresh_mwas
@@ -349,6 +362,7 @@ Total number of metabolites to start wtih: __`r nrow(mwas)`__ (effective # of te
 |:------|:------------------------|
 | `met ~ PA` MWAS                                                                                      | `r mwas[,sum(         lmm_p<p_thresh_mwas     ,na.rm=T)]` |
 | mediation (on `r mwas[,sum(lmm_p<p_thresh_mwas,na.rm=T)]` significant metabolites from the MWAS) | `r mwas[,sum(med_lmm_acme_p<p_thresh_med_lmm  ,na.rm=T)]` |
+| `met ~ hdl_log` (on `r mwas[,sum(lmm_p<p_thresh_mwas,na.rm=T)]` significant metabolites from the MWAS) | `r mwas[,sum(lmm_p<p_thresh_mwas & hdl_lmm_p<p_thresh_med_lmm, na.rm=T)]` |
 
 ## GxPA (analysis funnel)
 Number of metabolites to start wtih: __`r mwas[,sum(med_lmm_acme_p<p_thresh_med_lmm,na.rm=T)]`__ (effective # of tests: `r signif(0.05/mwas$p_thresh_intrx_lmm[1],3)`).
