@@ -281,6 +281,18 @@ data <- pcs[data, on='TOM_Id']
 screeplot(pca,npcs=20)
 ```
 
+# Remap kinship matrix ids
+```{r}
+load('km.Rdata')
+km <- km[rownames(km) %in% data$NWD_Id,
+         colnames(km) %in% data$NWD_Id]
+
+dimnames(km) <- list(data[match(rownames(km), NWD_Id), mesa_id],
+                     data[match(colnames(km), NWD_Id), mesa_id])
+
+save(km, file='mesa_km.RData')
+```
+
 ## Write
 ```{r write}
 fwrite(data, 'analysis_df.csv')
