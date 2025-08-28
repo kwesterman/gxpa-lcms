@@ -9,7 +9,7 @@ pre code { overflow-x: scroll; white-space: pre; }
 #knitr::opts_chunk$set(eval=F)
 ```
 ```{r cheat, eval=T, cache=T, include=F}
-#load('all_models_p_threshes-250814.RData') # Uncomment to cheat
+#load('medmod-250828.RData')
 ```
 
 # Setup
@@ -54,7 +54,7 @@ data_exam3 <- data[exam==3]
 data_exam4 <- data[exam==4]
 data_exam5 <- data[exam==5]
 
-load('mesa_km.RData') # Kinship
+load('mesa_km.RData') # Kinship (with ids remapped in script 01c)
 
 numeric_colnms  <- names(data)[sapply(data,is.numeric)]
 baseline_colnms <- paste0(numeric_colnms,'_0')
@@ -114,12 +114,12 @@ runs <- CJ(met=met_nms, snp=cpaids, lm_or_lmm=c('LM','LMM'), exam=1,
   ][model=='hdl~pa_RESET',  fmla := paste0('hdl_log',' ~ ','mvpa_wins'              )
 
   # Interaction
-  ][model=='hdl~pa*snp',            fmla := paste0('hdl_log',' ~ ','mvpa_wins','*',snp,' + ','sex*',snp)
-  ][model=='hdl~pa*snp_no_sex*snp', fmla := paste0('hdl_log',' ~ ','mvpa_wins','*',snp                 )
-  ][model=='hdl~met*snp',           fmla := paste0('hdl_log',' ~ ',    met,    '*',snp,' + ','sex*',snp)
+  ][model=='hdl~pa*snp',            fmla := paste0('hdl_log',' ~ ','mvpa_wins','*',snp,' + ','sex','*',snp)
+  ][model=='hdl~pa*snp_no_sex*snp', fmla := paste0('hdl_log',' ~ ','mvpa_wins','*',snp                    )
+  ][model=='hdl~met*snp',           fmla := paste0('hdl_log',' ~ ',    met,    '*',snp,' + ','sex','*',snp)
 
   # hdl~met*snp model, except met term decomponsed into:        ↓baseline (exam1)   ↓delta (examX - exam1).
-  ][model=='hdl~Δmet*snp', fmla := paste0('hdl_log',' ~ ',met,'_0*',snp,' + ',met,'_Δ*',snp,' + ','sex*',snp)
+  ][model=='hdl~Δmet*snp', fmla := paste0('hdl_log',' ~ ',met,'_0','*',snp,' + ',met,'_Δ','*',snp,' + ','sex','*',snp)
 
 
   # Finalize
@@ -136,7 +136,7 @@ runs <- CJ(met=met_nms, snp=cpaids, lm_or_lmm=c('LM','LMM'), exam=1,
   ][model %in% c('hdl~met*snp'),                        term_pat := paste0(met,':',snp,'|',snp,':',met)
   ][model %in% c('hdl~Δmet*snp'),                       term_pat := paste0(met,'_Δ:',snp,'|',snp,':',met,'_Δ') # TODO extract baseline term too
   ][model %in% c('hdl~pa*snp','hdl~pa*snp_no_sex*snp'), term_pat := paste0('mvpa_wins:',snp,'|',snp,':mvpa_wins')
-  ][is.na(term_pat), term_pat := 'NONE'
+  ][is.na(term_pat), term_pat := 'NONE' # (grepping by NA would cause problems.)
 
 ] |> merge(by.x='met', by.y='unique_met_id', all=T, # Merge to metabolite metadata (M/Z, RT, common name, etc.)
            fread('metabolomics/met_info.csv')[unique_met_id %in% met_nms, .(unique_met_id,Method,MZ,RT,HMDB_ID,Metabolite)])
@@ -203,7 +203,7 @@ runs <- runs[lm_or_lmm=='LMM'
       message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\r',appendLF=F) # Progress bar
       s <- summary( myLmer(fmla, data, relmat=list(mesa_id=km)) )          # Run model
       c(s$coefficients[grepl(pat,rownames(s$coefficients)),],              # Extract results
-        grepl('singular', s$optinfo$conv$lme4$messages)     )              # Extract warning msgs
+        grepl('singular', s$optinfo$conv$lme4$messages)     )              # Extract singular fit warning msgs
 }))]
 
 i <- 0
@@ -238,8 +238,7 @@ runs <- runs[grepl('RESET',model)
   runs[lm_or_lmm=='LMM', by=snp, .(met = 
     .SD[model=='hdl~met*snp' & p < p_thresh_mwas, met])]
 
-`p_thresh_after_met~pa->met~hdl->hdl~met*snp` <- 0.05/calc_eff_n_metabolites(`signif_mets_met~pa->met~hdl->hdl~met*snp`)
-
+#`p_thresh_after_met~pa->met~hdl->hdl~met*snp` <- 0.05/calc_eff_n_metabolites(`signif_mets_met~pa->met~hdl->hdl~met*snp`$met)
 `p_thresh_after_met~pa->met~hdl->hdl~met*snp` <- `signif_mets_met~pa->met~hdl->hdl~met*snp`[, by=snp, .(p = 
   tryCatch(expr=0.05/calc_eff_n_metabolites(met), error=\(e)0.05))]
 ```
@@ -263,7 +262,7 @@ Legend:
 | `hdl~Δmet*snp` | `hdl_log ~ `__`SNP*(met_exam1-met_examN)`__` + SNP*met_exam1 + SNP*sex + covars` | GxM interaction (decomposed)
 | `met~snp`      | `met ~ `__`SNP`__` + covars`                                                     | Genetic main effect
 | `hdl~met^2`    | `hdl_log ~ met + `__`met^2`__` + covars`                                         | Nonlinear effect
-| `hdl~met_RESET`| `resettest(hdl_log ~ met_exam1 + covars)`                                        | RESET test p-value (LM, not LMM)
+| `hdl~met_RESET`| `resettest(hdl_log ~ met_exam1 + covars)`                                        | RESET test p-value (exam1-only LM, not LMM)
 
 ## Genotype-independent models:
 Total number of metabolites to start wtih: __`r length(met_nms)`__ (effective # of tests: `r signif(0.05/p_thresh_mwas,3)`).
@@ -319,6 +318,58 @@ runs[
 ## Write
 ```{r eval=F}
 fwrite(runs,'runs.csv')
+```
+
+## Mediated moderation
+```{r}
+i <- 0
+tmp <- funion(`signif_mets_met~pa->met~hdl->hdl~met*snp`, `signif_mets_hdl~met*snp`)[
+  # Calculate the minimum number of sims needed to pass the p-value threshold, plus a little 20% extra.
+  ][, by=c(snp2='snp')
+    , n_sims := `p_thresh_after_met~pa->met~hdl->hdl~met*snp`[snp==snp2, ceiling(1.2/p)]
+
+  # mediate() errored when I used a*b interaction terms in these models.
+  # As a workaround I manually construct 'axb' product terms and use those instead.
+  # See LabArchives days 250827-28 for my troubleshooting, but I never got to the bottom of it.
+  ][, c('treat','mediator') := transpose(Map(snp,met, f=\(snp,met) {
+        treat    <- paste0(snp,'x','mvpa_wins')
+        mediator <- paste0(snp,'x',    met    )
+        data[, (treat)    := .SD[[1]]*.SD[[2]], .SDcols=c(snp,'mvpa_wins')]
+        data[, (mediator) := .SD[[1]]*.SD[[2]], .SDcols=c(snp,    met    )]
+        list(treat,mediator)
+      }))
+
+  # Since we're not using 'a*b' formula syntax, have to manually add + a and + b terms.
+  ][, fmla_mediator := paste0(snp,'x',met,' ~ ',snp,'x','mvpa_wins',' + ',met,' + ',snp,' + ','mvpa_wins'                  )
+  ][, fmla_outcome  := paste0( 'hdl_log' ,' ~ ',snp,'x','mvpa_wins',' + ',met,' + ',snp,' + ','mvpa_wins',' + ',snp,'x',met)
+
+  ## Finalize
+  ][, fmla_mediator := paste(fmla_mediator, '+', paste(covars,collapse='+')) # Add covars
+  ][, fmla_outcome  := paste(fmla_outcome,  '+', paste(covars,collapse='+'))
+  ][, fmla_mediator := paste(fmla_mediator, '+', '(1|mesa_id)')              # Add random intercept
+  ][, fmla_outcome  := paste(fmla_outcome,  '+', '(1|mesa_id)')
+
+  ][, c('ACME_p','mediation_prop','N') := transpose(mcMap(fmla_mediator,fmla_outcome,treat,mediator,n_sims, f=\(fmla_m,fmla_y,treat,mediator,n_sims) {
+        message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\r',appendLF=F) # Progress bar
+        mediate(
+          myLmer(fmla_m, data[!is.na(hdl_log)], relmat=list(mesa_id=km)) |> `class<-`('lmerMod'),
+          myLmer(fmla_y, data                 , relmat=list(mesa_id=km)) |> `class<-`('lmerMod'),
+          treat=treat, mediator=mediator, robustSE=T,
+          sims=n_sims
+        )[c('d0.p','n0','nobs')] # Extract only the ACME p-val, mediation proportion, and N.
+      }))
+]
+
+save.image('medmod-250828.RData')
+```
+
+```{r, echo=F, eval=T}
+tmp[
+  ][, .(met,snp,ACME_p,mediation_prop,N)
+  ][order(snp,as.numeric(ACME_p))
+  ][, `#` := 1:.N, by=snp
+] |> gt() |> tab_header('Mediated Moderation Results', 'for metabolites significant from either GxPA MWIS or analysis funnel (the funnel ones are highlighted)') |>
+  gt_highlight_rows(rows = met %in% `signif_mets_met~pa->met~hdl->hdl~met*snp`$met)
 ```
 
 
