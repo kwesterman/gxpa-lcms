@@ -218,29 +218,50 @@ runs <- runs[grepl('RESET',model)
 ```{r get-signif-mets-and-thresholds, echo=F}
 `p_thresh_mwas` <- 0.05/calc_eff_n_metabolites( unique(runs$met) )
 
-`signif_mets_met~pa` <-
-  runs[lm_or_lmm=='LMM', .(met = 
-    .SD[model=='met~pa' & p < p_thresh_mwas, met])]
+runs[model=='met~pa' &
+     p < p_thresh_mwas
+     , signif_funnel := T]
 
-`p_thresh_after_met~pa` <- 0.05/calc_eff_n_metabolites(`signif_mets_met~pa`$met)
+`p_thresh_after_met~pa` <-
+  runs[model=='met~pa' & signif_funnel==T,
+       by=lm_or_lmm
+       , .(thresh=0.05/calc_eff_n_metabolites(met))]
 
-`signif_mets_met~pa->met~hdl` <-
-  runs[lm_or_lmm=='LMM', .(met = intersect(`signif_mets_met~pa`$met,
-    .SD[model=='met~hdl' & p < `p_thresh_after_met~pa`, met]))]
+runs[by=lm_or_lmm,
+     , runs[model=='met~hdl' &
+            lm_or_lmm==.BY &
+            p < `p_thresh_after_met~pa`[lm_or_lmm==.BY,thresh] &   # < p-val thresh for this step
+            met %in% .SD[model=='met~pa' & signif_funnel==T, met] # Signif in previous step
+            , signif_funnel := T
+]] |> invisible()
 
-`p_thresh_after_met~pa->met~hdl` <- 0.05/calc_eff_n_metabolites(`signif_mets_met~pa->met~hdl`$met)
+`p_thresh_after_met~pa->met~hdl` <-
+  runs[model=='met~hdl' & signif_funnel==T,
+       by=lm_or_lmm
+       , .(thresh=0.05/calc_eff_n_metabolites(met))]
 
-`signif_mets_met~pa->met~hdl->hdl~met*snp` <-
-  runs[lm_or_lmm=='LMM', by=snp, .(met = intersect(`signif_mets_met~pa->met~hdl`$met,
-    .SD[model=='hdl~met*snp' & p < `p_thresh_after_met~pa->met~hdl`, met]))]
+runs[by=.(lm_or_lmm,snp),
+     , runs[model=='hdl~met*snp' &
+            lm_or_lmm==.BY['lm_or_lmm'] & snp==.BY['snp'] &
+            p < `p_thresh_after_met~pa->met~hdl`[lm_or_lmm==.BY['lm_or_lmm'],thresh] & # < p-val thresh for this step
+            met %in% runs[lm_or_lmm==.BY['lm_or_lmm'] & model=='met~hdl' & signif_funnel==T, met] # Signif in previous step
+            , signif_funnel := T
+]] |> invisible()
 
-`signif_mets_hdl~met*snp` <-
-  runs[lm_or_lmm=='LMM', by=snp, .(met = 
-    .SD[model=='hdl~met*snp' & p < p_thresh_mwas, met])]
+`p_thresh_after_met~pa->met~hdl->hdl~met*snp` <-
+  runs[model=='hdl~met*snp' & signif_funnel==T,
+       by=.(lm_or_lmm,snp)
+       , .(thresh=tryCatch(expr=0.05/calc_eff_n_metabolites(met), error=\(e)0.05))]
 
-#`p_thresh_after_met~pa->met~hdl->hdl~met*snp` <- 0.05/calc_eff_n_metabolites(`signif_mets_met~pa->met~hdl->hdl~met*snp`$met)
-`p_thresh_after_met~pa->met~hdl->hdl~met*snp` <- `signif_mets_met~pa->met~hdl->hdl~met*snp`[, by=snp, .(p = 
-  tryCatch(expr=0.05/calc_eff_n_metabolites(met), error=\(e)0.05))]
+# MWIS
+runs[model=='hdl~met*snp' &
+     p < p_thresh_mwas
+     , signif_mwis := T]
+
+#table(runs[,.(model,lm_or_lmm,    signif_funnel)])
+#table(runs[,.(model,lm_or_lmm,snp,signif_funnel)])
+#table(runs[,.(model,lm_or_lmm,snp,signif_mwis)])
+#fwrite(runs,'tmp.csv')
 ```
 
 ```{r, include=F}
@@ -249,9 +270,9 @@ runs <- runs[grepl('RESET',model)
 
 ```{r, include=F, eval=T}
 # Because the variable names need backticks, hard to display in markdown. So defining new names here.
-n_signif_met_pa <- length(`signif_mets_met~pa`$met)
-n_signif_met_pa_met_hdl <- length(`signif_mets_met~pa->met~hdl`$met)
-n_eff_mets_met_pa_met_hdl <- signif(0.05/`p_thresh_after_met~pa->met~hdl`,3)
+n_signif_met_pa         <- runs[lm_or_lmm=='LMM' & model=='met~pa',  sum(signif_funnel,na.rm=T)]
+n_signif_met_pa_met_hdl <- runs[lm_or_lmm=='LMM' & model=='met~hdl', sum(signif_funnel,na.rm=T)]
+n_eff_mets_met_pa_met_hdl <- signif(0.05/`p_thresh_after_met~pa->met~hdl`[lm_or_lmm=='LMM',thresh],3)
 ```
 
 Legend:
@@ -279,18 +300,19 @@ Number of metabolites to start wtih: __`r n_signif_met_pa_met_hdl`__ (effective 
 runs[
   ][lm_or_lmm=='LMM'
   ][, .(Metabolite,met,snp,model,p=signif(p,3))
-  ][`signif_mets_met~pa->met~hdl->hdl~met*snp`, on=.(met,snp)
+  ][runs[model=='hdl~met*snp' & lm_or_lmm=='LMM' & signif_funnel==T, .(met,snp)],
+    on=.(met,snp)
   ][, dcast(.SD, value.var='p', Metabolite + met + snp ~ model)
   ][order(snp,`hdl~met*snp`)
   ][, `#` := 1:.N, by=snp
-] |> gt() |> tab_header('Metabolite*SNP P-values', 'for metabolites significant from GxPA analysis funnel')
+] |> gt() |> tab_header('Metabolite*SNP P-values', 'for metabolites significant from GxPA LMM analysis funnel')
 
 runs[
   ][lm_or_lmm=='LMM' | grepl('RESET',model)
-  ][, .(Metabolite,met,snp,model,p=signif(p,3))
-  ][is.na(snp) & met %in% `signif_mets_met~pa->met~hdl->hdl~met*snp`$met
+  ][, .(Metabolite,met,snp,model,signif_funnel,p=signif(p,3))
+  ][is.na(snp) & met %in% runs[model=='hdl~met*snp' & lm_or_lmm=='LMM' & signif_funnel==T, met]
     , dcast(.SD, value.var='p', Metabolite + met ~ model)
-] |> gt() |> tab_header('SNP-independent P-values', 'for metabolites significant from GxPA analysis funnel')
+] |> gt() |> tab_header('SNP-independent P-values', 'for metabolites significant from GxPA LMM analysis funnel')
 
 ```
 
@@ -300,19 +322,20 @@ Total number of metabolites to start wtih: __`r length(met_nms)`__ (effective # 
 ```{r, echo=F, eval=T}
 runs[
   ][lm_or_lmm=='LMM'
-  ][, .(Metabolite,met,snp,model,p=signif(p,3))
-  ][`signif_mets_hdl~met*snp`, on=.(met,snp)
+  ][, .(Metabolite,met,snp,model,signif_funnel,p=signif(p,3))
+  ][runs[model=='hdl~met*snp' & lm_or_lmm=='LMM' & signif_mwis==T, .(met,snp)],
+    on=.(met,snp)
   ][, dcast(.SD, value.var='p', Metabolite + met + snp ~ model)
   ][order(snp,`hdl~met*snp`)
   ][, `#` := 1:.N, by=snp
-] |> gt() |> tab_header('Metabolite*SNP P-values', 'for metabolites significant from GxPA MWIS')
+] |> gt() |> tab_header('Metabolite*SNP P-values', 'for metabolites significant from GxPA LMM MWIS')
 
 runs[
   ][lm_or_lmm=='LMM' | grepl('RESET',model)
   ][, .(Metabolite,met,snp,model,p=signif(p,3))
-  ][is.na(snp) & met %in% `signif_mets_hdl~met*snp`$met
+  ][is.na(snp) & met %in% runs[model=='hdl~met*snp' & lm_or_lmm=='LMM' & signif_mwis==T, met]
     , dcast(.SD, value.var='p', Metabolite + met ~ model)
-] |> gt() |> tab_header('SNP-independent P-values', 'for metabolites significant from GxPA MWIS')
+] |> gt() |> tab_header('SNP-independent P-values', 'for metabolites significant from GxPA LMM MWIS')
 ```
 
 ## Write
@@ -323,10 +346,13 @@ fwrite(runs,'runs.csv')
 ## Mediated moderation
 ```{r}
 i <- 0
-tmp <- funion(`signif_mets_met~pa->met~hdl->hdl~met*snp`, `signif_mets_hdl~met*snp`)[
+tmp2 <- runs[model=='hdl~met*snp' & (signif_funnel==T | signif_mwis==T), .(met,snp,lm_or_lmm)][
+#tmp <- funion(`signif_mets_met~pa->met~hdl->hdl~met*snp`, `signif_mets_hdl~met*snp`)[
   # Calculate the minimum number of sims needed to pass the p-value threshold, plus a little 20% extra.
   ][, by=c(snp2='snp')
-    , n_sims := `p_thresh_after_met~pa->met~hdl->hdl~met*snp`[snp==snp2, ceiling(1.2/p)]
+    #, n_sims := `p_thresh_after_met~pa->met~hdl->hdl~met*snp`[snp==snp2, ceiling(1.2/p)]
+    #, n_sims := `p_thresh_after_hdl~met*snp`[snp==snp2, ceiling(1.2/p)]
+    , n_sims := 200 # Nevermind, easier if we can just say p<5e-4
 
   # mediate() errored when I used a*b interaction terms in these models.
   # As a workaround I manually construct 'axb' product terms and use those instead.
@@ -336,7 +362,7 @@ tmp <- funion(`signif_mets_met~pa->met~hdl->hdl~met*snp`, `signif_mets_hdl~met*s
         mediator <- paste0(snp,'x',    met    )
         data[, (treat)    := .SD[[1]]*.SD[[2]], .SDcols=c(snp,'mvpa_wins')]
         data[, (mediator) := .SD[[1]]*.SD[[2]], .SDcols=c(snp,    met    )]
-        list(treat,mediator)
+        c(treat,mediator)
       }))
 
   # Since we're not using 'a*b' formula syntax, have to manually add + a and + b terms.
@@ -346,21 +372,27 @@ tmp <- funion(`signif_mets_met~pa->met~hdl->hdl~met*snp`, `signif_mets_hdl~met*s
   ## Finalize
   ][, fmla_mediator := paste(fmla_mediator, '+', paste(covars,collapse='+')) # Add covars
   ][, fmla_outcome  := paste(fmla_outcome,  '+', paste(covars,collapse='+'))
-  ][, fmla_mediator := paste(fmla_mediator, '+', '(1|mesa_id)')              # Add random intercept
-  ][, fmla_outcome  := paste(fmla_outcome,  '+', '(1|mesa_id)')
+  ][lm_or_lmm=='LMM', fmla_mediator := paste(fmla_mediator, '+', '(1|mesa_id)') # Add random intercept
+  ][lm_or_lmm=='LMM', fmla_outcome  := paste(fmla_outcome,  '+', '(1|mesa_id)')
 
-  ][, c('ACME_p','mediation_prop','N') := transpose(mcMap(fmla_mediator,fmla_outcome,treat,mediator,n_sims, f=\(fmla_m,fmla_y,treat,mediator,n_sims) {
-        message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\r',appendLF=F) # Progress bar
+  ][, c('ACME_p','mediation_prop','N') := transpose(mcMap(fmla_mediator,fmla_outcome,treat,mediator,n_sims,lm_or_lmm, f=\(fmla_m,fmla_y,treat,mediator,n_sims,lm_or_lmm) {
+        message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\n',appendLF=F) # Progress bar
+        if(lm_or_lmm=='LMM') {
+          model_m <- myLmer(fmla_m, data[!is.na(hdl_log)], relmat=list(mesa_id=km)) |> `class<-`('lmerMod')
+          model_y <- myLmer(fmla_y, data                 , relmat=list(mesa_id=km)) |> `class<-`('lmerMod')
+        } else {
+          model_m <- lm(fmla_m, data[exam==1 & !is.na(hdl_log)])
+          model_y <- lm(fmla_y, data[exam==1                  ])
+        }
         mediate(
-          myLmer(fmla_m, data[!is.na(hdl_log)], relmat=list(mesa_id=km)) |> `class<-`('lmerMod'),
-          myLmer(fmla_y, data                 , relmat=list(mesa_id=km)) |> `class<-`('lmerMod'),
-          treat=treat, mediator=mediator, robustSE=T,
+          model_m, model_y,
+          treat=treat, mediator=mediator,
           sims=n_sims
         )[c('d0.p','n0','nobs')] # Extract only the ACME p-val, mediation proportion, and N.
       }))
 ]
 
-save.image('medmod-250828.RData')
+#save.image('medmod-250926.RData')
 ```
 
 ```{r, echo=F, eval=T}
@@ -370,4 +402,46 @@ tmp[
   ][, `#` := 1:.N, by=snp
 ] |> gt() |> tab_header('Mediated Moderation Results', 'for metabolites significant from either GxPA MWIS or analysis funnel (the funnel ones are highlighted)') |>
   gt_highlight_rows(rows = met %in% `signif_mets_met~pa->met~hdl->hdl~met*snp`$met)
+```
+
+```{r}
+tmp[grepl('14',snp) & mediation_prop<0] |> sum()
+tmp[grepl('14',snp) & mediation_prop<0] |> sum()
+```
+
+Trying to investigate the negative mediation proportions.
+```{r}
+mets <- `signif_mets_met~pa->met~hdl->hdl~met*snp`[grepl('chr14',snp),met]
+m1_fmla <- paste0(
+  'hdl_log ~ mvpa_wins*chr14_88305056_G_A',
+  #' + sex*chr14_88305056_G_A',
+  ' + ',paste(collapse='+',covars),
+  ' + (1|mesa_id)'
+)
+m2_fmlas <- paste0(
+  'hdl_log ~ mvpa_wins*chr14_88305056_G_A + mvpa_wins*',mets,
+  #' + sex*chr14_88305056_G_A',
+  ' + ',paste(collapse='+',covars),
+  ' + (1|mesa_id)'
+)
+
+tmp1 <-                             summary(myLmer(m1_fmla,data,list(mesa_id=km)))$coefficients |> signif(2) |> as.data.table(keep.rownames='term')
+tmp2 <- lapply(m2_fmlas, \(m2_fmla) summary(myLmer(m2_fmla,data,list(mesa_id=km)))$coefficients |> signif(2) |> as.data.table(keep.rownames='term')) |> `names<-`(mets)
+
+lapply(tmp2, \(t2)
+  merge(t2,tmp1,by='term',all=T, suffixes=c('.M2','.M1'))[
+    ][, .SD, .SDcols=!patterns('t val|df|Std')
+    ][!grepl('site|smoking|race|gPC|age|sex|score|drink',term)
+    #][, .(term, `hdl~pa*snp_est`=Estimate.M1,`hdl~pa*snp+pa*met_est`=Estimate.M2)
+    #][, `!` := ''][grepl('chr14|^QI|^mvpa_wins$|mvpa_wins:QI',term), `!` := '!'
+    #][order(-`!`)
+    ][, .(term, `!`, `M1_est`=Estimate.M1,`M2_est`=Estimate.M2, M1_p=`Pr(>|t|).M1`, M2_p=`Pr(>|t|).M2`)
+  ]
+)
+
+
+  ## Extra model to facilitate interpretation of mediation results
+ # ][model=='hdl~pa*snp+pa*met_pa*snp', fmla := paste0('hdl_log',' ~ ~','mvpa_wins','*',snp,' + ','mvpa_wins','*',met)
+ # ][model=='hdl~pa*snp+pa*met_pa*met', fmla := paste0('hdl_log',' ~ ~','mvpa_wins','*',snp,' + ','mvpa_wins','*',met)
+
 ```
