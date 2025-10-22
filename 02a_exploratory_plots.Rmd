@@ -23,7 +23,7 @@ data <- fread('analysis_df.csv')[,exam:=as.factor(exam)]
 # Summary table of relevant variables
 ```{r summary-tbl, cache=T, cache.depend=digest::digest(data)}
 data[
-  ][, .SD, .SDcols=patterns('^age$|bmi$|sex|hdl$|pa$|ahei|dash|ses|drinks|race$|^chr') #.(age, bmi, sex, hdl, pa, mod_pa, mvpa, vig_pa, ahei_score, dash_score, ses_score, drinks_per_week, race, chr17_36804493_G_T)
+  ][, .SD, .SDcols=patterns('^age$|bmi$|sex|hdl$|pa$|ahei|ses|drinks|race$|^chr') #.(age, bmi, sex, hdl, pa, mod_pa, mvpa, vig_pa, ahei_score, dash_score, ses_score, drinks_per_week, race, chr17_36804493_G_T)
   ][, has_metabolomics := !is.na(data$TOM_Id)
   #][ is.na(sex), sex := 'Unknown'
   ] |>
@@ -35,6 +35,23 @@ data[
       all_categorical() ~ c("{n} ({p}%)"   )
   )) |>
   add_overall() |> add_n()
+
+# With the power of hindsight: cleaner table showing only individuals with metabolomics + the chr14 variant.
+data[
+  ][exam==1 & !is.na(data$TOM_Id) & !is.na(gPC1) & !is.na(hdl_log) & !is.na(chr14_88305056_G_A)
+  ][, .SD, .SDcols=patterns('^age$|bmi$|^exam|sex|hdl$|pa$|ahei|ses|drinks|race$|^chr14')
+  ][, .(Age=age, `BMI (kg/m²)`=bmi, sex, `HDL (mg/dL)`=hdl, `MVPA (MET*min/week)`=mvpa, `AHEI score`=ahei_score, `SES score`=ses_score, `Drinks per week`=drinks_per_week, Race=race, rs10146950=as.factor(chr14_88305056_G_A))
+  ] |>
+  tbl_summary(
+    by=sex,
+    missing='no', # TODO more elegant way to display # of missing?
+    statistic = list(
+      all_continuous()  ~ c("{mean} ± {sd}"),
+      all_categorical() ~ c("{n} ({p}%)"   )
+  )) |>
+  add_overall()# |> add_n()
+
+data[!is.na(data$TOM_Id) & !is.na(gPC1) & !is.na(hdl_log) & !is.na(chr14_88305056_G_A), table(exam)] #|> sum()
 ```
 
 # Heatmap of mPCs vs. covars
@@ -236,7 +253,7 @@ ggplot(data2hist_categ, aes(x=val)) +
 
 
 # Correlated metabolites
-```{r}
+```{r eval=F}
 met <- fread('metabolomics/QCd/merged_QCd.csv')[,-1]
 met_info <- fread('metabolomics/met_info.csv')
 cor_mtx <- cor(met,met,use='complete.obs')
