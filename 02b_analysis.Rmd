@@ -6,10 +6,11 @@ pre code { overflow-x: scroll; white-space: pre; }
 ```
 ```{r setup, include=F}
 # Uncomment to cheat and load pre-computed results to avoid waiting hours to regenerate an html render.
-#knitr::opts_chunk$set(eval=F)
+knitr::opts_chunk$set(eval=F)
 ```
 ```{r cheat, eval=T, cache=T, include=F}
-#load('baseline_added-251003.RData')
+#load('baseline_added-251003.RData') # Added baseline effect estimates for decomposed model
+load('runs_w_lms2lmms_251012.RData') # Changed LMs to baseline-only km-adjusted LMMs.
 ```
 
 # Setup
@@ -26,7 +27,7 @@ library(lmtest)
 library(mediation)
 library(parallel)
 
-options(mc.cores=4L)
+options(mc.cores=1L)
 options(datatable.na.strings=c('NA',''))
 
 # Workaround so that lmerTest works on lme4qtl model objects
@@ -84,7 +85,7 @@ Main models of interest:
 * __Interaction Model__: \
   `hdl_log ~ met*SNP + sex*SNP + covars`
 ```{r fmlas}
-runs <- CJ(met=met_nms, snp=cpaids, lm_or_lmm=c('LM','LMM'), exam=1,
+runs <- CJ(met=met_nms, snp=cpaids, single_exam=c(F,T), exam=1,
   model=c('met~pa','met~hdl','met~snp',
           'hdl~met^2','hdl~met_RESET',
           'hdl~met*snp','hdl~Δmet*snp',
@@ -93,12 +94,12 @@ runs <- CJ(met=met_nms, snp=cpaids, lm_or_lmm=c('LM','LMM'), exam=1,
           'hdl~pa*snp', 'hdl~pa*snp_no_sex*snp'))[
 
   # Exceptions
-  ][!(lm_or_lmm=='LMM' & grepl('RESET',model))  # RESET models must be LMs
-  ][!(lm_or_lmm=='LM'  & grepl(  'Δ'  ,model))  # Decomposed models must be LMMs
-  ][!grepl('met',model), met := NA              # Rm per-met/per-snp rows for models w/o a met/snp term
-  ][!grepl('snp',model), snp := NA
-  ][lm_or_lmm=='LMM',    exam := NA
-  ][!duplicated(paste(model,lm_or_lmm,exam,met,snp)) 
+  ][!(single_exam==F & grepl('RESET',model))  # RESET models must be LMs (which can't use longitudinal data)
+  ][!(single_exam==T & grepl(  'Δ'  ,model))  # Decomposed models must be all-exams
+  ][!grepl('met',model), met  := NA            # Rm per-met/per-snp rows for models w/o a met/snp term
+  ][!grepl('snp',model), snp  := NA
+  ][single_exam==F,      exam := NA
+  ][!duplicated(paste(model,single_exam,exam,met,snp))
 
 
   # Basic associations
@@ -125,7 +126,7 @@ runs <- CJ(met=met_nms, snp=cpaids, lm_or_lmm=c('LM','LMM'), exam=1,
   # Finalize
   ][, fmla := paste(fmla, '+', paste(covars,collapse='+'))           # Add covars common to all models
   ][model=='pa~snp', fmla := gsub('\\+gPC[0-9]\\*mvpa_wins','',fmla) #   (Except pa~snp shouldn't have pa itself in the covariates)
-  ][lm_or_lmm=='LMM', fmla := paste(fmla, '+', '(1|mesa_id)')        # Add random intercept to all LMMs
+  ][!grepl('RESET',model), fmla := paste(fmla, '+', '(1|mesa_id)')   # Add random intercept to all non-RESET models
 
   # Specify the term of interest whose stats will be extracted...
   # ...by specifying a pattern to grep (b/c interaction terms could be named either "met:snp" OR "snp:met").
@@ -148,7 +149,7 @@ runs <- CJ(met=met_nms, snp=cpaids, lm_or_lmm=c('LM','LMM'), exam=1,
 Model: `log_hdl ~ mvpa_wins + covariates + (1|mesa_id)`
 Only top 10 model terms are shown.
 ```{r confirm-hdl-pa, eval=T, echo=F}
-runs[model=='hdl~pa' & lm_or_lmm=='LMM']$fmla |>
+runs[model=='hdl~pa' & single_exam==F]$fmla |>
   myLmer(data, list(mesa_id=km)) |>
   summary() |> coef() |>
   as.data.table(keep.rownames='term') |>
@@ -163,48 +164,73 @@ Model: `log_hdl ~ snp*mvpa_wins + snp*sex + covars + (1|mesa_id)`
 ```{r confirm-hdl-gxpa, eval=T, echo=F}
 runs[
   # Run models
-  ][model=='hdl~pa*snp' & lm_or_lmm=='LM'
-    , c('est','se',     't','p') := transpose(Map(fmla,term_pat, f=\(fmla,pat) {
-        coefs <- summary(lm(fmla,data_exam1))$coefficients
+  ][model=='hdl~pa*snp' & single_exam==T
+    , c('est','se','df','t','p') := transpose(Map(fmla,term_pat, f=\(fmla,pat) {
+        coefs <- summary(myLmer(fmla,data_exam1,list(mesa_id=km)))$coefficients
         coefs[grepl(pat,rownames(coefs)),]
       }))
-  ][model=='hdl~pa*snp' & lm_or_lmm=='LMM'
+  ][model=='hdl~pa*snp' & single_exam==F
     , c('est','se','df','t','p') := transpose(Map(fmla,term_pat, f=\(fmla,pat) {
-        coefs <- summary(myLmer(fmla,data,list(mesa_id=km)))$coefficients
+        coefs <- summary(myLmer(fmla,data      ,list(mesa_id=km)))$coefficients
         coefs[grepl(pat,rownames(coefs)),]
       }))
 
   # Display
-  ][model=='hdl~pa*snp' & lm_or_lmm=='LMM'
+  ][model=='hdl~pa*snp' & single_exam==F
   ][variants_of_interest, on=.(snp=cpaid)
   ][order(p)
-  ][, .(snp,gene,rsid,analysis,annotation,GxPA_p=p)
-] |> gt() |> gt_highlight_rows(rows=GxPA_p<0.05)
+  ][, .(SNP=snp,Gene=gene,rsID=rsid,analysis,Annotation=annotation,GxMVPA_p=p, GxMVPA_β=est)
+
+  # Lipid-PA-only mode
+  ][analysis=='PA-Lipid'
+  ][, .(SNP,Gene,rsID,Annotation,GxMVPA_p,GxMVPA_β)
+] |> gt() |> gt_highlight_rows(rows=GxMVPA_p<0.05)
 ```
 
 Moving foward with __only__ the two nomically-significant variants.
 ```{r subset-to-signif-hdl-gxpa}
-signif_snps <- runs[model=='hdl~pa*snp' & lm_or_lmm=='LMM' & p < 0.05, snp]
+signif_snps <- runs[model=='hdl~pa*snp' & single_exam==F & p < 0.05, snp]
 runs <- runs[snp %in% signif_snps | is.na(snp)]
 ```
 
 ## Run all basic models
 ```{r run-all-basic-models, message=F}
 i <- 0
-runs <- runs[lm_or_lmm=='LM'
-  , c('est','se',     't','p') := transpose(mcMap(fmla,term_pat, f=\(fmla,pat) {
-      message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\r',appendLF=F) # Progress bar
-      s <- summary( lm(fmla, data_exam1) )                                 # Run model
-      s$coefficients[grepl(pat,rownames(s$coefficients)),]                 # Extract results
-}))]
-
-i <- 0
-runs <- runs[lm_or_lmm=='LMM'
+runs <- runs[single_exam==T & !grepl('RESET',model)
   , c('est','se','df','t','p','singular_fit') := transpose(mcMap(fmla,term_pat, f=\(fmla,pat) {
       message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\r',appendLF=F) # Progress bar
-      s <- summary( myLmer(fmla, data, relmat=list(mesa_id=km)) )          # Run model
+      s <- summary( myLmer(fmla, data_exam1, relmat=(list(mesa_id=km))) )  # Run model
       c(s$coefficients[grepl(pat,rownames(s$coefficients)),],              # Extract results
-        grepl('singular', s$optinfo$conv$lme4$messages)     )              # Extract singular fit warning msgs
+        any(grepl('singular', s$optinfo$conv$lme4$messages)))              # Extract singular fit warning msgs
+}))]
+#load('lm2lmm_w_relatedness.RData')
+# Note: if eventually want to do models for each exam individually, do fcase(exam==1,data_exam1, exam==2,data_exam2, ...) etc..
+#   But I'm hesitant to do that now since we switched the exam1-only models from LMs to LMMs to adjust for relatedness. Now it'd take a long time to run all those per-exam models.
+#load('b4_lmms_again.RData')
+#load('lm2lmm_w_relatedness.RData')
+
+# TMP Messy combination so I don't have to rerun LMMs again
+#load('lm2lmm_w_relatedness.RData') # Just ran baseline only, relatedness-adjusted LMMs instead of LMs
+#runs2 <- runs
+#load('baseline_added-251003.RData') # Added baseline effect estimates for decomposed model
+#runscomb <- rbindlist(list(runs,runs2),fill=T)
+runscomb <- runscomb[
+  ][lm_or_lmm=='LMM' | single_exam==T # Preserve only old LMM results and new baseline LMM results. Discard old LM results and the new run's empty LMM results
+  ][lm_or_lmm=='LMM',  single_exam:=F # Discard old lm_or_lmm col; it's all LMMs now.
+  ][, lm_or_lmm := NULL
+]
+runs <- runscomb
+
+
+
+
+i <- 0
+runs <- runs[single_exam==F
+  , c('est','se','df','t','p','singular_fit') := transpose(mcMap(fmla,term_pat, f=\(fmla,pat) {
+      message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\r',appendLF=F) # Progress bar
+      s <- summary( myLmer(fmla, data      , relmat=list(mesa_id=km)) )    # Run model
+      c(s$coefficients[grepl(pat,rownames(s$coefficients)),],              # Extract results
+        any(grepl('singular', s$optinfo$conv$lme4$messages)))              # Extract singular fit warning msgs
 }))]
 
 i <- 0
@@ -226,33 +252,33 @@ runs[model=='met~pa' &
 
 `p_thresh_after_met~pa` <-
   runs[model=='met~pa' & signif_funnel==T,
-       by=lm_or_lmm
+       by=single_exam
        , .(thresh=0.05/calc_eff_n_metabolites(met))]
 
-runs[by=lm_or_lmm,
+runs[by=single_exam,
      , runs[model=='met~hdl' &
-            lm_or_lmm==.BY &
-            p < `p_thresh_after_met~pa`[lm_or_lmm==.BY,thresh] &   # < p-val thresh for this step
+            single_exam==.BY &
+            p < `p_thresh_after_met~pa`[single_exam==.BY,thresh] &   # < p-val thresh for this step
             met %in% .SD[model=='met~pa' & signif_funnel==T, met] # Signif in previous step
             , signif_funnel := T
 ]] |> invisible()
 
 `p_thresh_after_met~pa->met~hdl` <-
   runs[model=='met~hdl' & signif_funnel==T,
-       by=lm_or_lmm
+       by=single_exam
        , .(thresh=0.05/calc_eff_n_metabolites(met))]
 
-runs[by=.(lm_or_lmm,snp),
+runs[by=.(single_exam,snp),
      , runs[model=='hdl~met*snp' &
-            lm_or_lmm==.BY['lm_or_lmm'] & snp==.BY['snp'] &
-            p < `p_thresh_after_met~pa->met~hdl`[lm_or_lmm==.BY['lm_or_lmm'],thresh] & # < p-val thresh for this step
-            met %in% runs[lm_or_lmm==.BY['lm_or_lmm'] & model=='met~hdl' & signif_funnel==T, met] # Signif in previous step
+            single_exam==.BY['single_exam'] & snp==.BY['snp'] &
+            p < `p_thresh_after_met~pa->met~hdl`[single_exam==.BY['single_exam'],thresh] & # < p-val thresh for this step
+            met %in% runs[single_exam==.BY['single_exam'] & model=='met~hdl' & signif_funnel==T, met] # Signif in previous step
             , signif_funnel := T
 ]] |> invisible()
 
 `p_thresh_after_met~pa->met~hdl->hdl~met*snp` <-
   runs[model=='hdl~met*snp' & signif_funnel==T,
-       by=.(lm_or_lmm,snp)
+       by=.(single_exam,snp)
        , .(thresh=tryCatch(expr=0.05/calc_eff_n_metabolites(met), error=\(e)0.05))]
 
 # MWIS
@@ -262,24 +288,25 @@ runs[model=='hdl~met*snp' &
 
 `p_thresh_after_hdl~met*snp` <-
   runs[model=='hdl~met*snp' & signif_mwis==T,
-       by=.(lm_or_lmm,snp)
-       , .(thresh=0.05/calc_eff_n_metabolites(met))]
+       by=.(single_exam,snp)
+       , .(thresh=tryCatch(expr=0.05/calc_eff_n_metabolites(met), error=\(e)0.05))]
 
-#table(runs[,.(model,lm_or_lmm,    signif_funnel)])
-#table(runs[,.(model,lm_or_lmm,snp,signif_funnel)])
-#table(runs[,.(model,lm_or_lmm,snp,signif_mwis)])
+table(runs[,.(model,single_exam,    signif_funnel)])
+#table(runs[,.(model,single_exam,snp,signif_funnel)])
+#table(runs[,.(model,single_exam,snp,signif_mwis)])
 #fwrite(runs,'tmp.csv')
 ```
 
 ```{r, include=F}
 #save.image('all_models_p_threshes-250814.RData')
+save.image('runs_w_lms2lmms_251012.RData')
 ```
 
 ```{r, include=F, eval=T}
 # Because the variable names need backticks, hard to display in markdown. So defining new names here.
-n_signif_met_pa         <- runs[lm_or_lmm=='LMM' & model=='met~pa',  sum(signif_funnel,na.rm=T)]
-n_signif_met_pa_met_hdl <- runs[lm_or_lmm=='LMM' & model=='met~hdl', sum(signif_funnel,na.rm=T)]
-n_eff_mets_met_pa_met_hdl <- signif(0.05/`p_thresh_after_met~pa->met~hdl`[lm_or_lmm=='LMM',thresh],3)
+n_signif_met_pa         <- runs[single_exam==F & model=='met~pa',  sum(signif_funnel,na.rm=T)]
+n_signif_met_pa_met_hdl <- runs[single_exam==F & model=='met~hdl', sum(signif_funnel,na.rm=T)]
+n_eff_mets_met_pa_met_hdl <- signif(0.05/`p_thresh_after_met~pa->met~hdl`[single_exam==F,thresh],3)
 ```
 
 Legend:
@@ -305,9 +332,10 @@ Number of metabolites to start wtih: __`r n_signif_met_pa_met_hdl`__ (effective 
 
 ```{r, echo=F, eval=T}
 runs[
-  ][lm_or_lmm=='LMM'
+  ][single_exam==F
+  ][!grepl('_0',term_pat)
   ][, .(Metabolite,met,snp,model,p=signif(p,3))
-  ][runs[model=='hdl~met*snp' & lm_or_lmm=='LMM' & signif_funnel==T, .(met,snp)],
+  ][runs[model=='hdl~met*snp' & single_exam==F & signif_funnel==T, .(met,snp)],
     on=.(met,snp)
   ][, dcast(.SD, value.var='p', Metabolite + met + snp ~ model)
   ][order(snp,`hdl~met*snp`)
@@ -315,9 +343,9 @@ runs[
 ] |> gt() |> tab_header('Metabolite*SNP P-values', 'for metabolites significant from GxPA LMM analysis funnel')
 
 runs[
-  ][lm_or_lmm=='LMM' | grepl('RESET',model)
+  ][single_exam==F | grepl('RESET',model)
   ][, .(Metabolite,met,snp,model,signif_funnel,p=signif(p,3))
-  ][is.na(snp) & met %in% runs[model=='hdl~met*snp' & lm_or_lmm=='LMM' & signif_funnel==T, met]
+  ][is.na(snp) & met %in% runs[model=='hdl~met*snp' & single_exam==F & signif_funnel==T, met]
     , dcast(.SD, value.var='p', Metabolite + met ~ model)
 ] |> gt() |> tab_header('SNP-independent P-values', 'for metabolites significant from GxPA LMM analysis funnel')
 
@@ -328,9 +356,10 @@ Total number of metabolites to start wtih: __`r length(met_nms)`__ (effective # 
 
 ```{r, echo=F, eval=T}
 runs[
-  ][lm_or_lmm=='LMM'
+  ][single_exam==F
+  ][!grepl('_0',term_pat)
   ][, .(Metabolite,met,snp,model,signif_funnel,p=signif(p,3))
-  ][runs[model=='hdl~met*snp' & lm_or_lmm=='LMM' & signif_mwis==T, .(met,snp)],
+  ][runs[model=='hdl~met*snp' & single_exam==F & signif_mwis==T, .(met,snp)],
     on=.(met,snp)
   ][, dcast(.SD, value.var='p', Metabolite + met + snp ~ model)
   ][order(snp,`hdl~met*snp`)
@@ -338,9 +367,9 @@ runs[
 ] |> gt() |> tab_header('Metabolite*SNP P-values', 'for metabolites significant from GxPA LMM MWIS')
 
 runs[
-  ][lm_or_lmm=='LMM' | grepl('RESET',model)
+  ][single_exam==F | grepl('RESET',model)
   ][, .(Metabolite,met,snp,model,p=signif(p,3))
-  ][is.na(snp) & met %in% runs[model=='hdl~met*snp' & lm_or_lmm=='LMM' & signif_mwis==T, met]
+  ][is.na(snp) & met %in% runs[model=='hdl~met*snp' & single_exam==F & signif_mwis==T, met]
     , dcast(.SD, value.var='p', Metabolite + met ~ model)
 ] |> gt() |> tab_header('SNP-independent P-values', 'for metabolites significant from GxPA LMM MWIS')
 ```
@@ -353,7 +382,8 @@ fwrite(runs,'runs.csv')
 ## Mediated moderation
 ```{r, eval=F}
 i <- 0
-tmp2 <- runs[model=='hdl~met*snp' & (signif_funnel==T | signif_mwis==T), .(met,snp,lm_or_lmm)][
+tmp2_single <- runs[model=='hdl~met*snp' & (signif_funnel==T | signif_mwis==T), .(met,snp,single_exam)][
+  ][single_exam==T
   # Calculate the minimum number of sims needed to pass the p-value threshold, plus a little 20% extra.
   ][, by=c(snp2='snp')
     #, n_sims := `p_thresh_after_met~pa->met~hdl->hdl~met*snp`[snp==snp2, ceiling(1.2/p)]
@@ -378,17 +408,17 @@ tmp2 <- runs[model=='hdl~met*snp' & (signif_funnel==T | signif_mwis==T), .(met,s
   ## Finalize
   ][, fmla_mediator := paste(fmla_mediator, '+', paste(covars,collapse='+')) # Add covars
   ][, fmla_outcome  := paste(fmla_outcome,  '+', paste(covars,collapse='+'))
-  ][lm_or_lmm=='LMM', fmla_mediator := paste(fmla_mediator, '+', '(1|mesa_id)') # Add random intercept
-  ][lm_or_lmm=='LMM', fmla_outcome  := paste(fmla_outcome,  '+', '(1|mesa_id)')
+  ][, fmla_mediator := paste(fmla_mediator, '+', '(1|mesa_id)') # Add random intercept
+  ][, fmla_outcome  := paste(fmla_outcome,  '+', '(1|mesa_id)')
 
-  ][, c('ACME_p','mediation_prop','N') := transpose(mcMap(fmla_mediator,fmla_outcome,treat,mediator,n_sims,lm_or_lmm, f=\(fmla_m,fmla_y,treat,mediator,n_sims,lm_or_lmm) {
+  ][, c('ACME_p','mediation_prop','N') := transpose(mcMap(fmla_mediator,fmla_outcome,treat,mediator,n_sims,single_exam, f=\(fmla_m,fmla_y,treat,mediator,n_sims,single_exam) {
         message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\r',appendLF=F) # Progress bar
-        if(lm_or_lmm=='LMM') {
+        if(single_exam==F) {
           model_m <- myLmer(fmla_m, data[!is.na(hdl_log)], relmat=list(mesa_id=km)) |> `class<-`('lmerMod')
           model_y <- myLmer(fmla_y, data                 , relmat=list(mesa_id=km)) |> `class<-`('lmerMod')
         } else {
-          model_m <- lm(fmla_m, data[exam==1 & !is.na(hdl_log)])
-          model_y <- lm(fmla_y, data[exam==1                  ])
+          model_m <- myLmer(fmla_m, data[exam==1 & !is.na(hdl_log)], relmat=list(mesa_id=km)) |> `class<-`('lmerMod')
+          model_y <- myLmer(fmla_y, data[exam==1                  ], relmat=list(mesa_id=km)) |> `class<-`('lmerMod')
         }
         mediate(
           model_m, model_y,
@@ -398,14 +428,15 @@ tmp2 <- runs[model=='hdl~met*snp' & (signif_funnel==T | signif_mwis==T), .(met,s
       }))
 ]
 
-#save(tmp2, 'medmod-250926.RData')
+save(tmp2, file='medmod-251013-lms2lmms.RData')
 ```
 
 
 ```{r, echo=F, eval=T}
-load('medmod-250926.RData')
+#load('medmod-250926.RData')
+load('medmod-251013-lms2lmms.RData')
 tmp2[
-  ][lm_or_lmm == 'LMM'
+  ][single_exam==F
   ][, .(met,snp,ACME_p,mediation_prop,N)
   ][order(snp,as.numeric(ACME_p),as.numeric(mediation_prop))
   ][order(snp, !met %in% runs[model=='hdl~met*snp' & signif_funnel, met]) # Order so that funnel metabolites are first
@@ -416,41 +447,42 @@ tmp2[
 
 Table of sum of significant hits at each step
 ```{r, eval=T}
-tmp2[by=.(lm_or_lmm,snp),
-     , tmp2[lm_or_lmm==.BY['lm_or_lmm'] & snp==.BY['snp'] &
-            ACME_p < `p_thresh_after_met~pa->met~hdl->hdl~met*snp`[lm_or_lmm==.BY['lm_or_lmm'] & snp==.BY['snp'],thresh] &
-            met %in% runs[lm_or_lmm==.BY['lm_or_lmm'] & model=='hdl~met*snp' & signif_funnel==T, met]
+tmp2[by=.(single_exam,snp),
+     , tmp2[single_exam==.BY['single_exam'] & snp==.BY['snp'] &
+            ACME_p < `p_thresh_after_met~pa->met~hdl->hdl~met*snp`[single_exam==.BY['single_exam'] & snp==.BY['snp'],thresh] &
+            met %in% runs[single_exam==.BY['single_exam'] & model=='hdl~met*snp' & signif_funnel==T, met]
             , signif_funnel := T
 ]] |> invisible()
 
-tmp2[by=.(lm_or_lmm,snp),
-     , tmp2[lm_or_lmm==.BY['lm_or_lmm'] & snp==.BY['snp'] &
-            ACME_p < `p_thresh_after_hdl~met*snp`[lm_or_lmm==.BY['lm_or_lmm'] & snp==.BY['snp'],thresh] &
-            met %in% runs[lm_or_lmm==.BY['lm_or_lmm'] & model=='hdl~met*snp' & signif_mwis==T, met]
+tmp2[by=.(single_exam,snp),
+     , tmp2[single_exam==.BY['single_exam'] & snp==.BY['snp'] &
+            ACME_p < `p_thresh_after_hdl~met*snp`[single_exam==.BY['single_exam'] & snp==.BY['snp'],thresh] &
+            met %in% runs[single_exam==.BY['single_exam'] & model=='hdl~met*snp' & signif_mwis==T, met]
             , signif_mwis := T
 ]] |> invisible()
 ```
 ```{r, eval=T}
-runs     [model=='met~pa',      .(`met~pa`              =sum(signif_funnel,na.rm=T)), by=.(lm_or_lmm)
-   ][on=.(lm_or_lmm),
-     runs[model=='met~hdl',     .(`met~hdl`             =sum(signif_funnel,na.rm=T)), by=.(lm_or_lmm)]
-   ][on=.(lm_or_lmm),
-     runs[model=='hdl~met*snp', .(`hdl~met*snp (funnel)`=sum(signif_funnel,na.rm=T)), by=.(lm_or_lmm,snp)]
-   ][on=.(lm_or_lmm,snp),
-     tmp2[                    , .(`meMO (funnel)`       =sum(signif_funnel,na.rm=T)), by=.(lm_or_lmm,snp)]
-   ][on=.(lm_or_lmm,snp),
-     runs[model=='hdl~met*snp', .(`hdl~met*snp (MWIS)`  =sum(signif_mwis,  na.rm=T)), by=.(lm_or_lmm,snp)]
-   ][on=.(lm_or_lmm,snp),
-     tmp2[                    , .(`meMO (MWIS)`         =sum(signif_mwis,  na.rm=T)), by=.(lm_or_lmm,snp)]
-   ][order(snp,-lm_or_lmm)
+runs     [model=='met~pa',      .(`met~pa`              =sum(signif_funnel,na.rm=T)), by=.(single_exam)
+   ][on=.(single_exam),
+     runs[model=='met~hdl',     .(`met~hdl`             =sum(signif_funnel,na.rm=T)), by=.(single_exam)]
+   ][on=.(single_exam),
+     runs[model=='hdl~met*snp', .(`hdl~met*snp (funnel)`=sum(signif_funnel,na.rm=T)), by=.(single_exam,snp)]
+   ][on=.(single_exam,snp),
+     tmp2[                    , .(`meMO (funnel)`       =sum(signif_funnel,na.rm=T)), by=.(single_exam,snp)]
+   ][on=.(single_exam,snp),
+     runs[model=='hdl~met*snp', .(`hdl~met*snp (MWIS)`  =sum(signif_mwis,  na.rm=T)), by=.(single_exam,snp)]
+   ][on=.(single_exam,snp),
+     tmp2[                    , .(`meMO (MWIS)`         =sum(signif_mwis,  na.rm=T)), by=.(single_exam,snp)]
+   ][order(snp,-single_exam)
+   # TODO: baseline/longitudinal sintead of lm lmm or singel_exam T/F
    ][grepl('14',snp)][,snp:=NULL
 ] |>
-  #setcolorder(c('snp','lm_or_lmm')) |>
-  #setnames(old=c('snp','lm_or_lmm'), new=c('SNP','Model')) |>
-  setcolorder('lm_or_lmm') |>
-  setnames(old='lm_or_lmm', new='Model') |>
+  #setcolorder(c('snp','single_exam')) |>
+  #setnames(old=c('snp','single_exam'), new=c('SNP','Model')) |>
+  setcolorder('single_exam') |>
+  setnames(old='single_exam', new='Model') |>
   gt() |>
-  tab_header('Number of significant metabolites after each step', 'with LM vs. LMM comparison')
+  tab_header('Number of significant metabolites after each step', 'with baseline vs. longitudinal comparison')
 ```
 
 
