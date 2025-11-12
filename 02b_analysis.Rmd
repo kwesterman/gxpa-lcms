@@ -374,6 +374,167 @@ runs[
 ] |> gt() |> tab_header('SNP-independent P-values', 'for metabolites significant from GxPA LMM MWIS')
 ```
 
+### Get detailed GxM effect estimates for signif metabolites
+```{r}
+i<-0
+gxm_betas <- runs[
+  ][model=='hdl~met*snp' & (signif_mwis==T | signif_funnel==T) & single_exam==F
+  ][
+    , c('intercept',
+        'g_est',  'g_se',  'g_df',  'g_t',  'g_p',
+        'm_est',  'm_se',  'm_df',  'm_t',  'm_p',
+        'gxm_est','gxm_se','gxm_df','gxm_t','gxm_p'
+      ) := transpose(mcMap(fmla,term_pat,met,snp, f=\(fmla,pat,met,snp) {
+        message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\r',appendLF=F) # Progress bar
+        s <- summary( myLmer(fmla, data, relmat=list(mesa_id=km)) )          # Run model
+        snp_pat <- paste0('^',snp,'$')
+        met_pat <- paste0('^',met,'$')
+        gxm_pat <- pat
+        c(s$coefficients['(Intercept)','Estimate'                ],
+          s$coefficients[grepl(snp_pat,rownames(s$coefficients)),], # Extract G   stuff
+          s$coefficients[grepl(met_pat,rownames(s$coefficients)),], # Extract   M stuff
+          s$coefficients[grepl(gxm_pat,rownames(s$coefficients)),]) # Extract GxM stuff
+}))]
+```
+```{r}
+gxm_betas[
+  ][single_exam==F & grepl(14,snp)
+  ][, .(Metabolite,met,signif_funnel,signif_mwis,est_G=round(g_est,3),est_M=round(m_est,3),est_GxM=signif(gxm_est,3),P_g=signif(g_p,3),P_m=signif(m_p,3),P_GxM=signif(gxm_p,3))
+] |> gt() |> tab_header('Metabolite*SNP P-values', 'for metabolites significant from GxPA LMM MWIS')
+
+`β(p)` <- \(β,p) paste0(round(β,3),' (',signif(p,3),')')
+
+gxm_betas[
+  ][single_exam==F & grepl(14,snp)
+  ][on=.(met,snp),
+    runs[single_exam==F & model=='met~snp' & met %in% gxm_betas$met
+         , .(met,snp,mg_est=est,mg_p=p)]
+  ][on=.(met),
+    runs[single_exam==F & model=='met~hdl' & met %in% gxm_betas$met
+         , .(met,my_est=est,my_p=p)]
+  ][on=.(met),
+    runs[single_exam==F & model=='met~pa' & met %in% gxm_betas$met
+         , .(met,me_est=est,me_p=p)]
+  ][order(gxm_p)
+  ][is.na(Metabolite), Metabolite := ''
+  ][, .(`Metabolite ID`=met,Identity=Metabolite,signif_funnel,signif_mwis,
+        βMG=`β(p)`(mg_est,mg_p),
+        βME=`β(p)`(me_est,me_p),
+        βMY=`β(p)`(my_est,my_p),
+        #βG=`β(p)`(g_est,g_p),
+        βM=`β(p)`(m_est,m_p),
+        βGxM=`β(p)`(gxm_est,gxm_p))
+  ][signif_mwis==T
+  #][signif_funnel==T
+] |>
+  gt() |>
+  tab_header('Metabolite*SNP P-values', 'for metabolites significant from GxPA LMM MWIS') |>
+  tab_footnote(md('Genetic effect from the model: __Metabolite ~ SNP__'),
+    locations = cells_column_labels(columns = βMG)
+  ) |>
+  tab_footnote(md('log(HDL) effect from the model: __Metabolite ~ log(HDL)__'),
+    locations = cells_column_labels(columns = βMY)
+  ) |>
+  tab_footnote(md('MVPA effect from the model: __Metabolite ~ MVPA__'),
+    locations = cells_column_labels(columns = βME)
+  ) |>
+  #tab_footnote(md('Main genetic effect from the interaction model: __log(HDL) ~ Metabolite + SNP + Metabolite*SNP__'),
+  #  locations = cells_column_labels(columns = β_G)
+  #) |>
+  tab_footnote(md('Metabolite effect from the interaction model: __log(HDL) ~ Metabolite + SNP + Metabolite*SNP__'),
+    locations = cells_column_labels(columns = βM)
+  ) |>
+  tab_footnote(md('Interaction effect from the interaction model'),
+    locations = cells_column_labels(columns = βGxM)
+  ) |>
+  tab_footnote(md('Format: β (p-value)')) |>
+  tab_footnote(md('Interpretation: if β = 1, the outcome increases by one SD per SD of the indepdendent variable.')) |>
+  tab_footnote(md('(If the SNP is the independent variable, β = 1 represents that the outcome increases by 1 SD if the SNP is present).'))
+
+gxm_betas[met=='QI1761_C18_neg']
+```
+
+#### Illustrative figures for the metabolites of highest interest
+```{r}
+#fxn <- \(b,s1,s2) {
+
+coefs <- summary(
+  myLmer(data=data, formula=runs[model=='hdl~pa*snp' & single_exam==F & grepl(14,snp), fmla], relmat=list(mesa_id=km))
+)$coefficients
+b <- coefs['(Intercept)','Estimate']
+slope1 <- coefs['mvpa_wins','Estimate']
+slope2 <- slope1 + coefs['mvpa_wins:chr14_88305056_G_A','Estimate']
+ggplot(data, aes(x=mvpa_wins, y=hdl_log)) +
+  geom_jitter(alpha=0.1, height=0.00) + # Optional jitter to avoid visual striping due to log transform
+  geom_abline(aes(intercept=b, slope=slope1, color='blue'  ), show.legend=T) +
+  geom_abline(aes(intercept=b, slope=slope2, color='purple'), show.legend=T) +
+  scale_colour_manual(name='Lines', labels = c('G=0', 'G=1'), values=c('blue','purple')) +
+  theme_bw()
+
+b <- gxm_betas[met=='QI7098_C8_pos',intercept]
+slope1 <- gxm_betas[met=='QI7098_C8_pos',m_est]
+slope2 <- slope1 + gxm_betas[met=='QI7098_C8_pos',gxm_est]
+ggplot(data, aes(x=QI7098_C8_pos, y=hdl_log)) +
+  geom_jitter(alpha=0.1, height=0.00) + # Optional jitter to avoid visual striping due to log transform
+  geom_abline(aes(intercept=b, slope=slope1, color='blue'  ), show.legend=T) +
+  geom_abline(aes(intercept=b, slope=slope2, color='purple'), show.legend=T) +
+  scale_colour_manual(name='Lines', labels = c('G=0', 'G=1'), values=c('blue','purple')) +
+  theme_bw()
+
+runs[met=='QI7098_C8_pos' & model=='met~pa' & single_exam==F, .(est,p)]
+
+fmla1 <- runs[model=='hdl~pa' & single_exam==F, fmla]
+fmla2 <- paste(fmla1,'+','QI7098_C8_pos')
+myLmer(fmla1, data, relmat=list(mesa_id=km)) |> summary() |> coef()
+myLmer(fmla2, data, relmat=list(mesa_id=km)) |> summary() |> coef()
+
+myLmer(runs[single_exam==F & model=='hdl~pa*snp' & grepl(14,snp), fmla], data, relmat=list(mesa_id=km)) |> summary() |> coef()
+myLmer(runs[single_exam==F & model=='hdl~pa*snp' & grepl(14,snp), sub('hdl_log','QI7098_C8_pos',fmla)], data, relmat=list(mesa_id=km)) |> summary() |> coef()
+
+fmla3 <- paste0(
+  'hdl_log ~ mvpa_wins*chr14_88305056_G_A',
+  ' + sex*chr14_88305056_G_A',
+  ' + ',paste(collapse='+',covars),
+  ' + (1|mesa_id)')
+fmla4 <- paste0(
+  'hdl_log ~ mvpa_wins*chr14_88305056_G_A + QI7098_C8_pos*chr14_88305056_G_A',
+  ' + sex*chr14_88305056_G_A',
+  ' + ',paste(collapse='+',covars),
+  ' + (1|mesa_id)')
+myLmer(fmla3, data, relmat=list(mesa_id=km)) |> summary() |> coef()
+myLmer(fmla4, data, relmat=list(mesa_id=km)) |> summary() |> coef()
+
+fmla_med_m<- paste0(
+  'QI7098_C8_pos ~ mvpa_wins',
+  ' + ',paste(collapse='+',covars),
+  ' + (1|mesa_id)')
+fmla_med_y <- paste0(
+  'hdl_log ~ mvpa_wins + QI7098_C8_pos',
+  ' + ',paste(collapse='+',covars),
+  ' + (1|mesa_id)')
+hello <- mediate(
+  myLmer(fmla_med_m, data[!is.na(hdl_log)], relmat=list(mesa_id=km)) |> `class<-`('lmerMod'),
+  myLmer(fmla_med_y, data,                  relmat=list(mesa_id=km)) |> `class<-`('lmerMod'),
+  treat='mvpa_wins', mediator='QI7098_C8_pos', sims=1000)
+
+calc_eff_n_metabolites(met)
+
+tmp2[
+  ][on=.(met),
+    runs[met %in% tmp2$met & signif_mwis==T & single_exam==F, .(met,Metabolite,MZ,RT)][!duplicated(met)]
+  ][ACME_p < `p_thresh_after_met~pa->met~hdl->hdl~met*snp`[grepl(14,snp),thresh]
+  ][grepl(14,snp)
+  ][order(snp,as.numeric(ACME_p),as.numeric(mediation_prop))
+  ][order(snp, !met %in% runs[model=='hdl~met*snp' & signif_funnel, met]) # Order so that funnel metabolites are first
+  ][, .(MZ,RT,`Metabolite ID`=met,Identity=Metabolite,snp,ACME_p,mediation_prop,N)
+
+  ][mediation_prop<0#, calc_eff_n_metabolites(`Metabolite ID`)
+]
+
+runs[model=='hdl~pa' & single_exam==F, .(est,p)]
+
+```
+
 ## Write
 ```{r eval=F}
 fwrite(runs,'runs.csv')
@@ -436,13 +597,22 @@ save(tmp2, file='medmod-251013-lms2lmms.RData')
 #load('medmod-250926.RData')
 load('medmod-251013-lms2lmms.RData')
 tmp2[
+  ][on=.(met),
+    runs[met %in% tmp2$met, .(met,Metabolite)][!duplicated(met)]
+  ][ACME_p < 0.023147
   ][single_exam==F
-  ][, .(met,snp,ACME_p,mediation_prop,N)
   ][order(snp,as.numeric(ACME_p),as.numeric(mediation_prop))
   ][order(snp, !met %in% runs[model=='hdl~met*snp' & signif_funnel, met]) # Order so that funnel metabolites are first
   ][, `#` := 1:.N, by=snp
-] |> gt() |> tab_header('LMM Mediated Moderation Results', 'for metabolites significant from either GxPA MWIS or analysis funnel (the funnel ones are highlighted)') |>
-  gt_highlight_rows(rows = met %in% runs[model=='hdl~met*snp' & signif_funnel, met])
+  ][, .(`Metabolite ID`=met,Identity=Metabolite,snp,ACME_p,mediation_prop,N,`#`)
+  ][grepl(14,snp)][,-c('snp','#')
+] |>
+  gt() |>
+  tab_header('LMM Mediated Moderation Results', 'for metabolites significant from either GxPA MWIS or analysis funnel (the funnel ones are highlighted)') |>
+  gt_highlight_rows(rows = `Metabolite ID` %in% runs[model=='hdl~met*snp' & signif_funnel, met]) |>
+  tab_footnote('Models run using 1000 simulations; p-values rounded to the nearest 0.001.',
+    locations = cells_column_labels(columns = ACME_p)
+  )
 ```
 
 Table of sum of significant hits at each step
@@ -474,13 +644,11 @@ runs     [model=='met~pa',      .(`met~pa`              =sum(signif_funnel,na.rm
    ][on=.(single_exam,snp),
      tmp2[                    , .(`meMO (MWIS)`         =sum(signif_mwis,  na.rm=T)), by=.(single_exam,snp)]
    ][order(snp,-single_exam)
-   # TODO: baseline/longitudinal sintead of lm lmm or singel_exam T/F
    ][grepl('14',snp)][,snp:=NULL
+   ][, `:=`(Model=fifelse(single_exam,'Baseline','Longitudinal'), single_exam=NULL)
+   ][order(-Model)
 ] |>
-  #setcolorder(c('snp','single_exam')) |>
-  #setnames(old=c('snp','single_exam'), new=c('SNP','Model')) |>
-  setcolorder('single_exam') |>
-  setnames(old='single_exam', new='Model') |>
+  setcolorder(c('Model')) |>
   gt() |>
   tab_header('Number of significant metabolites after each step', 'with baseline vs. longitudinal comparison')
 ```
@@ -499,7 +667,7 @@ Investigating the negative mediation proportions.
 mets <- `signif_mets_met~pa->met~hdl->hdl~met*snp`[grepl('chr14',snp),met]
 m1_fmla <- paste0(
   'hdl_log ~ mvpa_wins*chr14_88305056_G_A',
-  #' + sex*chr14_88305056_G_A',
+  ' + sex*chr14_88305056_G_A',
   ' + ',paste(collapse='+',covars),
   ' + (1|mesa_id)'
 )
@@ -510,10 +678,19 @@ m2_fmlas <- paste0(
   ' + (1|mesa_id)'
 )
 
+m1_fmlas <- paste0(
+  'hdl_log ~ mvpa_wins*chr14_88305056_G_A + ',mets,
+  ' + sex*chr14_88305056_G_A',
+  ' + ',paste(collapse='+',covars),
+  ' + (1|mesa_id)'
+)
+
 tmp1 <-                             summary(myLmer(m1_fmla,data,list(mesa_id=km)))$coefficients |> signif(2) |> as.data.table(keep.rownames='term')
 tmp2 <- lapply(m2_fmlas, \(m2_fmla) summary(myLmer(m2_fmla,data,list(mesa_id=km)))$coefficients |> signif(2) |> as.data.table(keep.rownames='term')) |> `names<-`(mets)
+tmp1 <- lapply(m1_fmlas, \(m1_fmla) summary(myLmer(m1_fmla,data,list(mesa_id=km)))$coefficients |> signif(2) |> as.data.table(keep.rownames='term')) |> `names<-`(mets)
 
-lapply(tmp2, \(t2)
+
+lapply(tmp1, \(t2)
   merge(t2,tmp1,by='term',all=T, suffixes=c('.M2','.M1'))[
     ][, .SD, .SDcols=!patterns('t val|df|Std')
     ][!grepl('site|smoking|race|gPC|age|sex|score|drink',term)
@@ -553,4 +730,59 @@ ggplot(df, aes(x=met, y=z, fill=Source)) +
   theme(axis.text.x=element_text(angle=45, hjust=1)) +
   xlab('Metabolite') + ylab('Z-score') +
   ggtitle('Comparison of metabolite*SNP term Z-score in different models')
+
+
+fmla <- paste0(
+  'hdl_log ~ ',
+  ' + sex*chr14_88305056_G_A',
+  ' + ',paste(collapse='+',covars),
+  ' + (1|mesa_id)'
+)
+
+myLmer(fmla, data, relmat=list(mesa_id=km)) |> summary() |> coef()
+```
+
+
+Any covars with signif SNP interaction?
+(Possible interacting confounders explaining the counter-intuitive meMO)
+```{r}
+tmp <- data_exam1[, .SD, .SDcols=!patterns('QI[0-9]|TF[0-9]|met[0-9]|_Δ|_0|_Id|_id|id[0-9]|ID')]
+fwrite(tmp,'tmp.csv')
+
+data_exam1[, sapply(.SD,levels)]
+
+nms <- names(data_exam1[, .SD, .SDcols=!patterns('QI[0-9]|TF[0-9]|met[0-9]|_Δ|_0|_Id|_id|id[0-9]|id$|ID|key|inject_order|checksum|fnm|exam|type')])
+fmlas <- paste(
+  'hdl_log ~',
+  'chr14_88305056_G_A *',nms,
+  ' + sex*chr14_88305056_G_A',
+  ' + ',paste(collapse='+',covars),
+  '+ (1|mesa_id)'
+)
+
+i <- 0
+tmp_adj <- mcmapply(nms,fmlas, FUN=\(nm,fmla) {
+  message('  ',(i<<-i+1),'\r',appendLF=F) # Progress bar
+  s <- tryCatch(
+    summary( myLmer(fmla, data_exam1, relmat=list(mesa_id=km)) ),
+    error=\(e) NULL
+  ); if(is.null(s)) return(NULL)
+  rns <- s$coefficients |> rownames()
+  d <- s$coefficients[!grepl('sexMALE',rns) & grepl('G_A:|:chr14',rns),]
+  if(is.matrix(d) ) d <- as.data.table(d)
+  if(is.numeric(d)) d <- as.data.table(d) |> transpose()
+  d$nm <- nm
+  setnames(d, c('est','se','df','t','p','nm'))
+}) |> Filter(f=\(x)length(x)>1) |> rbindlist(fill=T)
+tmp[,-c('df','t')][order(p)][1:40][,.(sapply(.SD,signif,2),nm),.SDcols=is.numeric]
+tmp_adj[,-c('df','t')][order(p)][1:100][,.(sapply(.SD,signif,2),nm),.SDcols=is.numeric]
+
+fmla <- paste(
+  'hdl_log ~',
+  'chr14_88305056_G_A *dbhxtyp5',
+  ' + sex*chr14_88305056_G_A',
+  ' + ',paste(collapse='+',covars),
+  '+ (1|mesa_id)'
+)
+summary( myLmer(fmla, data_exam1, relmat=list(mesa_id=km)) )$coefficients
 ```
