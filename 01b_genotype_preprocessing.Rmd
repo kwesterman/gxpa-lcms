@@ -1,4 +1,12 @@
-NOTE: As this notebook accesses protected TOPMed genetic data files, this notebook will only work if run in the gxpa-lcms-mediation workspace.
+```{css echo=F}
+pre { overflow-x: scroll; }
+pre code { white-space: pre; }
+```
+
+__Prerequisites:__
+
+* Running on Terra, as access to the TOPMed genotype data requires the `tnu` command.
+
 ```{r}
 library(data.table)
 if(!file.exists("bcftools/bcftools")) system("git clone --recurse-submodules https://github.com/samtools/htslib.git; git clone https://github.com/samtools/bcftools.git; cd bcftools; make")
@@ -42,11 +50,7 @@ dosages <- vs[
 ] |> transpose(make.names='cpaid', keep.names='NWD_Id')
 dosages[, NWD_Id := sub('^\\[[0-9]+\\]', '', NWD_Id) ] # "[123]NWD987" -> "NWD987"
 
-fwrite(dosages, 'dosages.csv')
-system('gcloud storage cp dosages.csv $WORKSPACE_BUCKET')
-```
-
-Also grab kinship matrix.
-```{r}
-system('gcloud storage cp gs://fc-secure-c5905035-bf75-471b-8fa8-fb8a7f83c4a9/submissions/e81b3733-44cb-4c17-87db-2aee99a0491a/fetch_dbgap/d64cc7fd-47b7-4352-985f-3c3951b9c3cf/call-decrypt/glob-b3ddbe8d141590fbae0db21546878fa2/km.Rdata .')
+dir.create('data/raw/genomics',rec=T)
+fwrite(dosages, 'data/raw/genomics/dosages.csv')
+system('gcloud storage cp data/raw/dosages.csv $WORKSPACE_BUCKET/data/raw/genomics/dosages.csv')
 ```

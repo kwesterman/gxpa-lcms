@@ -1,37 +1,40 @@
 ```{css echo=F}
-pre {
-  overflow-x: scroll;
-}
-pre code {
-  white-space: pre;
-}
+pre { overflow-x: scroll; }
+pre code { white-space: pre; }
 ```
+
+__Prerequisites:__
+
+* Access to the [`bdcmsg22/QC_metabolomics`](https://app.terra.bio/#workspaces/bdcmsg22/QC_metabolomics) workspace where the raw metabolomics data is stored.
+
 ```{r setup, results='hide', warning=F, message=F}
 library(data.table)
 library(matrixStats)
+library(gt)
 '%ni%' <- Negate('%in%')
 
-dir.create("metabolomics/raw", recursive=T)
-dir.create("metabolomics/cleaned")
-dir.create("metabolomics/QCd")
+dir.create("data/raw/metabolomics",             rec=T)
+dir.create("data/derived/metabolomics/cleaned", rec=T)
+dir.create("data/derived/metabolomics/QCd",     rec=T)
 
-data_csvs <- list(CP='metabolomics/raw/23_0207_MESA_Pilot_X01_Broad_C8-pos.csv',    # C8-positive
-                  CN='metabolomics/raw/23_0210_MESA_Pilot_X01_Broad_C18-neg.csv',   # C18-negative
-                  HP='metabolomics/raw/23_0207_MESA_Pilot_X01_Broad_HILIC-pos.csv', # HILIC-positive
-                  AN='metabolomics/raw/23_0210_MESA_Pilot_X01_BIDMC_Amide-neg.csv') # Amide-negative
+data_csvs <- list(CP='data/raw/metabolomics/23_0207_MESA_Pilot_X01_Broad_C8-pos.csv',    # C8-positive
+                  CN='data/raw/metabolomics/23_0210_MESA_Pilot_X01_Broad_C18-neg.csv',   # C18-negative
+                  HP='data/raw/metabolomics/23_0207_MESA_Pilot_X01_Broad_HILIC-pos.csv', # HILIC-positive
+                  AN='data/raw/metabolomics/23_0210_MESA_Pilot_X01_BIDMC_Amide-neg.csv') # Amide-negative
 
 # Download original xlsx data and convert to csv, faster to work with.
 if(!all(file.exists(unlist(data_csvs)))) {
-  system("gsutil -m cp gs://fc-secure-4b3e979d-ba8b-43c4-a5ec-b41ab42ce606/MesaMetabolomics_PilotX01_2023_02_16/23_02* metabolomics/raw")
+  system("gcloud storage cp gs://fc-secure-4b3e979d-ba8b-43c4-a5ec-b41ab42ce606/MesaMetabolomics_PilotX01_2023_02_16/23_02* data/raw/metabolomics") # Workspace: bdcmsg22/QC_metabolomics
   data_xlsxs <- sub('.csv','.xlsx', data_csvs)
-  mapply(data_csvs,data_xlsxs, FUN=\(csv,xlsx) xlsx |> readxl::read_xlsx(col_names=F) |> fwrite(csv, col.names=F))
+  Map(data_csvs,data_xlsxs, f=\(csv,xlsx)
+    xlsx |> readxl::read_xlsx(col_names=F) |> fwrite(csv, col.names=F) )
 }
 ```
 
 
-# Inspect data
+# Inspect raw data
 There are files for 4 LC-MS methods: C8-positive, C18-negative, HILIC-positive, Amide-negative ([descriptions here](https://topmed.nhlbi.nih.gov/sites/default/files/TOPMed_CORE_Year3_Broad-BIDMC_metabolomics_methods.pdf)).
-```{r inspect, results="asis"}
+```{r inspect-raw, results="asis"}
 quick_look <- \(file) fread(file, nrow=12, select=1:12) |> knitr::kable()
 lapply(data_csvs, quick_look)
 ```
@@ -66,8 +69,8 @@ sample_info[, is_qc_sample := !grepl("TOM",sample_id)]
 date_cols <- grep('date',names(sample_info),value=T)
 sample_info[, (date_cols) := lapply(.SD, \(x) as.numeric(x) |> as.Date(origin='1899-12-30')), .SDcols=date_cols]
 
-fwrite(sample_info, "metabolomics/sample_info.csv")
-knitr::kable(head(sample_info))
+fwrite(sample_info, "data/derived/metabolomics/sample_info.csv")
+gt(head(sample_info))
 ```
 
 # Extract metabolite metadata
@@ -91,13 +94,13 @@ met_info[Method=='Amide-neg', unique_met_id := paste0('met', .I,  '_',sub('-','_
 
 met_info[met_info==''] <- NA
 
-fwrite(met_info, "metabolomics/met_info.csv")
-knitr::kable(head(met_info))
+fwrite(met_info, "data/derived/metabolomics/met_info.csv")
+gt(head(met_info))
 ```
 
 
 # Extract measurement data
-```{r data, results='hide', warning=F, message=F}
+```{r extract-measurements, results='hide', warning=F, message=F}
 data <- list()
 data$CP <- fread(data_csvs$CP, skip=9, drop=1:8, colClasses='double') |> t() |> `colnames<-`(met_info[Method==   'C8-pos',unique_met_id]) # I double-checked, the names are in the proper order
 data$CN <- fread(data_csvs$CN, skip=9, drop=1:8, colClasses='double') |> t() |> `colnames<-`(met_info[Method==  'C18-neg',unique_met_id])
@@ -109,9 +112,9 @@ mode(data$CP) <- mode(data$CN) <- mode(data$HP) <- mode(data$AN) <- "numeric" # 
 data <- lapply(data, \(m) m[rownames(m) %ni% sample_info[is_qc_sample==T,sample_id], ] ) # Rm QC sample rows
 data$AN[data$AN<0] <- NA # Amines has 11 negative measurements, which don't make sense
 
-mapply(fwrite, data, paste0("metabolomics/cleaned/",names(data),"_cleaned.csv"), row.names=T)
+Map(fwrite, data, paste0("data/derived/metabolomics/cleaned/",names(data),"_cleaned.csv"), row.names=T)
 ```
-```{r results="hold"}
+```{r inspect-cleaned, results="hold"}
 data$CP[1:3,1:3] # Check out the cleaned data!
 data$HP[1:3,1:3]
 data$AN[1:3,1:3]
@@ -144,7 +147,7 @@ data <- lapply(data, \(m) {
   m <- winsorizeColsBySd(m,5) # step 5
 })
 
-mapply(fwrite, data, paste0('metabolomics/QCd/',names(data),'_QCd.csv'))
+Map(fwrite, data, paste0('data/derived/metabolomics/QCd/',names(data),'_QCd.csv'))
 ```
 
 
@@ -153,17 +156,18 @@ mapply(fwrite, data, paste0('metabolomics/QCd/',names(data),'_QCd.csv'))
 ```{r merge, message=F}
 data_dts <- lapply(data, as.data.table, keep.rownames='TOM_Id')
 data_merged <- Reduce(\(x,y) merge(x,y, all=T, by='TOM_Id'), data_dts)
-fwrite(data_merged, "metabolomics/QCd/merged_QCd.csv")
+fwrite(data_merged, 'data/derived/metabolomics/QCd/merged_QCd.csv')
 ```
 
 ---
 
 # Plots
 Plots are made using the CP/HP/AN data separately (not merged).
+
 ## Distribution of metabolite medians
 ```{r plot-hists, results='hide', fig.width=12}
 par(mfrow=c(1,4))
-mapply(data, names(data), FUN = \(m,nm) hist(colMedians(m), main=nm))
+Map(data, names(data), f = \(m,nm) hist(colMedians(m), main=nm))
 ```
 
 ## Skew vs. Kurtosis
@@ -183,7 +187,7 @@ plotSkewKurt <- function(df, title) {
 }
 
 par(mfrow=c(1,4))
-mapply(plotSkewKurt, data, names(data))
+Map(plotSkewKurt, data, names(data))
 ```
 
 ## Individual metabolite distributions

@@ -9,8 +9,8 @@ pre code { overflow-x: scroll; white-space: pre; }
 knitr::opts_chunk$set(eval=F)
 ```
 ```{r cheat, eval=T, cache=T, include=F}
-#load('baseline_added-251003.RData') # Added baseline effect estimates for decomposed model
 load('runs_w_lms2lmms_251012.RData') # Changed LMs to baseline-only km-adjusted LMMs.
+load('medmod-251013-lms2lmms.RData')
 ```
 
 # Setup
@@ -33,7 +33,7 @@ options(datatable.na.strings=c('NA',''))
 # Workaround so that lmerTest works on lme4qtl model objects
 myLmer <- \(formula, data, relmat) {
   model <- relmatLmer(formula, data, relmat=relmat)
-  lmerTest:::as_lmerModLT(model, as.function(model))
+  lmerTest:::as_lmerModLT(model, as.function(model)) |> `class<-`('lmerMod')
 }
 ```
 ```{r data}
@@ -91,12 +91,12 @@ runs <- CJ(met=met_nms, snp=cpaids, single_exam=c(F,T), exam=1,
           'hdl~met*snp','hdl~Δmet*snp',
 
           'hdl~pa', 'hdl~pa_RESET', 'pa~snp',
-          'hdl~pa*snp', 'hdl~pa*snp_no_sex*snp'))[
+          'hdl~pa*snp', 'hdl~pa*snp-no_sex*snp'))[
 
   # Exceptions
   ][!(single_exam==F & grepl('RESET',model))  # RESET models must be LMs (which can't use longitudinal data)
   ][!(single_exam==T & grepl(  'Δ'  ,model))  # Decomposed models must be all-exams
-  ][!grepl('met',model), met  := NA            # Rm per-met/per-snp rows for models w/o a met/snp term
+  ][!grepl('met',model), met  := NA           # Rm per-met/per-snp rows for models w/o a met/snp term
   ][!grepl('snp',model), snp  := NA
   ][single_exam==F,      exam := NA
   ][!duplicated(paste(model,single_exam,exam,met,snp))
@@ -116,7 +116,7 @@ runs <- CJ(met=met_nms, snp=cpaids, single_exam=c(F,T), exam=1,
 
   # Interaction
   ][model=='hdl~pa*snp',            fmla := paste0('hdl_log',' ~ ','mvpa_wins','*',snp,' + ','sex','*',snp)
-  ][model=='hdl~pa*snp_no_sex*snp', fmla := paste0('hdl_log',' ~ ','mvpa_wins','*',snp                    )
+  ][model=='hdl~pa*snp-no_sex*snp', fmla := paste0('hdl_log',' ~ ','mvpa_wins','*',snp                    )
   ][model=='hdl~met*snp',           fmla := paste0('hdl_log',' ~ ',    met,    '*',snp,' + ','sex','*',snp)
 
   # hdl~met*snp model, except met term decomposed into:         ↓baseline (exam1)      ↓delta (examX - exam1).
@@ -137,7 +137,7 @@ runs <- CJ(met=met_nms, snp=cpaids, single_exam=c(F,T), exam=1,
   ][model %in% c('hdl~met*snp'),                        term_pat := paste0(met,':',snp,'|',snp,':',met)
   ][model %in% c('hdl~Δmet*snp'),                       term_pat := paste0(met,'_Δ:',snp,'|',snp,':',met,'_Δ')
   ][, rbind(.SD, .SD[model %in% c('hdl~Δmet*snp')][,    term_pat := paste0(met,'_0:',snp,'|',snp,':',met,'_0')])
-  ][model %in% c('hdl~pa*snp','hdl~pa*snp_no_sex*snp'), term_pat := paste0('mvpa_wins:',snp,'|',snp,':mvpa_wins')
+  ][model %in% c('hdl~pa*snp','hdl~pa*snp-no_sex*snp'), term_pat := paste0('mvpa_wins:',snp,'|',snp,':mvpa_wins')
   ][is.na(term_pat), term_pat := 'NONE' # (grepping by NA would cause problems.)
 
 ] |> merge(by.x='met', by.y='unique_met_id', all=T, # Merge to metabolite metadata (M/Z, RT, common name, etc.)
@@ -203,26 +203,6 @@ runs <- runs[single_exam==T & !grepl('RESET',model)
       c(s$coefficients[grepl(pat,rownames(s$coefficients)),],              # Extract results
         any(grepl('singular', s$optinfo$conv$lme4$messages)))              # Extract singular fit warning msgs
 }))]
-#load('lm2lmm_w_relatedness.RData')
-# Note: if eventually want to do models for each exam individually, do fcase(exam==1,data_exam1, exam==2,data_exam2, ...) etc..
-#   But I'm hesitant to do that now since we switched the exam1-only models from LMs to LMMs to adjust for relatedness. Now it'd take a long time to run all those per-exam models.
-#load('b4_lmms_again.RData')
-#load('lm2lmm_w_relatedness.RData')
-
-# TMP Messy combination so I don't have to rerun LMMs again
-#load('lm2lmm_w_relatedness.RData') # Just ran baseline only, relatedness-adjusted LMMs instead of LMs
-#runs2 <- runs
-#load('baseline_added-251003.RData') # Added baseline effect estimates for decomposed model
-#runscomb <- rbindlist(list(runs,runs2),fill=T)
-runscomb <- runscomb[
-  ][lm_or_lmm=='LMM' | single_exam==T # Preserve only old LMM results and new baseline LMM results. Discard old LM results and the new run's empty LMM results
-  ][lm_or_lmm=='LMM',  single_exam:=F # Discard old lm_or_lmm col; it's all LMMs now.
-  ][, lm_or_lmm := NULL
-]
-runs <- runscomb
-
-
-
 
 i <- 0
 runs <- runs[single_exam==F
@@ -242,10 +222,10 @@ runs <- runs[grepl('RESET',model)
 ```
 
 # Results summary
-```{r get-signif-mets-and-thresholds, echo=F}
+## Calculate p-value thresholds, mark metabolites which pass
+```{r p-thresholds, eval=T, echo=F}
 `p_thresh_mwas` <- 0.05/calc_eff_n_metabolites( unique(runs$met) )
-```
-```{r, eval=T}
+
 runs[model=='met~pa' &
      p < p_thresh_mwas
      , signif_funnel := T] |> invisible()
@@ -290,15 +270,8 @@ runs[model=='hdl~met*snp' &
   runs[model=='hdl~met*snp' & signif_mwis==T,
        by=.(single_exam,snp)
        , .(thresh=tryCatch(expr=0.05/calc_eff_n_metabolites(met), error=\(e)0.05))]
-
-table(runs[,.(model,single_exam,    signif_funnel)])
-#table(runs[,.(model,single_exam,snp,signif_funnel)])
-#table(runs[,.(model,single_exam,snp,signif_mwis)])
-#fwrite(runs,'tmp.csv')
 ```
-
-```{r, include=F}
-#save.image('all_models_p_threshes-250814.RData')
+```{r, include=F, eval=F}
 save.image('runs_w_lms2lmms_251012.RData')
 ```
 
@@ -456,8 +429,6 @@ gxm_betas[met=='QI1761_C18_neg']
 
 #### Illustrative figures for the metabolites of highest interest
 ```{r}
-#fxn <- \(b,s1,s2) {
-
 coefs <- summary(
   myLmer(data=data, formula=runs[model=='hdl~pa*snp' & single_exam==F & grepl(14,snp), fmla], relmat=list(mesa_id=km))
 )$coefficients
@@ -594,8 +565,6 @@ save(tmp2, file='medmod-251013-lms2lmms.RData')
 
 
 ```{r, echo=F, eval=T}
-#load('medmod-250926.RData')
-load('medmod-251013-lms2lmms.RData')
 tmp2[
   ][on=.(met),
     runs[met %in% tmp2$met, .(met,Metabolite)][!duplicated(met)]
@@ -651,14 +620,6 @@ runs     [model=='met~pa',      .(`met~pa`              =sum(signif_funnel,na.rm
   setcolorder(c('Model')) |>
   gt() |>
   tab_header('Number of significant metabolites after each step', 'with baseline vs. longitudinal comparison')
-```
-
-
-
-Number of mets w/ positive/negative mediation proportion (mostly negative).
-```{r}
-tmp2[, grepl('14',snp) & mediation_prop<0] |> sum()
-tmp2[, grepl('14',snp) & mediation_prop>0] |> sum()
 ```
 
 

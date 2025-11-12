@@ -1,14 +1,10 @@
 ```{css echo=F}
-pre {
-  overflow-x: scroll;
-}
-pre code {
-  white-space: pre;
-}
+pre { overflow-x: scroll; }
+pre code { white-space: pre; }
 ```
 
 # Setup
-```{r setup, message=F, cache=T, cache.depends=file.mtime('analysis_df.csv')}
+```{r setup, message=F, cache=T, cache.depends=file.mtime('data/derived/analysis_df.csv')}
 library(circlize)
 library(ComplexHeatmap)
 library(data.table)
@@ -17,7 +13,7 @@ library(gtsummary)
 library(parallel)
 
 options(datatable.na.strings=c('NA',''))
-data <- fread('analysis_df.csv')[,exam:=as.factor(exam)]
+data <- fread('data/derived/analysis_df.csv')[,exam:=as.factor(exam)]
 ```
 
 # Summary table of relevant variables
@@ -254,8 +250,8 @@ ggplot(data2hist_categ, aes(x=val)) +
 
 # Correlated metabolites
 ```{r eval=F}
-met <- fread('metabolomics/QCd/merged_QCd.csv')[,-1]
-met_info <- fread('metabolomics/met_info.csv')
+met <- fread('data/derived/metabolomics/QCd/merged_QCd.csv')[,-1]
+met_info <- fread('data/derived/metabolomics/met_info.csv')
 cor_mtx <- cor(met,met,use='complete.obs')
 cor_mtx[1:10,1:10]
 signif_mets <- c('QI3365_C8_pos', 'QI5103_C8_pos', 'QI13024_C18_neg', 'QI48826_C18_neg', 'QI7292_C8_pos', 'QI46325_C18_neg', 'QI42688_C18_neg', 'QI54634_C18_neg', 'QI45506_C18_neg', 'QI5007_C8_pos', 'QI14471_HILIC_pos')
