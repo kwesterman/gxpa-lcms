@@ -1,0 +1,41 @@
+NOTE: this does not work out of the box. Mummichog is a bit annoying to run. The latest update introduced a bug so you have to use version 2.6.1. It also only works on Python 3.8.\
+If you have `pyenv` you can do `pyenv install 3.8 && pyenv global 3.8 && pip install mummichog==2.6.1`.
+
+# Mummichog
+```{r setup}
+library(data.table)
+library(parallel)
+options(mc.cores=6L)
+dir.create('scratch/mummichog_input', recursive=T)
+dir.create('scratch/mummichog_output',recursive=T)
+```
+
+```{r data}
+tmp <- fread('runs.csv')
+tmp2 <- fread('data/derived/metabolomics/met_info.csv') 
+fread('data/derived/metabolomics/met_info.csv')[
+  ][, .(unique_met_id,MZ,RT)
+  ][fread('runs.csv')[
+      ][grepl(14,snp) & single_exam==F
+      ][, .(met, p, z=est/se)
+    ], on=.(unique_met_id=met)
+  ][!is.na(MZ) & !is.na(RT)
+    , .(MZ,RT,p,z) |> fwrite(paste0('scratch/mummichog_input/mummichog_input-chr14_variant.tsv'), sep='\t')
+]
+```
+
+```{r mummichog}
+fs <- list.files('scratch/mummichog_input/',full.names=T)
+t0 <- Sys.time()
+mclapply(fs, \(f) {
+  print(f)
+  system(paste('mummichog -f', f, '-o', basename(f)))
+
+  # Hacky stuff to move mummichog's strangely-named outputs to where I want
+  out_dirnm <- sub('mummichog_input-','',sub('.csv$','',basename(f)))
+  out_dirnm2 <- paste0('scratch/mummichog_output/',out_dirnm)
+  unlink(out_dirnm2,recursive=T)
+  file.rename(list.files(pattern=out_dirnm), out_dirnm2)
+})
+Sys.time()-t0
+```
