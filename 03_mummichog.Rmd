@@ -4,8 +4,6 @@ If you have `pyenv` you can do `pyenv install 3.8 && pyenv global 3.8 && pip ins
 # Mummichog
 ```{r setup}
 library(data.table)
-library(parallel)
-options(mc.cores=6L)
 dir.create('scratch/mummichog_input', recursive=T)
 dir.create('scratch/mummichog_output',recursive=T)
 ```
@@ -27,7 +25,7 @@ fread('data/derived/metabolomics/met_info.csv')[
 ```{r mummichog}
 fs <- list.files('scratch/mummichog_input/',full.names=T)
 t0 <- Sys.time()
-mclapply(fs, \(f) {
+lapply(fs, \(f) {
   print(f)
   system(paste('mummichog -f', f, '-o', basename(f)))
 

@@ -10,7 +10,6 @@ library(ComplexHeatmap)
 library(data.table)
 library(ggplot2)
 library(gtsummary)
-library(parallel)
 
 options(datatable.na.strings=c('NA',''))
 
@@ -149,10 +148,9 @@ runs <- rbind(lm_runs_w_mPC_outcome,
 runs <- runs[, fmlas := paste0('scale(',ys,')','~','scale(',xs,')','+',sapply(covar_sets,paste,collapse='+')) |> sapply(formula) ]
 
 runs[
-  ][, lm_coefs := mcmapply(fmlas, FUN = \(fmla)
-        lm(fmla,data[exam==1]) |> (\(model) summary(model)$coefficients)(),
-      SIMPLIFY=F,     # ↑ Pipe into a function to extract only the coefs. Don't need
-      mc.cores=4)     #   all of lm's output. Keeping everything eats up a lot of memory.
+  ][, lm_coefs := Map(fmlas, f = \(fmla)
+        lm(fmla,data[exam==1]) |> (\(model) summary(model)$coefficients)()
+      )
   # Extract the results we want
   ][, var_coefs := mapply(lm_coefs, xs, FUN = \(coefs,x)
         coefs[grepl(x,rownames(coefs)),],
