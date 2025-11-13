@@ -6,6 +6,7 @@ pre code { white-space: pre; }
 __Prerequisites:__
 
 * Running on Terra, as access to the TOPMed genotype data requires the `tnu` command.
+* Access to the [`mgb-KEW-K01-GCP/gxpa-lcms-mediation`](https://app.terra.bio/#workspaces/mgb-KEW-K01-GCP/gxpa-lcms-mediation) workspace where metadata files are stored.
 
 ```{r}
 library(data.table)

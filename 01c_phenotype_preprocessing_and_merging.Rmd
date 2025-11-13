@@ -300,3 +300,7 @@ save(km, file='data/derived/genomics/mesa_km.RData')
 ```{r write}
 fwrite(data, 'data/derived/analysis_df.csv')
 ```
+```{r upload}
+system('gcloud storage cp data/derived/analysis_df.csv        gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/analysis_df.csv')
+system('gcloud storage cp data/derived/genomics/mesa_km.RData gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/genomics/mesa_km.RData')
+```

@@ -30,6 +30,8 @@ library(parallel)
 options(mc.cores=1L)
 options(datatable.na.strings=c('NA',''))
 
+if(!file.exists('data/derived/analysis_df.csv')) system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/analysis_df.csv')
+
 # Workaround so that lmerTest works on lme4qtl model objects
 myLmer <- \(formula, data, relmat) {
   model <- relmatLmer(formula, data, relmat=relmat)
