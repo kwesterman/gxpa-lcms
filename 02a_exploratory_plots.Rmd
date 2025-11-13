@@ -17,7 +17,7 @@ data <- fread('data/derived/analysis_df.csv')[,exam:=as.factor(exam)]
 ```
 
 # Summary table of relevant variables
-```{r summary-tbl, cache=T, cache.depend=digest::digest(data)}
+```{r summary-tbl, include=F, cache=T, cache.depend=digest::digest(data)}
 data[
   ][, .SD, .SDcols=patterns('^age$|bmi$|sex|hdl$|pa$|ahei|ses|drinks|race$|^chr') #.(age, bmi, sex, hdl, pa, mod_pa, mvpa, vig_pa, ahei_score, dash_score, ses_score, drinks_per_week, race, chr17_36804493_G_T)
   ][, has_metabolomics := !is.na(data$TOM_Id)
@@ -31,8 +31,9 @@ data[
       all_categorical() ~ c("{n} ({p}%)"   )
   )) |>
   add_overall() |> add_n()
-
-# With the power of hindsight: cleaner table showing only individuals with metabolomics + the chr14 variant.
+```
+```{r summary-tbl-chr14, cache=T, cache.depend=digest::digest(data)}
+# With the power of hindsight: cleaner table showing only individuals with metabolomics & the chr14 variant.
 data[
   ][exam==1 & !is.na(data$TOM_Id) & !is.na(gPC1) & !is.na(hdl_log) & !is.na(chr14_88305056_G_A)
   ][, .SD, .SDcols=patterns('^age$|bmi$|^exam|sex|hdl$|pa$|ahei|ses|drinks|race$|^chr14')
@@ -47,6 +48,7 @@ data[
   )) |>
   add_overall()# |> add_n()
 
+# Effective samples per exam:
 data[!is.na(data$TOM_Id) & !is.na(gPC1) & !is.na(hdl_log) & !is.na(chr14_88305056_G_A), table(exam)] #|> sum()
 ```
 
@@ -61,16 +63,12 @@ heatmap_covars <- c(
   'income', 'drinks_per_week', 'smoking')
 
 runs <- CJ(heatmap_covars, mPC=paste0('mPC',1:20), sorted=F)[
-  ][, lm_res    := mapply(mPC,heatmap_covars, FUN = \(mPC,covar) lm(data[[mPC]] ~ data[[covar]]))
-  ][, anova_res := lapply(lm_res, anova)
-  ][, p         := sapply(anova_res, \(res) res$`Pr(>F)`[1])
+  ][, lms    := mapply(mPC,heatmap_covars, FUN = \(mPC,covar) lm(data[[mPC]] ~ data[[covar]]))
+  ][, anovas := lapply(lms, anova)
+  ][, p      := sapply(anovas, \(res) res$`Pr(>F)`[1])
 ]
 p_mtx <- as.matrix(dcast(runs, heatmap_covars~mPC, value.var='p'), rownames=1)
 p_mtx <- p_mtx[,paste0('mPC',1:20)]
-
-# TODO also do other way of doing heatmap, see journal day 241112.
-# Covars, as above: lm(mPC ~ one_covar)
-# SNPs, glm(snp ~ all_mPCs, family='binomial')
 
 Heatmap(-log10(p_mtx),
   cell_fun = \(j,i,x,y,w,h,col) if(p_mtx[i,j]<0.05) grid.text('*',x,y,gp=gpar(col='white')),
@@ -80,7 +78,7 @@ Heatmap(-log10(p_mtx),
 )
 ```
 
-Define covariate sets we'll want to test
+Define covariate sets to test.
 ```{r covar-sets, cache=T, cache.depend=digest::digest(data)}
 covar_sets <- list(
   site                    =c('site'                                                                                                                           ),
@@ -94,7 +92,7 @@ covar_sets <- list(
 ```
 
 # Inspect Variable Transformations
-HDL vs various transformations of mvpa as in `gxe-omics` workspace's `preliminary-analysis.ipynb`
+HDL vs various transformations of mvpa.
 ```{r mvpa-tfs, cache=2, cache.depend=digest::digest(data), fig.height=14, fig.width=10}
 tmp <- data[exam==1]
 tmp <- tmp[
@@ -132,15 +130,16 @@ Another set of models is `hdl_log ~ pa_or_snp_variable_transformed + covar_set`,
 ```{r lms, cache=T, cache.depend=digest::digest(data)}
 # mPC ~ pa_or_snp + covars
 ys <- paste0('mPC',1:9)
-xs <- c('chr17_36804493_G_T','pa_bin','pa','mod_pa','mvpa','vig_pa')
+xs <- c('chr17_36804493_G_T','chr14_88305056_G_A','pa_bin','pa','mod_pa','mvpa','vig_pa')
 lm_runs_w_mPC_outcome <- CJ(ys, xs, covar_sets, sorted=F)
 
 # hdl_log ~ transformed_pa_or_snp + covars
 ys <- 'hdl_log'
-xs <- c('chr17_36804493_G_T', 'pa',       'mod_pa',       'mvpa',       'vig_pa',
-                    'pa_log',   'mod_pa_log',   'mvpa_log',   'vig_pa_log',
-                    'pa_wins',  'mod_pa_wins',  'mvpa_wins',  'vig_pa_wins',
-                    'pa_trunc', 'mod_pa_trunc', 'mvpa_trunc', 'vig_pa_trunc')
+xs <- c('chr17_36804493_G_T', 'chr14_88305056_G_A',
+        'pa',       'mod_pa',       'mvpa',       'vig_pa',
+        'pa_log',   'mod_pa_log',   'mvpa_log',   'vig_pa_log',
+        'pa_wins',  'mod_pa_wins',  'mvpa_wins',  'vig_pa_wins',
+        'pa_trunc', 'mod_pa_trunc', 'mvpa_trunc', 'vig_pa_trunc')
 lm_runs_w_hdl_outcome <- CJ(ys, xs, covar_sets, sorted=F)
 
 runs <- rbind(lm_runs_w_mPC_outcome,
@@ -177,7 +176,8 @@ ggplot(runs[grepl('mPC',ys)], aes(y=estimate, x=covar_sets, color=covar_sets)) +
   geom_errorbar(position=position_dodge(width=0.2), aes(ymin=l95,ymax=u95), width=0) +
   geom_hline(yintercept=0, color="gray") +
   scale_x_discrete(labels=NULL, breaks=NULL) + labs(x=NULL) +
-  facet_grid(rows=vars(xs), cols=vars(ys), scales="free")
+  facet_grid(rows=vars(xs), cols=vars(ys), scales="free") +
+  ggtitle('Effect of various covariate sets on the estimate of `variable` in `mPC# ~ variable + covar_set`')
 ```
 ```{r lm-plot2, cache=2, cache.depends=digest::digest(data), fig.width=18, fig.height=3}
 ggplot(runs[grepl('hdl',ys)], aes(y=estimate, x=covar_sets, color=covar_sets)) +
@@ -185,20 +185,22 @@ ggplot(runs[grepl('hdl',ys)], aes(y=estimate, x=covar_sets, color=covar_sets)) +
   geom_errorbar(position=position_dodge(width=0.2), aes(ymin=l95,ymax=u95), width=0) +
   geom_hline(yintercept=0, color="gray") +
   scale_x_discrete(labels=NULL, breaks=NULL) + labs(x=NULL) +
-  facet_grid(cols=vars(xs), scales="free")
+  facet_grid(cols=vars(xs), scales="free") +
+  ggtitle('Effect of various covariate sets on the estimate of `variable` in `hdl_log ~ variable + covar_set`')
 ```
 ```{r lm-plot3, cache=2, cache.depends=digest::digest(data), fig.width=12, fig.height=6}
 runs[ys=='hdl_log' &
-     xs != 'chr17_36804493_G_T' &
+     !grepl('chr',xs) &
      covar_sets=='+gPCs'
    ][order(-t)
    ][, xs := factor(xs,levels=xs) # So ggplot doesn't alphabetically order things
 ] |>
   ggplot(aes(x=xs, y=t)) +
-  geom_bar(stat='identity')
+  geom_bar(stat='identity') +
+  ggtitle('T-score of different PA variables in `hdl_log ~ pa_variable + full_covar_set`')
 ```
 
-# Histograms
+# Covariate Distributions
 ```{r hist-prep, warning=F}
 vars2hist_quant <- c('pa','mod_pa','mvpa','vig_pa', 'age','bmi','ahei_score','dash_score','ses_score','drinks_per_week', 'hdl','hdl_log')
 data2hist_quant <- melt(data[, c('exam','sex', ..vars2hist_quant)],
@@ -245,19 +247,4 @@ ggplot(data2hist_categ, aes(x=val)) +
   geom_histogram(aes(fill=sex), stat='count', position='dodge', alpha=0.5) +
   facet_wrap(vars(var), nrow=1, scales = 'free') +
   theme_bw() + theme(axis.text.x = element_text(angle=30, hjust=0.9))
-```
-
-
-# Correlated metabolites
-```{r eval=F}
-met <- fread('data/derived/metabolomics/QCd/merged_QCd.csv')[,-1]
-met_info <- fread('data/derived/metabolomics/met_info.csv')
-cor_mtx <- cor(met,met,use='complete.obs')
-cor_mtx[1:10,1:10]
-signif_mets <- c('QI3365_C8_pos', 'QI5103_C8_pos', 'QI13024_C18_neg', 'QI48826_C18_neg', 'QI7292_C8_pos', 'QI46325_C18_neg', 'QI42688_C18_neg', 'QI54634_C18_neg', 'QI45506_C18_neg', 'QI5007_C8_pos', 'QI14471_HILIC_pos')
-mtx2 <- as.data.table(cor_mtx[,signif_mets], keep.rownames='unique_met_id')
-mtx2 <- as.data.table(cor_mtx, keep.rownames='unique_met_id') |> setcolorder(c('unique_met_id',signif_mets))
-mtx2 <- merge(met_info,mtx2)
-mtx3 <- mtx2[!is.na(Metabolite) | unique_met_id %in% signif_mets,1:22]
-fwrite(mtx3, 'mets_w_metadata2.csv')
 ```
