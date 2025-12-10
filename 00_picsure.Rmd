@@ -1,0 +1,179 @@
+```{r}
+library(data.table)
+
+if (!require('picsure', quiet=T)) {
+  Sys.setenv(TAR = '/bin/tar')
+  options(unzip = 'internal')
+  remotes::install_github(
+    repo = 'hms-dbmi/pic-sure-r-adapter-hpds',
+    ref  = 'main', force=T
+  )
+}
+
+picsure_url = 'https://picsure.biodatacatalyst.nhlbi.nih.gov/picsure'
+token <- scan('picsure_token.txt', what='character', quiet=T)
+session <- picsure::bdc.initializeSession(picsure_url, token) |> picsure::bdc.setResource('AUTH')
+```
+
+# Search variables
+## Get search objects
+```{r}
+# For some reason, query wait time scales with `limit`, so set as low as possible while still getting all variables.
+t0 <- Sys.time()
+mesa_ids_search <- picsure::bdc.searchPicsure(session, 'phs001416',               limit=  200) |> setDT()
+    mesa_search <- picsure::bdc.searchPicsure(session, 'phs000209',               limit=25000) |> setDT()
+     fhs_search <- picsure::bdc.searchPicsure(session, 'phs000974',               limit= 2000) |> setDT()
+  topmed_search <- picsure::bdc.searchPicsure(session, 'DCC Harmonized data set', limit=  500) |> setDT()
+Sys.time() - t0
+
+combined_search <- rbindlist(list(mesa_search, fhs_search))
+```
+
+### Combine the search objects
+TODO: not sure if easier to combine all the search objects and then grep? Or grep each separately first, then combine.
+The issue is that e.g. MESA has many duplicate variable names across group_name's, thus I want to filter by group_name. But then that means I'd have to filter other cohorts by their group_name too which don't have this issue, so it could be kind of clunky.
+```{r}
+tmp <- rbindlist(list(
+
+  MESA_ids = mesa_ids_search[
+    ][grepl(paste(collapse='|', c(
+        'SAMPLE_ID', 'SUBJECT_ID'
+      )), var_name)
+    ][, values := NULL
+  ]#,
+
+  #MESA = 
+))
+tmp
+```
+
+## Narrow down desired variables
+### TOPMed harmonized variables
+```{r}
+#colnames(fread('data/raw/phenotypes/MESA_HDL_PA_covars_12345.csv')) |> {\(nm) sub('.*\\\\(.*)\\\\$', '\\1', nm)}()
+
+# Read
+topmed_search[1:.N][,values:=NULL][,var_name]
+
+topmed_search[
+  ][1:226
+  ][, values := NULL
+  ][grepl(x = tolower(paste(var_id, var_name, var_description)), pat = paste(collapse='|', c(
+      #'lipid_lowering_medication',
+      #'fasting_lipids', #(This is an indicator var of whether they fasted >=8hr b4 lipid measures or not)
+      #'hdl',
+      #'triglycerides'
+      #'age'
+      #'bmi_baseline'
+      #'ever_smoker_baseline'
+      #'current_smoker_baseline'
+      #'sleep_duration'
+      #'Body mass index calculated at baseline.'
+      #'race_us'
+      #'subcohort' "A distinct subgroup within a study, generally indicating subjects who share similar characteristics due to study design. Subjects may belong to only one subcohort."
+      #'hispanic_or_latino'
+      #'geographic_site'
+      #'annotated_sex'
+    )))
+
+  # Old code trying to grep multiple cols
+  #][, .SD[Reduce('&', apply(.SD, 0, \(r)
+  #   grepl(paste(collapse='|', c(
+  #     'Indi'
+  #   )), r)
+  #   ))
+  #    ]
+  #][, .SD[.SD$data_type=='Categorical']
+  #][, .SD[apply(.SD, 0, \(r) r
+      #)]
+]
+```
+
+
+### FHS search
+```{r}
+fhs_search$var_name |> Filter(f=\(x) !grepl('^_',x))
+
+fhs_search[
+  ][grepl(paste(collapse='|', c(
+      #'Age_at_collection' # Which one?
+      #'AGE_OF_COLLECTION'      
+      #'Batch'
+      #'Collection_visit' # Which one?
+                                #'extractDate'
+                                #'IS_TUMOR' # all are no
+      #'SEX'
+      #'SAMPLE_ID'
+                                #'PlateId', 'Sample_well_ID', 'Sample_container_ID'
+      #'SUBJECT_ID'
+    )), var_name)
+  ][, #values := NULL
+]
+```
+
+### MESA search
+```{r}
+mesa_search[
+  #][grepl(paste(collapse='|', c(
+  #    'MESA_Exam[0-9]Main',
+  #    'MESA_AncilMesaMineralMetabolite',        # nac
+  #    'MESA_AncilMesaNeighborScalesExam',       # ahei_2010
+  #    'MESA_AncilMesaNeighborScalesSodiumExam', # dash_sodium
+  #    'MESA_exam[0-9]dietnutrients',            # nan
+  #    'MESA_AncilMesaNeighborSESExam'           # F1_PC2
+  #  )), group_name)
+  ][grepl(paste(collapse='|', c(
+      #'sidno' 
+      #'^age[0-9]c$'
+      #'ahei'
+      #'alc'
+      #'bmi[0-9]c'
+      #'cig[0-9]c'
+      #'dash_sodium'
+      #'F1_PC2'
+      #'gender'
+      #'glucos[0-9]c'
+      #'hba'
+      #'hdl[0-9]$'
+      #'income',
+      #'ins[0-9]c'
+      #'lipid'
+      #'month'
+      #'nac'
+      #'nan[0-9]c'
+      #'race1c'
+      #'season'
+      #'site[0-9]c'
+      #'exercm[0-9]c', 'pamcm[0-9]c', 'pavcm[0-9]c', 'pamvcm[0-9]c'
+    )), var_name)
+  #][, .N
+  #][, unique(group_name)
+  #][grep('sidno', var_name)
+]
+
+unique(mesa_search$group_name)
+```
+
+
+# Actually getting data with a Query
+TODO: still just Kenny's example code. seems like `var_name` is what goes in "keys".
+```{r}
+ex1_group_name <- 'MESA_Exam1Main'
+mesa_var_df %>%
+  filter(group_name %in% mesa_exam,
+         str_detect(var_description, regex_covariates)) %>%
+  pull(var_name)
+mesa_cov_var_names <- c('gender1', 'age1c', 'bmi1c')
+mesa_cov_df <- mesa_var_df %>%
+  filter(group_name %in% mesa_exam,
+         var_name %in% mesa_cov_var_names)
+mesa_cov_dbgap_names <- mesa_cov_df$name
+
+mesa_query <- picsure::bdc.newQuery(session)
+mesa_query <- picsure::addClause(query = mesa_query, # Query to add to
+                                keys = c(mesa_cov_dbgap_names), # List of variables to add
+                                type = 'ANYOF') # Query type REQUIRE
+mesa_res_df <- picsure::runQuery(mesa_query, resultType = 'DATA_FRAME')
+dim(mesa_res_df)
+head(mesa_res_df, 3)
+```
