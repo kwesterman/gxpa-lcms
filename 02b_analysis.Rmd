@@ -6,7 +6,7 @@ pre code { overflow-x: scroll; white-space: pre; }
 ```
 ```{r setup, include=F}
 # Uncomment to cheat and load pre-computed results to avoid waiting hours to regenerate an html render.
-#knitr::opts_chunk$set(eval=F)
+knitr::opts_chunk$set(eval=F)
 ```
 ```{r cheat, eval=T, cache=T, include=F}
 #load('runs_w_lms2lmms_251012.RData') # Changed LMs to baseline-only km-adjusted LMMs.
@@ -29,7 +29,7 @@ library(parallel)
 
 options(datatable.na.strings=c('NA',''))
 
-if(!file.exists('data/derived/analysis_df.csv')) system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/analysis_df.csv')
+if(!file.exists('data/derived/analysis_df.csv')) system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/analysis_df.csv data/derived/')
 
 # Workaround so that lmerTest works on lme4qtl model objects, so we can get lmerTest Satterthwaite p-values.
 myLmer <- \(formula, data, relmat) {
@@ -41,9 +41,10 @@ myLmer <- \(formula, data, relmat) {
 variants_of_interest <- fread(cmd='gcloud storage cat gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/variants_of_interest.csv')
 cpaids <- variants_of_interest$cpaid
 
-data <- fread('analysis_df.csv')[
+data <- fread('data/derived/analysis_df.csv')[
   ][, mesa_id    := as.factor(mesa_id)
   ][, exam       := as.factor(exam)
+  ][, batch_cn   := as.factor(batch_cn)
   # Variants are numeric (0/1/2), but we temporarily set to character so they don't get scale()'d.
   ][, names(.SD) := lapply(.SD, as.character), .SDcols=cpaids
   ][, names(.SD) := lapply(.SD, scale       ), .SDcols=is.numeric
@@ -57,7 +58,7 @@ data_exam3 <- data[exam==3]
 data_exam4 <- data[exam==4]
 data_exam5 <- data[exam==5]
 
-load('mesa_km.RData') # Kinship (with ids remapped in script 01c)
+load('data/derived/genomics/mesa_km.RData') # Kinship (with ids remapped in script 01c)
 
 # Create baseline-only and delta versions of all numeric variables, for the decomposed model.
 numeric_colnms  <- names(data)[sapply(data,is.numeric)]
@@ -67,7 +68,7 @@ data[, (baseline_colnms) := .SD[exam==1],    .SDcols=numeric_colnms,     by='mes
 data[, (   delta_colnms) := data[,.SD,.SDcols=numeric_colnms] - data[,.SD,.SDcols=baseline_colnms] ] |> invisible()
 #data[mesa_id %in% mesa_id[duplicated(mesa_id)], .SD, .SDcols=grepl('QI19074_HI|exam',names(data)), by='mesa_id'] # Sanity check
 
-met_nms <- names(fread('metabolomics/QCd/merged_QCd.csv',nrows=0,drop=1))
+met_nms <- names(fread('data/derived/metabolomics/QCd/merged_QCd.csv',nrows=0,drop=1))
 covars <- c('site', 'sex', 'age', 'ses_score', 'drinks_per_week', 'smoking', 'ahei_score', paste0('gPC',1:5), paste0('gPC',1:5,'*mvpa_wins'), 'race')
 
 calc_eff_n_metabolites <- \(met_nms) {
@@ -130,6 +131,13 @@ runs <- CJ(met=met_nms, snp=cpaids, single_exam=c(F,T), exam=1,
   # Finalize
   ][, fmla := paste(fmla, '+', paste(covars,collapse='+'))           # Add covars common to all models
   ][model=='pa~snp', fmla := gsub('\\+gPC[0-9]\\*mvpa_wins','',fmla) #   (Except pa~snp shouldn't have pa itself in the covariates)
+  ][, #   (And which LC-MS batch variable to use depends on the metabolite's measurement method)
+  ][, fmla := sapply(fmla, FUN=\(fmla) paste(fmla,
+        fifelse(grepl(   'C8_pos', fmla), '+ batch_cp',
+        fifelse(grepl(  'C18_neg', fmla), '+ batch_cn', # Warning: code will silently break if you change the suffixes on metabolite names
+        fifelse(grepl('HILIC_pos', fmla), '+ batch_hp',
+        fifelse(grepl('Amide_neg', fmla), '+ batch_an', ''))))
+      ))
   ][!grepl('RESET',model), fmla := paste(fmla, '+', '(1|mesa_id)')   # Add random intercept to all non-RESET models
 
   # Specify the term of interest whose stats will be extracted...
@@ -145,7 +153,7 @@ runs <- CJ(met=met_nms, snp=cpaids, single_exam=c(F,T), exam=1,
   ][is.na(term_pat), term_pat := 'NONE' # (grepping by NA would cause problems.)
 
 ] |> merge(by.x='met', by.y='unique_met_id', all=T, # Merge to metabolite metadata (M/Z, RT, common name, etc.)
-           fread('metabolomics/met_info.csv')[unique_met_id %in% met_nms, .(unique_met_id,Method,MZ,RT,HMDB_ID,Metabolite)])
+           fread('data/derived/metabolomics/met_info.csv')[unique_met_id %in% met_nms, .(unique_met_id,Method,MZ,RT,HMDB_ID,Metabolite)])
 ```
 
 # Time to compute!
@@ -200,9 +208,9 @@ runs <- runs[snp %in% signif_snps | is.na(snp)]
 ## Run all basic models
 ```{r run-all-basic-models, message=F}
 # These models are quite memory intensive, and that multiplies when they're run in parallel.
-# To avoid crashes, you'll need ~10GB per core.
-options(mc.cores=1L)
 
+# To avoid crashes, you'll need ~10GB per core.
+options(mc.cores=2L)
 i <- 0
 runs <- runs[single_exam==T & !grepl('RESET',model)
   , c('est','se','df','t','p','singular_fit') := transpose(mcMap(fmla,term_pat, f=\(fmla,pat) {
@@ -212,6 +220,8 @@ runs <- runs[single_exam==T & !grepl('RESET',model)
         any(grepl('singular', s$optinfo$conv$lme4$messages)))              # Extract singular fit warning msgs
 }))]
 
+# To avoid crashes, you'll need ~20GB per core.
+options(mc.cores=1L)
 i <- 0
 runs <- runs[single_exam==F
   , c('est','se','df','t','p','singular_fit') := transpose(mcMap(fmla,term_pat, f=\(fmla,pat) {
@@ -221,6 +231,8 @@ runs <- runs[single_exam==F
         any(grepl('singular', s$optinfo$conv$lme4$messages)))              # Extract singular fit warning msgs
 }))]
 
+# Requires a trivial amount of memory.
+options(mc.cores=6L)
 i <- 0
 runs <- runs[grepl('RESET',model)
   , p := transpose(mclapply(fmla, FUN=\(fmla) {

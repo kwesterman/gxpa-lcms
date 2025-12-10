@@ -265,7 +265,7 @@ data <- data[
 We waited to calculate PCs until now because we only want to do PCA using samples we will use in the analysis; and now we are finally done filtering samples.\
 We performed half-minimum imputation in metabolomics QC, but NAs are reintroduced when merging the metabolomics methods CP/CN/HP/AN, since not all samples got profiled with all the LC-MS methods.\
 PCA is intolerant to missing values, so we remove samples who have any missing values. Perhaps a more sophisticated imputation strategy would be better, but the mPCs are only used for exploratory analysis anyways.
-```{r mPCA, cache=T}
+```{r mPCA}
 met_nms <- names(fread('data/derived/metabolomics/QCd/merged_QCd.csv',nrows=0,drop=1))
 met_mtx <- data[
   ][ rowSums(is.na(data[,..met_nms]))==0 # Only samples with data for ALL metabolomics methods CP/CN/HP/AN, because PCA can't handle NAs
@@ -282,11 +282,11 @@ screeplot(pca,npcs=20)
 ```
 
 # Remap kinship matrix ids
-```{r}
+```{r kin-ids}
 dir.create('data/raw/genomics',rec=T)
 dir.create('data/derived/genomics',rec=T)
 
-system('gcloud storage cp gs://fc-secure-c5905035-bf75-471b-8fa8-fb8a7f83c4a9/submissions/e81b3733-44cb-4c17-87db-2aee99a0491a/fetch_dbgap/d64cc7fd-47b7-4352-985f-3c3951b9c3cf/call-decrypt/glob-b3ddbe8d141590fbae0db21546878fa2/km.Rdata data/raw/genomics')
+if(!file.exists('data/raw/genomics/km.Rdata')) system('gcloud storage cp gs://fc-secure-c5905035-bf75-471b-8fa8-fb8a7f83c4a9/submissions/e81b3733-44cb-4c17-87db-2aee99a0491a/fetch_dbgap/d64cc7fd-47b7-4352-985f-3c3951b9c3cf/call-decrypt/glob-b3ddbe8d141590fbae0db21546878fa2/km.Rdata data/raw/genomics')
 load('data/raw/genomics/km.Rdata')
 km <- km[rownames(km) %in% data$NWD_Id,
          colnames(km) %in% data$NWD_Id]

@@ -13,6 +13,8 @@ library(matrixStats)
 library(gt)
 '%ni%' <- Negate('%in%')
 
+options(datatable.na.strings=c('NA',''))
+
 dir.create("data/raw/metabolomics",             rec=T)
 dir.create("data/derived/metabolomics/cleaned", rec=T)
 dir.create("data/derived/metabolomics/QCd",     rec=T)
@@ -50,16 +52,16 @@ sample_info$CN <- fread(data_csvs$CN, nrow=10, drop=1:8) |> transpose()
 sample_info$HP <- fread(data_csvs$HP, nrow=10, drop=1:8) |> transpose()
 sample_info$AN <- fread(data_csvs$AN, nrow= 9, drop=1:8) |> transpose()
 
-names(sample_info$CP) <- names(sample_info$CN) <- names(sample_info$HP) <- c('extr_date','inject_date','column',  'inject_order','sample_type',           'TOM_Id','checksum','raw_fnm','project','sample_id')
-names(sample_info$AN) <-                                                   c(            'inject_date','batch_an','inject_order','sample_type','BIDMC_Id','TOM_Id',           'raw_fnm','project','sample_id')
+names(sample_info$CP) <- names(sample_info$CN) <- names(sample_info$HP) <- c('extr_date','inject_date','batch','inject_order','sample_type',           'TOM_Id','checksum','raw_fnm','project','sample_id')
+names(sample_info$AN) <-                                                   c(            'inject_date','batch','inject_order','sample_type','BIDMC_Id','TOM_Id',           'raw_fnm','project','sample_id')
 
 by_cols <- c('sample_id','TOM_Id','project')
 sample_info <- sample_info$CP |>
        merge(y=sample_info$CN, suffixes=c('','_cn'), by=by_cols, all=T) |>
        merge(y=sample_info$HP, suffixes=c('','_hp'), by=by_cols, all=T) |>
        merge(y=sample_info$AN, suffixes=c('','_an'), by=by_cols, all=T) |>
-       setnames(c('extr_date',   'inject_date',   'column',   'inject_order',   'sample_type',   'checksum',   'raw_fnm'   ),
-                c('extr_date_cp','inject_date_cp','column_cp','inject_order_cp','sample_type_cp','checksum_cp','raw_fnm_cp'))
+       setnames(c('extr_date',   'inject_date',   'batch',    'inject_order',   'sample_type',   'checksum',   'raw_fnm'   ),
+                c('extr_date_cp','inject_date_cp','batch_cp','inject_order_cp','sample_type_cp','checksum_cp','raw_fnm_cp'))
 
 #sample_info[duplicated(sample_id),sample_id] # None of the duplicated IDs are TOM ids.
 
@@ -68,6 +70,10 @@ sample_info[, is_qc_sample := !grepl("TOM",sample_id)]
 # Dates were converted to integers in readxl::read_xlsx. This integer represents the # of days after 1899-12-30 (see ?as.Date.)
 date_cols <- grep('date',names(sample_info),value=T)
 sample_info[, (date_cols) := lapply(.SD, \(x) as.numeric(x) |> as.Date(origin='1899-12-30')), .SDcols=date_cols]
+
+# Separate amine batch into batch & plate number
+sample_info[, plate_an := sub('B[0-9]+','', batch_an)]
+sample_info[, batch_an := sub('P[0-9]+','', batch_an)]
 
 fwrite(sample_info, "data/derived/metabolomics/sample_info.csv")
 gt(head(sample_info))
