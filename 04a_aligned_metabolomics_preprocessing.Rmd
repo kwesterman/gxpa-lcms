@@ -7,8 +7,6 @@ __Prerequisites:__
 
 * Access to the [`bdcmsg22/QC_metabolomics`](https://app.terra.bio/#workspaces/bdcmsg22/QC_metabolomics) workspace where the raw metabolomics data is stored.
 
-__Outline__
-
 ```{r setup, results='hide', warning=F, message=F}
 library(data.table)
 library(matrixStats)
@@ -19,7 +17,7 @@ options(datatable.na.strings=c('NA',''))
 
 dir.create("data/raw/metabolomics",             rec=T)
 dir.create("data/derived/metabolomics/cleaned", rec=T)
-dim.create("data/derived/metabolomics/QCd",     rec=T)
+dir.create("data/derived/metabolomics/QCd",     rec=T)
 
 aligned_csvs <- list(CP='data/raw/metabolomics/C8P_data.csv',  # C8-positive
                      CN='data/raw/metabolomics/C18N_data.csv', # C18-negative
@@ -55,7 +53,7 @@ lapply(aligned_csvs, quick_look)
 lapply(mesa_csvs, quick_look)
 ```
 
-# Extract sample metadata
+# Extract sample info 
 FHS & WHI have separate metabolomics sample metadata files. However, the MESA sample metadata must be extracted.
 
 ## FHS & WHI sample info
@@ -117,7 +115,7 @@ sample_info <- rbindlist(list(sample_info_mesa, sample_info_fhs, sample_info_whi
 
 sample_info[, is_qc_sample := !grepl("TOM",SAMPLE_ID)]
 
-fwrite(sample_info, "data/derived/metabolomics/sample_info.csv")
+fwrite(sample_info, "data/derived/metabolomics/sample_info-aligned.csv")
 gt(head(sample_info))
 ```
 
@@ -128,7 +126,7 @@ met_info <- rbindlist(fill=T, list(
   fread(aligned_csvs$CP, select=1: 9),
   fread(aligned_csvs$CN, select=1: 9),
   fread(aligned_csvs$HP, select=1: 9),
-  fread(aligned_csvs$AN, select=1:10)
+  fread(aligned_csvs$AN, select=1:10)[is.na(Metabolite) | !duplicated(Metabolite)] # AM_data.csv has duplicated Metabolite. More details in the "Exctract measurements" code block.
 ))
 
 # Compound IDs may be duplicated across CP/CN/HP/AN. A concatenated `<ID>_<Method>` variable ensures IDs are unique.
@@ -136,28 +134,70 @@ met_info[,                      unique_met_id := paste0(Compound_ID,'_',gsub('-.
 met_info[grepl('Amide',Method), unique_met_id := paste0('met', .I,  '_',gsub('-.*','',Method))] # Amines have no Compound_ID, so generate them.
 #sum(duplicated(met_info$unique_id)) # No dup IDs!
 
-fwrite(met_info, "data/derived/metabolomics/met_info.csv")
+fwrite(met_info, "data/derived/metabolomics/met_info-aligned.csv")
 gt(head(met_info))
 ```
 
 
 # Extract measurement data
-```{r extract-measurements, results='hide', warning=F, message=F}
-data <- list()
-data$CP <- fread(aligned_csvs$CP, drop=1: 9, colClasses='double') |> t() |> `colnames<-`(fread(aligned_csvs$CP, select=2)$Compound_ID)
-data$CN <- fread(aligned_csvs$CN, drop=1: 9, colClasses='double') |> t() |> `colnames<-`(fread(aligned_csvs$CN, select=2)$Compound_ID)
-data$HP <- fread(aligned_csvs$HP, drop=1: 9, colClasses='double') |> t() |> `colnames<-`(fread(aligned_csvs$HP, select=2)$Compound_ID)
+## Fix amine data errors
+There are several errors with the amine data:
 
-# Have to handle a weird non-numeric string in the AN data
-data$AN <- fread(aligned_csvs$AN, drop=1:10)
-data$AN[, .SD, .SDcols=is.character][, lapply(.SD, \(x) grep('[^0-9.]', x, val=T))] # Look for non-numeric cells. There is one: "1+2559:2584.03935869994933"
-data$AN[grepl('[^0-9.]', MESA__TOM148122), MESA__TOM148122 := NA]                   # Set to NA
-data$AN <- data$AN[, names(.SD) := lapply(.SD, as.numeric)] |> t() |> `colnames<-`(fread(aligned_csvs$AN, select=2)$Compound_ID)
+* 1 strange string value
+* 19 negative measurements, which doesn't make sense in the context of metabolite measurements.
+* 2 duplicated metabolites, which are identical except for differing measurements in FHS samples.
+```{r AM-data-errors}
+data <- list()
+data$AN <- fread(aligned_csvs$AN, drop=c(1:5,7,9:10))
+# Keep HMDB_ID and Metabolite columns to identify metabolites uniquely, since these weren't given Compound_IDs.
+
+# There's a weird non-numeric string in one of the cells. Set to NA.
+data$AN[20,  MESA__TOM148122 ] # "1+2559:2584.03935869994933"
+data$AN[20, 'MESA__TOM148122'] <- NA
+
+# There are 19 negative measurements, which doesn't make sense. Set to NA.
+data$AN[, sum(data$AN<0, na.rm=T)] # 19
+data$AN[data$AN<0] <- NA
+
+# There are nearly-duplicate rows for "1,5-AG / 1-deoxyglucose" and "N-Acetyl-D-Glucosamine".
+# The only difference is their value in FHS samples.
+# Uncomment if you wish to inspect the non-matching values.
+#non_matching_colnames <- data$AN[1:2][, names(.SD)[sapply(.SD, \(x) x[1]!=x[2])]] |> na.exclude()
+#row1 <- data$AN[1, .SD, .SDcols=non_matching_colnames] |> unlist()
+#row2 <- data$AN[2, .SD, .SDcols=non_matching_colnames] |> unlist()
+#plot(row1,row2)
+#non_matching_colnames <- data$AN[103:104][, names(.SD)[sapply(.SD, \(x) x[1]!=x[2])]] |> na.exclude()
+#row103 <- data$AN[103, .SD, .SDcols=non_matching_colnames] |> unlist()
+#row104 <- data$AN[104, .SD, .SDcols=non_matching_colnames] |> unlist()
+#plot(row103,row104)
+
+data$AN <- data$AN[!duplicated(Metabolite) | is.na(Metabolite)] # Removing duplicates (arbitrarily chosen)
+
+# Assign the proper metabolite ids we generated in met info
+data$AN[
+  ][, unique_met_id := met_info[
+    ][Method=='Amide-Negative-sMRM'
+    ][match(fcoalesce(data$AN$Metabolite,  data$AN$HMDB_ID),
+            fcoalesce(        Metabolite,          HMDB_ID))
+      , unique_met_id ]
+  ][, Metabolite := NULL
+  ][, HMDB_ID := NULL
+] |> invisible()
+
+# Finally, convert to matrix
+data$AN <- data$AN |> as.matrix(rownames='unique_met_id') |> `mode<-`('numeric') |> t()
+```
+
+## Other LC-MS files, and write
+The other non-amide methods are more well-behaved.
+```{r extract-measurements, results='hide', warning=F, message=F}
+data$CP <- fread(aligned_csvs$CP, drop=1:9, colClasses='double') |> t() |> `colnames<-`(fread(aligned_csvs$CP, select=2)$Compound_ID)
+data$CN <- fread(aligned_csvs$CN, drop=1:9, colClasses='double') |> t() |> `colnames<-`(fread(aligned_csvs$CN, select=2)$Compound_ID)
+data$HP <- fread(aligned_csvs$HP, drop=1:9, colClasses='double') |> t() |> `colnames<-`(fread(aligned_csvs$HP, select=2)$Compound_ID)
 
 data <- lapply(data, \(m) m[grepl('TOM',rownames(m)),] ) # Rm QC samples
-data$AN[data$AN<0] <- NA # Amines has 19 negative measurements, which don't make sense
 
-Map(fwrite, data, paste0("data/derived/metabolomics/cleaned/",names(data),"_cleaned.csv"), row.names=T)
+Map(fwrite, data, paste0("data/derived/metabolomics/cleaned/",names(data),"_cleaned-aligned.csv"), row.names=T)
 ```
 ```{r inspect-cleaned, results="hold"}
 data$CP[1:3,1:3] # Check out the cleaned data!
@@ -171,7 +211,7 @@ data$AN[1:3,1:3]
 1\. Remove signatures w/ variance = 0\
 2\. Remove signatures w/ >25% missingness\
 3\. Half-min Impute\
-4\. Log2\
+4\. Log2 (except the amide data, which is already)\
 5\. Winsorize to 5*sd\
 Missingness removal is done in two separate steps, where high-missingness metabolites are removed first, _then_ samples (to prioritize not losing samples).\
 Batch adjustment is best done at the same time as adjusting for other covariates, later.
@@ -184,16 +224,16 @@ winsorizeColsBySd <- \(m, n_sd) {
   t(pmin(pmax(t(m),lower),upper)) # lower/upper are vectors of length ncol(m), recycled for each row of the matrix.
 }
 
-data <- lapply(data, \(m) {
-  m <- m[, colVars(m,na.rm=T) > 0] # step 1
-  m <- m[,colSums(is.na(m)) < 0.25*nrow(m) ] # step 2a
-  m <- m[ rowSums(is.na(m)) < 0.25*ncol(m),] # step 2b
-  m[is.na(m)] <- (colMins(m,na.rm=T)/2)[col(m)[is.na(m)]] # step 3
-  m <- log2(m+1) # step 4
-  m <- winsorizeColsBySd(m,5) # step 5
+data <- Map(data, names(data), f=\(d, nm) {
+  d <- d[, colVars(d,na.rm=T) > 0] # step 1
+  d <- d[,colSums(is.na(d)) < 0.25*nrow(d) ] # step 2a
+  d <- d[ rowSums(is.na(d)) < 0.25*ncol(d),] # step 2b
+  d[is.na(d)] <- (colMins(d,na.rm=T)/2)[col(d)[is.na(d)]] # step 3
+  if(nm!='AN') d <- log2(d+1) # step 4
+  d <- winsorizeColsBySd(d,5) # step 5
 })
 
-Map(fwrite, data, paste0('data/derived/metabolomics/QCd/',names(data),'_QCd.csv'))
+Map(fwrite, data, paste0('data/derived/metabolomics/QCd/',names(data),'_QCd-aligned.csv'))
 ```
 
 
@@ -202,7 +242,7 @@ Map(fwrite, data, paste0('data/derived/metabolomics/QCd/',names(data),'_QCd.csv'
 ```{r merge, message=F}
 data_dts <- lapply(data, as.data.table, keep.rownames='TOM_Id')
 data_merged <- Reduce(\(x,y) merge(x,y, all=T, by='TOM_Id'), data_dts)
-fwrite(data_merged, 'data/derived/metabolomics/QCd/merged_QCd.csv')
+fwrite(data_merged, 'data/derived/metabolomics/QCd/merged_QCd-aligned.csv')
 ```
 
 ---
