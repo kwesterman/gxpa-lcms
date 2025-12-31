@@ -1,3 +1,4 @@
+# Setup
 ```{r}
 library(data.table)
 
@@ -9,7 +10,8 @@ if (!require('picsure', quiet=T)) {
     ref  = 'main', force=T
   )
 }
-
+```
+```{r}
 picsure_url = 'https://picsure.biodatacatalyst.nhlbi.nih.gov/picsure'
 token <- scan('picsure_token.txt', what='character', quiet=T)
 session <- picsure::bdc.initializeSession(picsure_url, token) |> picsure::bdc.setResource('AUTH')
@@ -17,6 +19,7 @@ session <- picsure::bdc.initializeSession(picsure_url, token) |> picsure::bdc.se
 
 # Search variables
 ## Get search objects
+This is analogous to exploring variables in the PIC-SURE web UI.
 ```{r}
 # For some reason, query wait time scales with `limit`, so set as low as possible while still getting all variables.
 t0 <- Sys.time()
@@ -27,153 +30,126 @@ mesa_ids_search <- picsure::bdc.searchPicsure(session, 'phs001416',             
 Sys.time() - t0
 
 combined_search <- rbindlist(list(mesa_search, fhs_search))
-```
-
-### Combine the search objects
-TODO: not sure if easier to combine all the search objects and then grep? Or grep each separately first, then combine.
-The issue is that e.g. MESA has many duplicate variable names across group_name's, thus I want to filter by group_name. But then that means I'd have to filter other cohorts by their group_name too which don't have this issue, so it could be kind of clunky.
-```{r}
-tmp <- rbindlist(list(
-
-  MESA_ids = mesa_ids_search[
-    ][grepl(paste(collapse='|', c(
-        'SAMPLE_ID', 'SUBJECT_ID'
-      )), var_name)
-    ][, values := NULL
-  ]#,
-
-  #MESA = 
-))
-tmp
+rm(combined_search)
 ```
 
 ## Narrow down desired variables
 ### TOPMed harmonized variables
 ```{r}
 #colnames(fread('data/raw/phenotypes/MESA_HDL_PA_covars_12345.csv')) |> {\(nm) sub('.*\\\\(.*)\\\\$', '\\1', nm)}()
+tmp <- topmed_search[,-'name'][, var_description := gsub('\n',' ',var_description)] # For manual viewing
 
-# Read
-topmed_search[1:.N][,values:=NULL][,var_name]
-
-topmed_search[
-  ][1:226
-  ][, values := NULL
+topmed_vars <- topmed_search[
+  ][1:.N
+  ][, -'values'
   ][grepl(x = tolower(paste(var_id, var_name, var_description)), pat = paste(collapse='|', c(
-      #'lipid_lowering_medication',
-      #'fasting_lipids', #(This is an indicator var of whether they fasted >=8hr b4 lipid measures or not)
-      #'hdl',
-      #'triglycerides'
-      #'age'
-      #'bmi_baseline'
-      #'ever_smoker_baseline'
-      #'current_smoker_baseline'
-      #'sleep_duration'
-      #'Body mass index calculated at baseline.'
-      #'race_us'
-      #'subcohort' "A distinct subgroup within a study, generally indicating subjects who share similar characteristics due to study design. Subjects may belong to only one subcohort."
-      #'hispanic_or_latino'
-      #'geographic_site'
-      #'annotated_sex'
+      'lipid_lowering_medication',
+      'fasting_lipids', #(This is an indicator var of whether they fasted >=8hr b4 lipid measures or not)
+      'hdl',
+      'triglycerides',
+      'bmi_baseline', # 'Body mass index calculated at baseline.'
+      'ever_smoker_baseline',
+      'current_smoker_baseline',
+      'sleep_duration',
+      'race_us',
+      'subcohort', # 'A distinct subgroup within a study, generally indicating subjects who share similar characteristics due to study design. Subjects may belong to only one subcohort.'
+      'hispanic_or_latino',
+      'geographic_site',
+      'annotated_sex',
+      'age_at_hdl', 'age_at_triglycerides', 'age_at_ever_smoker', 'age_at_current_smoker', 'age_at_fasting_lipids', 'age_at_lipid_lowering', 'age_at_sleep'
     )))
-
-  # Old code trying to grep multiple cols
-  #][, .SD[Reduce('&', apply(.SD, 0, \(r)
-  #   grepl(paste(collapse='|', c(
-  #     'Indi'
-  #   )), r)
-  #   ))
-  #    ]
-  #][, .SD[.SD$data_type=='Categorical']
-  #][, .SD[apply(.SD, 0, \(r) r
-      #)]
 ]
 ```
 
 
 ### FHS search
 ```{r}
-fhs_search$var_name |> Filter(f=\(x) !grepl('^_',x))
+tmp <- fhs_search[,-'name'][, var_description := gsub('\n',' ',var_description)] # For manual viewing
 
-fhs_search[
+fhs_vars <- fhs_search[
   ][grepl(paste(collapse='|', c(
-      #'Age_at_collection' # Which one?
-      #'AGE_OF_COLLECTION'      
-      #'Batch'
-      #'Collection_visit' # Which one?
-                                #'extractDate'
-                                #'IS_TUMOR' # all are no
-      #'SEX'
-      #'SAMPLE_ID'
-                                #'PlateId', 'Sample_well_ID', 'Sample_container_ID'
-      #'SUBJECT_ID'
+      'Age_at_collection', # Which one?
+      'AGE_OF_COLLECTION',
+      'Batch',
+      'Collection_visit', # Which one?
+      'extractDate',
+      'IS_TUMOR', # all are "no"
+      'SEX',
+      'SAMPLE_ID',
+      'PlateId', 'Sample_well_ID', 'Sample_container_ID',
+      'SUBJECT_ID'
     )), var_name)
-  ][, #values := NULL
 ]
 ```
 
 ### MESA search
 ```{r}
-mesa_search[
-  #][grepl(paste(collapse='|', c(
-  #    'MESA_Exam[0-9]Main',
-  #    'MESA_AncilMesaMineralMetabolite',        # nac
-  #    'MESA_AncilMesaNeighborScalesExam',       # ahei_2010
-  #    'MESA_AncilMesaNeighborScalesSodiumExam', # dash_sodium
-  #    'MESA_exam[0-9]dietnutrients',            # nan
-  #    'MESA_AncilMesaNeighborSESExam'           # F1_PC2
-  #  )), group_name)
+tmp <- mesa_search[,-'name'][, var_description := gsub('\n',' ',var_description)] # For manual viewing
+
+mesa_vars <- mesa_search[
   ][grepl(paste(collapse='|', c(
-      #'sidno' 
-      #'^age[0-9]c$'
-      #'ahei'
-      #'alc'
-      #'bmi[0-9]c'
-      #'cig[0-9]c'
-      #'dash_sodium'
-      #'F1_PC2'
-      #'gender'
-      #'glucos[0-9]c'
-      #'hba'
-      #'hdl[0-9]$'
-      #'income',
-      #'ins[0-9]c'
-      #'lipid'
-      #'month'
-      #'nac'
-      #'nan[0-9]c'
-      #'race1c'
-      #'season'
-      #'site[0-9]c'
-      #'exercm[0-9]c', 'pamcm[0-9]c', 'pavcm[0-9]c', 'pamvcm[0-9]c'
+      'MESA_Exam[0-9]Main',
+      'MESA_AncilMesaMineralMetabolite',        # nac
+      'MESA_AncilMesaNeighborScalesExam',       # ahei_2010
+      'MESA_AncilMesaNeighborScalesSodiumExam', # dash_sodium
+      'MESA_exam[0-9]dietnutrients',            # nan
+      'MESA_AncilMesaNeighborSESExam'           # F1_PC2
+    )), group_name)
+  ][grepl(paste(collapse='|', c(
+      'sidno',
+      '^age[0-9]c$',
+      'ahei',
+      'alc',
+      'bmi[0-9]c',
+      'cig[0-9]c',
+      'dash_sodium',
+      'F1_PC2',
+      'gender',
+      'glucos[0-9]c',
+      'hba',
+      'hdl[0-9]$',
+      'income',
+      'ins[0-9]c',
+      'lipid',
+      'month',
+      'nac',
+      'nan[0-9]c',
+      'race1c',
+      'season',
+      'site[0-9]c',
+      'exercm[0-9]c', 'pamcm[0-9]c', 'pavcm[0-9]c', 'pamvcm[0-9]c'
     )), var_name)
-  #][, .N
   #][, unique(group_name)
   #][grep('sidno', var_name)
 ]
+```
+```{r}
+tmp <- mesa_ids_search[,-'name']
 
-unique(mesa_search$group_name)
+mesa_id_vars <- mesa_ids_search[
+  ][grepl(paste(collapse='|', c(
+      'TOPMed_MESA_Sample',
+      'TOPMed_MESA_Subject',
+      'TOPMed_MESA_Metabolomics'
+    )), group_name)
+  #][, -'values'
+]
 ```
 
 
 # Actually getting data with a Query
-TODO: still just Kenny's example code. seems like `var_name` is what goes in "keys".
 ```{r}
-ex1_group_name <- 'MESA_Exam1Main'
-mesa_var_df %>%
-  filter(group_name %in% mesa_exam,
-         str_detect(var_description, regex_covariates)) %>%
-  pull(var_name)
-mesa_cov_var_names <- c('gender1', 'age1c', 'bmi1c')
-mesa_cov_df <- mesa_var_df %>%
-  filter(group_name %in% mesa_exam,
-         var_name %in% mesa_cov_var_names)
-mesa_cov_dbgap_names <- mesa_cov_df$name
+do_query <- \(varnames) bdc.newQuery(session) |> addClause(keys=varnames, type='ANYOF') |> runQuery(resultType='DATA_FRAME') |> setDT()
 
-mesa_query <- picsure::bdc.newQuery(session)
-mesa_query <- picsure::addClause(query = mesa_query, # Query to add to
-                                keys = c(mesa_cov_dbgap_names), # List of variables to add
-                                type = 'ANYOF') # Query type REQUIRE
-mesa_res_df <- picsure::runQuery(mesa_query, resultType = 'DATA_FRAME')
-dim(mesa_res_df)
-head(mesa_res_df, 3)
+mesa_query    <- do_query(   mesa_vars$name)
+mesa_id_query <- do_query(mesa_id_vars$name)
+fhs_query     <- do_query(    fhs_vars$name)
+topmed_query  <- do_query( topmed_vars$name)
+```
+
+```{r}
+fwrite(mesa_query, 'mesa_picsure_variables.csv')
+fwrite(mesa_id_query, 'mesa_id_picsure_variables.csv')
+fwrite(fhs_query, 'fhs_picsure_variables.csv')
+fwrite(topmed_query, 'topmed_picsure_variables.csv')
 ```
