@@ -1,0 +1,140 @@
+```{css echo=F}
+pre { overflow-x: scroll; }
+pre code { white-space: pre; }
+```
+
+# Setup
+```{r setup, message=F}
+library(data.table)
+options(datatable.na.strings=c('NA',''))
+
+#dir.create('data/raw/phenotypes',rec=T)
+system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/raw/genomics/dosages.csv data/raw/genomics')
+```
+
+# Join all datasets
+```{r join}
+bingus <- fread('data/raw/phenotypes/freeze9b_sample_annot_2020-08-20.txt')
+data <-
+Reduce(\(x,l) merge(x, l$y, by=l$by, all.x=T),
+  list(                x=fread('data/derived/phenotypes/fhs_picsure_variables.csv'),
+    list(by='NWD_Id',  y=fread('data/raw/genomics/dosages.csv')                                      ),
+    list(by='NWD_Id', y=fread('data/raw/phenotypes/freeze9_pcair_results.tsv')[, NWD_Id := sample.id]),
+    list(by='TOM_Id', y=fread('data/derived/metabolomics/QCd/merged_QCd-aligned.csv')[grep('FHS',TOM_Id)][,TOM_Id:=sub('.*TOM','TOM',TOM_Id)])) # Merge metabolomics last b/c it adds tons of cols
+)
+```
+
+# Rename columns
+```{r rename}
+data <- data |> setnames(\(nm)  sub('^PC','gPC', nm))# 'PC#' -> 'gPC#' To distinguish genetic PCs from metabolite PCs we'll add later
+#data <- data[, `:=`( # Manually pretty up some names
+#)]
+```
+
+## Winsorization, imputation, transformation
+```{r factorize-impute}
+winsor      <- \(v, bounds=quantile(v,c(0,0.9),na.rm=T)) pmin(pmax(v,bounds[1]),bounds[2])
+na_outliers <- \(v, bounds=quantile(v,c(0,0.9),na.rm=T)) fifelse(v<bounds[1] | v>bounds[2], NA, v)
+nafill2 <- \(x) c(NA,x[!is.na(x)])[cumsum(!is.na(x))+1] # nafill(type='locf') but can handle non-numeric
+
+data <- data[
+  # (Median) imputation of covariates if not present in any exam (i.e. not present in exam 1)
+  # (Making sure to take the median of the original set of non-missing values, NOT recalculating the median after each imputation!)
+  ][, {  age_median <<- median(            age, na.rm=T);
+         bmi_median <<- median(            bmi, na.rm=T); .SD }
+
+  ][ is.na(            age),             age :=   age_median
+  ][ is.na(            bmi),             bmi :=   bmi_median
+
+  #][, smoking := # TODO infer 3-level variable from the two smoking variables.
+  #][ is.na(smoking) | smoking=='', smoking := 'NEVER'
+
+  # Carry-over-from-previous-exam imputation (this is why we setorder()'d by exam before)
+
+  # Definitions
+  ][, hdl_log   := log(hdl_1) 
+  # TODO CONTINUE
+  ][, race      := fifelse(race1c==1, 'WHITE, CAUCASIAN',
+                   fifelse(race1c==2, 'CHINESE AMERICAN',
+                   fifelse(race1c==3, 'BLACK, AFRICAN-AMERICAN',
+                   fifelse(race1c==4, 'HISPANIC', as.character(race1c))))) |> as.factor()
+  ][, smoking   := fifelse(smoking==0, 'NEVER',
+                   fifelse(smoking==1, 'FORMER',
+                   fifelse(smoking==2, 'CURRENT', smoking))) |> as.factor()
+  ][, income    := income |>
+                   gsub(pattern='$', replacement='', fixed=T) |> # Harmonize inconsistent formatting ($1,000 / $1000 / 1000).
+                   gsub(pattern=',', replacement='', fixed=T) |>
+                   as.factor() # Treating income as unordered factor for simplicity, and b/c it might not have a monotonic relationship w/ outcomes. Update: we end up not using income as a covariate anyway.
+  ][, education := factor(educ1,  levels=c('NO_SCHOOLING','GRADES 1-8','GRADES 9-11','COMPLETED HIGH SCHOOL/GED','SOME COLLEGE BUT NO DEGREE','ASSOCIATE DEGREE','TECHNICAL SCHOOL CERTIFICATE',"BACHELOR'S DEGREE",'GRADUATE OR PROFESSIONAL SCHOOL'))
+  ][, season    := as.factor(season)
+  ][, month     := as.factor(month)
+  ][, site      := as.factor(site)
+
+  ][, sex := fcoalesce(as.character(gender1),Sex,SEX) |>
+        sub(pattern='0|^F.*', replacement='FEMALE', ignore.case=T) |>
+        sub(pattern='1|^M.*', replacement=  'MALE', ignore.case=T) |>
+        factor(levels=c('FEMALE','MALE'))
+      # There is an existing `sex` col in freeze9b_sample_annot_2020-08-20.txt,
+      #   but it disagrees with the other `Sex`, `SEX`, and `gender1` cols. Ignoring it.
+
+  # Transformed PA variables
+  ][,     pa_trunc := na_outliers(    pa)
+  ][,   mvpa_trunc := na_outliers(  mvpa)
+  ][, mod_pa_trunc := na_outliers(mod_pa)
+  ][, vig_pa_trunc := na_outliers(vig_pa)
+  ][,     pa_wins  :=      winsor(    pa)
+  ][,   mvpa_wins  :=      winsor(  mvpa)
+  ][, mod_pa_wins  :=      winsor(mod_pa)
+  ][, vig_pa_wins  :=      winsor(vig_pa)
+  ][,     pa_log   :=         log(    pa+1)
+  ][,   mvpa_log   :=         log(  mvpa+1)
+  ][, mod_pa_log   :=         log(mod_pa+1)
+  ][, vig_pa_log   :=         log(vig_pa+1)
+]
+```
+
+
+# Append metabolomics PCs
+We waited to calculate PCs until now because we only want to do PCA using samples we will use in the analysis; and now we are finally done filtering samples.\
+We performed half-minimum imputation in metabolomics QC, but NAs are reintroduced when merging the metabolomics methods CP/CN/HP/AN, since not all samples got profiled with all the LC-MS methods.\
+PCA is intolerant to missing values, so we remove samples who have any missing values. Perhaps a more sophisticated imputation strategy would be better, but the mPCs are only used for exploratory analysis anyways.
+```{r mPCA}
+met_nms <- names(fread('data/derived/metabolomics/QCd/merged_QCd.csv',nrows=0,drop=1))
+met_mtx <- data[
+  ][ rowSums(is.na(data[,..met_nms]))==0 # Only samples with data for ALL metabolomics methods CP/CN/HP/AN, because PCA can't handle NAs
+  ][ exam==1 # TODO consider a way to include all exams' met data into the PCs? mPCs only used for rough exploration to probably not important, but idk.
+  ][, c('TOM_Id', ..met_nms)
+] |> as.matrix(rownames=1)
+
+pca <- prcomp(met_mtx, center=T, scale=T)
+pcs <- as.data.table(pca$x[,1:20], keep.rownames=T)
+setnames(pcs, c('TOM_Id',paste0('mPC', 1:20)))
+data <- pcs[data, on='TOM_Id']
+
+screeplot(pca,npcs=20)
+```
+
+# Remap kinship matrix ids
+```{r kin-ids}
+dir.create('data/raw/genomics',rec=T)
+dir.create('data/derived/genomics',rec=T)
+
+if(!file.exists('data/raw/genomics/km.Rdata')) system('gcloud storage cp gs://fc-secure-c5905035-bf75-471b-8fa8-fb8a7f83c4a9/submissions/e81b3733-44cb-4c17-87db-2aee99a0491a/fetch_dbgap/d64cc7fd-47b7-4352-985f-3c3951b9c3cf/call-decrypt/glob-b3ddbe8d141590fbae0db21546878fa2/km.Rdata data/raw/genomics')
+load('data/raw/genomics/km.Rdata')
+km <- km[rownames(km) %in% data$NWD_Id,
+         colnames(km) %in% data$NWD_Id]
+
+dimnames(km) <- list(data[match(rownames(km), NWD_Id), mesa_id],
+                     data[match(colnames(km), NWD_Id), mesa_id])
+
+save(km, file='data/derived/genomics/mesa_km.RData')
+```
+
+## Write
+```{r write}
+fwrite(data, 'data/derived/analysis_df.csv')
+```
+```{r upload}
+system('gcloud storage cp data/derived/analysis_df.csv        gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/analysis_df.csv')
+system('gcloud storage cp data/derived/genomics/mesa_km.RData gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/genomics/mesa_km.RData')
+```
