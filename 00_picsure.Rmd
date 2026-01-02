@@ -1,3 +1,15 @@
+---
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_collapsed: true-
+---
+```{css echo=F}
+pre { overflow-x: scroll; }
+pre code { white-space: pre; }
+```
+
 # Setup
 ```{r}
 library(data.table)
@@ -137,7 +149,8 @@ mesa_id_vars <- mesa_ids_search[
 ```
 
 
-# Actually getting data with a Query
+# Query
+Now we actually request the individual-level data for the desired variables with a query:
 ```{r}
 do_query <- \(varnames) bdc.newQuery(session) |> addClause(keys=varnames, type='ANYOF') |> runQuery(resultType='DATA_FRAME') |> setDT()
 
@@ -147,9 +160,140 @@ fhs_query     <- do_query(    fhs_vars$name)
 topmed_query  <- do_query( topmed_vars$name)
 ```
 
+
+# Dealing with duplicate columns in FHS
+FHS has many columns with duplicate names and their distinction is not clear from the PIC-SURE `variable_description`s. We must manually [look up their phv #s in dbGap](https://dbgap.ncbi.nlm.nih.gov/beta/search/) or in some cases infer by exploring the data ourselves. \
+Strategy: I subset to sets of same-name columns, manually explored the data in VisiData, and then added R snippets after the fact to demonstrate any interesting properties/differences I discovered.
+
+### `SUBJECT_ID`
+There are 3 `SUBJECT_ID` cols. A dbGaP search of their phv #s reveals no useful info to distinguish them. \
+The 3 columns are identical, except the 2nd one has 8 NAs in it, and the 3rd one has 6407 NAs in it. \
+In short, the 1st column has the most complete information and is in fact a superset of the other two, so just use that one (phv00252386).
 ```{r}
-fwrite(mesa_query, 'mesa_picsure_variables.csv')
-fwrite(mesa_id_query, 'mesa_id_picsure_variables.csv')
-fwrite(fhs_query, 'fhs_picsure_variables.csv')
-fwrite(topmed_query, 'topmed_picsure_variables.csv')
+tmp <- fhs_query[, .SD, .SDcols=patterns('SUBJECT_ID')
+] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # Then, manually explored in VisiData
+
+tmp[, sapply(.SD,\(x)sum(is.na(x)))] # Count NAs
+
+# Showing the ids in col2&3 are identical to the complete col1.
+tmp[complete.cases(tmp[,c(1,2)]), identical(.SD[[1]],.SD[[2]])] # TRUE
+tmp[complete.cases(tmp[,c(1,3)]), identical(.SD[[1]],.SD[[3]])] # FALSE!?
+tmp[complete.cases(tmp[,c(1,3)]), identical(.SD[[1]],as.integer(.SD[[3]]))] # Oh, just integer vs. numeric
+```
+
+### `IS_TUMOR`
+There are 4 `IS_TUMOR` columns. \
+They all have missing data in diffierent places. Probably refer to different omics. \
+But nothing is a tumor sample anyway, so forget about it.
+```{r}
+tmp <- fhs_query[, .SD, .SDcols=patterns('IS_TUMOR')
+] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # Then, manually explored in VisiData
+
+tmp[, sapply(.SD,table)] # Always "no" or NA.
+```
+
+### `Collection_visit`
+There are 4 Collection_visit columns. \
+A dbGaP search reveals [phv00543910](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543910) and [phv00543919](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543919) are the metabolomics ones we want. \
+Why are there two metabolomics ones? Dunno. But the two columns do not have any conflicts, we can can coalesce them.
+```{r}
+tmp <- fhs_query[, .SD, .SDcols=patterns('Collection_visit')
+] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # Then, manually explored in VisiData
+
+# All 4 cols are almost perfectly coalesce-able, except 12 people with a mismatching visit "1" and "2".
+# The phv00543910 and phv00543919 are the metabolomics ones. Thankfully no mismatches b/t those two.
+tmp[sample(1:.N,5)] # 5 random rows
+tmp[, .SD[ .SD[[1]]!=.SD[[4]] ]] # mismatches
+tmp[, .SD[ .SD[[3]]!=.SD[[4]] ]] # But no mismatches b/t the two metabolomics ones, phew.
+```
+
+### `Sample_container_ID` & `Sample_well_ID`
+There are 2 of each. \
+These containers must refer to different omics. If you search up the dbGaP phv #s, you can see. \
+The 1st col ("RAMA___ containers") is [phv00500015](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00500015), methylomics. The 2nd col (plain-numbered) is [phv00543928](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543928), metabolomics.
+```{r}
+tmp <- fhs_query[, .SD, .SDcols=patterns('Sample_container_ID|Sample_well_ID')
+] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # Then, manually explored in VisiData
+
+tmp[sample(1:.N,9)] # 9 random rows
+```
+
+#### `PlateId` & `Batch` & `extractDate`
+There's also `PlateId` ([phv00498670](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00498670)) and `Batch` ([phv00543896](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543896)) & `extractDate` ([phv00543899](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543899)), but those are for proteomics/methylomics/methylomics.
+
+### `Age_at_collection` & `AGE_OF_COLLECTION`
+There are 4 of these columns total. \
+* [phv00500009](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00500015) — Methylomics
+* [phv00543906](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543906) — RNASeq
+* [phv00543908](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543908) — Metabolomics
+* [phv00543917](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543917) — Metabolomics also
+Below simply confirms that the ages of the two metabolomics columns have no conflicts.
+```{r}
+tmp <- fhs_query[, .SD, .SDcols=patterns('AGE_OF_COLLECTION|Age_at_collection')
+] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm))
+# (Manually confirmed there are no conflicts between the two metabolomics columns externally in VisiData.)
+```
+
+### `SAMPLE_ID`
+There are 6 `SAMPLE_ID` columns. \
+The first is simplly all the other columns concatenated with tabs. The others are NWD (phv00252391), TOE (phv00499999), TOR (phv00500017), TOM(phv00543907), and TOM(phv00543916) (—yes, there are two TOM ones). \
+The two TOM ones have no conflicts, so I will just coalesce them, I guess.
+```{r}
+tmp <- fhs_query[, .SD, .SDcols=patterns('SAMPLE_ID')
+][, names(.SD) := lapply(.SD, \(x) gsub('\t',' ',x))
+] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # Then, manually explored in VisiData
+
+tmp[sample(1:.N,9)] # 9 random rows
+```
+
+## Putting all of this together to tidy the FHS variables
+In conclusion since we are only interested in metabolomics this is what we'll do: \
+* `SEX`: Keep
+* `SUBJECT_ID`: Keep only the phv00252386 one
+* `IS_TUMOR` & `PlateId` & `Batch`: Drop
+* `Collection_visit`: Coalesce [phv00543910](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543910) & [phv00543919](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543919)
+* `Age_at_collection`: Coalesce [phv00543908](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543908) & [phv00543917](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543917)
+* `SAMPLE_ID`: Coalesce [phv00543907](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543907) & [phv00543916](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543916)
+```{r}
+fhs_query[fhs_query==''] <- NA # Otherwise '' will mess with fcoalesce
+fhs_query <- fhs_query[
+  ][, metabolomics_age := fcoalesce(
+        `\\phs000974\\pht015035\\phv00543908\\Age_at_collection\\`, 
+        `\\phs000974\\pht015036\\phv00543917\\Age_at_collection\\`)
+  ][, metabolomics_visit := fcoalesce(
+        `\\phs000974\\pht015035\\phv00543910\\Collection_visit\\`,
+        `\\phs000974\\pht015036\\phv00543919\\Collection_visit\\`)
+  ][, TOM_Id := fcoalesce(
+        `\\phs000974\\pht015035\\phv00543907\\SAMPLE_ID\\`,
+        `\\phs000974\\pht015036\\phv00543916\\SAMPLE_ID\\`)
+  ][, .SD, .SDcols = patterns(paste(collapse='|', c(
+    'SEX', 'patient_id', 'Study Accession',
+    'phv00252386', # SUBJECT_ID
+    'metabolomics_age', 'metabolomics_visit', 'TOM_Id')))
+] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm))
+```
+
+# Merge with TOPMed-wide variables
+```{r}
+topmed_query |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm))
+tmp <- topmed_query[grepl('FHS',subcohort_1)]
+
+fhs_full <- topmed_query[
+  ][fhs_query,
+    on=.(`_Topmed Study Accession with Subject ID`,
+         `_Parent Study Accession with Subject ID`,
+         patient_id,
+         annotated_sex_1=SEX)
+  ][, -'_consents'
+  ][, .SD, .SDcols=!patterns('^unit_')
+]
+```
+
+
+# Write
+```{r}
+#fwrite(mesa_query, 'mesa_picsure_variables.csv')
+#fwrite(mesa_id_query, 'mesa_id_picsure_variables.csv')
+fwrite(fhs_full, 'fhs_picsure_variables.csv')
+#fwrite(topmed_query, 'topmed_picsure_variables.csv')
 ```
