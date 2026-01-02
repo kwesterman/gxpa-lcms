@@ -40,9 +40,6 @@ mesa_ids_search <- picsure::bdc.searchPicsure(session, 'phs001416',             
      fhs_search <- picsure::bdc.searchPicsure(session, 'phs000974',               limit= 2000) |> setDT()
   topmed_search <- picsure::bdc.searchPicsure(session, 'DCC Harmonized data set', limit=  500) |> setDT()
 Sys.time() - t0
-
-combined_search <- rbindlist(list(mesa_search, fhs_search))
-rm(combined_search)
 ```
 
 ## Narrow down desired variables
@@ -266,10 +263,11 @@ fhs_query <- fhs_query[
   ][, TOM_Id := fcoalesce(
         `\\phs000974\\pht015035\\phv00543907\\SAMPLE_ID\\`,
         `\\phs000974\\pht015036\\phv00543916\\SAMPLE_ID\\`)
+  ][, NWD_Id := `\\phs000974\\pht004911\\phv00252391\\SAMPLE_ID\\`
   ][, .SD, .SDcols = patterns(paste(collapse='|', c(
     'SEX', 'patient_id', 'Study Accession',
     'phv00252386', # SUBJECT_ID
-    'metabolomics_age', 'metabolomics_visit', 'TOM_Id')))
+    'metabolomics_age', 'metabolomics_visit', 'NWD_Id', 'TOM_Id')))
 ] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm))
 ```
 
@@ -292,8 +290,9 @@ fhs_full <- topmed_query[
 
 # Write
 ```{r}
+dir.create('data/derived/phenotypes', rec=T)
 #fwrite(mesa_query, 'mesa_picsure_variables.csv')
 #fwrite(mesa_id_query, 'mesa_id_picsure_variables.csv')
-fwrite(fhs_full, 'fhs_picsure_variables.csv')
+fwrite(fhs_full, 'data/derived/phenotypes/fhs_picsure_variables.csv')
 #fwrite(topmed_query, 'topmed_picsure_variables.csv')
 ```
