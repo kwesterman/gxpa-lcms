@@ -234,11 +234,15 @@ tmp <- fhs_query[, .SD, .SDcols=patterns('AGE_OF_COLLECTION|Age_at_collection')
 ### `SAMPLE_ID`
 There are 6 `SAMPLE_ID` columns. \
 The first is simplly all the other columns concatenated with tabs. The others are NWD (phv00252391), TOE (phv00499999), TOR (phv00500017), TOM(phv00543907), and TOM(phv00543916) (—yes, there are two TOM ones). \
-The two TOM ones have no conflicts, so I will just coalesce them, I guess.
+The two TOM ones have no conflicts, so I will just coalesce them, I guess. \
+
+There are also 9 people with 2 or more tab-separated NWD ids. It is not clear which is the preferred one, so I will arbitrarily take the first. It is not enough people to warrant the merging complications that would arise from trying to consider them all.
 ```{r}
 tmp <- fhs_query[, .SD, .SDcols=patterns('SAMPLE_ID')
 ][, names(.SD) := lapply(.SD, \(x) gsub('\t',' ',x))
 ] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # Then, manually explored in VisiData
+
+tmp[, .SD[[2]][grepl(' ',.SD[[2]])]] # Multiple NWD ids
 
 tmp[sample(1:.N,9)] # 9 random rows
 ```
@@ -263,7 +267,7 @@ fhs_query <- fhs_query[
   ][, TOM_Id := fcoalesce(
         `\\phs000974\\pht015035\\phv00543907\\SAMPLE_ID\\`,
         `\\phs000974\\pht015036\\phv00543916\\SAMPLE_ID\\`)
-  ][, NWD_Id := `\\phs000974\\pht004911\\phv00252391\\SAMPLE_ID\\`
+  ][, NWD_Id := sub('\t.*','', `\\phs000974\\pht004911\\phv00252391\\SAMPLE_ID\\`) # Keep only the 1st if multiple tab-delimited NWD ids.
   ][, .SD, .SDcols = patterns(paste(collapse='|', c(
     'SEX', 'patient_id', 'Study Accession',
     'phv00252386', # SUBJECT_ID
