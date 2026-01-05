@@ -15,7 +15,7 @@ pre code { white-space: pre; }
 library(data.table)
 
 if (!require('picsure', quiet=T)) {
-  Sys.setenv(TAR = '/bin/tar')
+  Sys.setenv(TAR = if(Sys.info()['sysname']=='Windows') 'C:/WINDOWS/system32/tar' else '/bin/tar')
   options(unzip = 'internal')
   remotes::install_github(
     repo = 'hms-dbmi/pic-sure-r-adapter-hpds',
@@ -35,59 +35,85 @@ This is analogous to exploring variables in the PIC-SURE web UI.
 ```{r}
 # For some reason, query wait time scales with `limit`, so set as low as possible while still getting all variables.
 t0 <- Sys.time()
+
 mesa_ids_search <- picsure::bdc.searchPicsure(session, 'phs001416',               limit=  200) |> setDT()
     mesa_search <- picsure::bdc.searchPicsure(session, 'phs000209',               limit=25000) |> setDT()
      fhs_search <- picsure::bdc.searchPicsure(session, 'phs000974',               limit= 2000) |> setDT()
   topmed_search <- picsure::bdc.searchPicsure(session, 'DCC Harmonized data set', limit=  500) |> setDT()
+
+# I don't have access to phs000007 (Kenny has to do it for me), so I don't know how small I can set `limit` before variables start getting dropped.
+search_results <- picsure::bdc.searchPicsure(session)
+saveRDS(search_results, 'search_results.rds')
+phs000007_search <- readRDS('search_results.rds') |> setDT() # (I don't know how many phs00007 varaibles there are because I don't have access, so just assume Kenny has an RDS of full search results.)
+
 Sys.time() - t0
 ```
 
 ## Narrow down desired variables
 ### TOPMed harmonized variables
 ```{r}
-#colnames(fread('data/raw/phenotypes/MESA_HDL_PA_covars_12345.csv')) |> {\(nm) sub('.*\\\\(.*)\\\\$', '\\1', nm)}()
-tmp <- topmed_search[,-'name'][, var_description := gsub('\n',' ',var_description)] # For manual viewing
+tmp <- topmed_search[,-'name'][, var_description := gsub('\n',' ',var_description)] # For manual viewing in VisiData
 
 topmed_vars <- topmed_search[
-  ][1:.N
-  ][, -'values'
-  ][grepl(x = tolower(paste(var_id, var_name, var_description)), pat = paste(collapse='|', c(
-      'lipid_lowering_medication',
-      'fasting_lipids', #(This is an indicator var of whether they fasted >=8hr b4 lipid measures or not)
-      'hdl',
-      'triglycerides',
-      'bmi_baseline', # 'Body mass index calculated at baseline.'
-      'ever_smoker_baseline',
-      'current_smoker_baseline',
-      'sleep_duration',
-      'race_us',
-      'subcohort', # 'A distinct subgroup within a study, generally indicating subjects who share similar characteristics due to study design. Subjects may belong to only one subcohort.'
-      'hispanic_or_latino',
-      'geographic_site',
-      'annotated_sex',
-      'age_at_hdl', 'age_at_triglycerides', 'age_at_ever_smoker', 'age_at_current_smoker', 'age_at_fasting_lipids', 'age_at_lipid_lowering', 'age_at_sleep'
+  ][grepl(
+      x   = tolower(paste(var_id, var_name, var_description)),
+      pat = paste(collapse='|', c(
+        'lipid_lowering_medication',
+        'fasting_lipids', #(This is an indicator var of whether they fasted >=8hr b4 lipid measures or not)
+        'hdl',
+        'triglycerides',
+        'bmi_baseline', # 'Body mass index calculated at baseline.'
+        'ever_smoker_baseline',
+        'current_smoker_baseline',
+        'sleep_duration',
+        'race_us',
+        'subcohort', # 'A distinct subgroup within a study, generally indicating subjects who share similar characteristics due to study design. Subjects may belong to only one subcohort.'
+        'hispanic_or_latino',
+        'geographic_site',
+        'annotated_sex',
+        'age_at_hdl', 'age_at_triglycerides', 'age_at_ever_smoker', 'age_at_current_smoker', 'age_at_fasting_lipids', 'age_at_lipid_lowering', 'age_at_sleep'
+    )))
+]
+```
+
+### FHS (phs000007) search
+```{r}
+phs000007_vars <- phs000007_search[
+  ][study_id=='phs000007'
+  ][grepl(
+      x   = tolower(paste(var_id, var_name, var_description)),
+      pat = paste(collapse='|', c(
+        'sex',
+        'age',
+        'bmi',
+        'smoking',
+        'mvpa',
+        'hdl',
+        'lipid_med'
     )))
 ]
 ```
 
 
-### FHS search
+### FHS (phs000974) search
 ```{r}
 tmp <- fhs_search[,-'name'][, var_description := gsub('\n',' ',var_description)] # For manual viewing
 
 fhs_vars <- fhs_search[
-  ][grepl(paste(collapse='|', c(
-      'Age_at_collection', # Which one?
-      'AGE_OF_COLLECTION',
-      'Batch',
-      'Collection_visit', # Which one?
-      'extractDate',
-      'IS_TUMOR', # all are "no"
-      'SEX',
-      'SAMPLE_ID',
-      'PlateId', 'Sample_well_ID', 'Sample_container_ID',
-      'SUBJECT_ID'
-    )), var_name)
+  ][grepl(
+      x   = var_name,
+      pat = paste(collapse='|', c(
+        'Age_at_collection', # There's multiple
+        'AGE_OF_COLLECTION',
+        'Batch',
+        'Collection_visit', # There's multiple
+        'extractDate',
+        'IS_TUMOR', # all are "no"
+        'SEX',
+        'SAMPLE_ID',
+        'PlateId', 'Sample_well_ID', 'Sample_container_ID',
+        'SUBJECT_ID'
+    )))
 ]
 ```
 
@@ -96,38 +122,42 @@ fhs_vars <- fhs_search[
 tmp <- mesa_search[,-'name'][, var_description := gsub('\n',' ',var_description)] # For manual viewing
 
 mesa_vars <- mesa_search[
-  ][grepl(paste(collapse='|', c(
-      'MESA_Exam[0-9]Main',
-      'MESA_AncilMesaMineralMetabolite',        # nac
-      'MESA_AncilMesaNeighborScalesExam',       # ahei_2010
-      'MESA_AncilMesaNeighborScalesSodiumExam', # dash_sodium
-      'MESA_exam[0-9]dietnutrients',            # nan
-      'MESA_AncilMesaNeighborSESExam'           # F1_PC2
-    )), group_name)
-  ][grepl(paste(collapse='|', c(
-      'sidno',
-      '^age[0-9]c$',
-      'ahei',
-      'alc',
-      'bmi[0-9]c',
-      'cig[0-9]c',
-      'dash_sodium',
-      'F1_PC2',
-      'gender',
-      'glucos[0-9]c',
-      'hba',
-      'hdl[0-9]$',
-      'income',
-      'ins[0-9]c',
-      'lipid',
-      'month',
-      'nac',
-      'nan[0-9]c',
-      'race1c',
-      'season',
-      'site[0-9]c',
-      'exercm[0-9]c', 'pamcm[0-9]c', 'pavcm[0-9]c', 'pamvcm[0-9]c'
-    )), var_name)
+  ][grepl(
+      x   = group_name,
+      pat = paste(collapse='|', c(
+        'MESA_Exam[0-9]Main',
+        'MESA_AncilMesaMineralMetabolite',        # nac
+        'MESA_AncilMesaNeighborScalesExam',       # ahei_2010
+        'MESA_AncilMesaNeighborScalesSodiumExam', # dash_sodium
+        'MESA_exam[0-9]dietnutrients',            # nan
+        'MESA_AncilMesaNeighborSESExam'           # F1_PC2
+    )))
+  ][grepl(
+      x   = var_name,
+      pat = paste(collapse='|', c(
+        'sidno',
+        '^age[0-9]c$',
+        'ahei',
+        'alc',
+        'bmi[0-9]c',
+        'cig[0-9]c',
+        'dash_sodium',
+        'F1_PC2',
+        'gender',
+        'glucos[0-9]c',
+        'hba',
+        'hdl[0-9]$',
+        'income',
+        'ins[0-9]c',
+        'lipid',
+        'month',
+        'nac',
+        'nan[0-9]c',
+        'race1c',
+        'season',
+        'site[0-9]c',
+        'exercm[0-9]c', 'pamcm[0-9]c', 'pavcm[0-9]c', 'pamvcm[0-9]c'
+    )))
   #][, unique(group_name)
   #][grep('sidno', var_name)
 ]
@@ -136,12 +166,13 @@ mesa_vars <- mesa_search[
 tmp <- mesa_ids_search[,-'name']
 
 mesa_id_vars <- mesa_ids_search[
-  ][grepl(paste(collapse='|', c(
+  ][grepl(
+      x   = group_name,
+      pat = paste(collapse='|', c(
       'TOPMed_MESA_Sample',
       'TOPMed_MESA_Subject',
       'TOPMed_MESA_Metabolomics'
-    )), group_name)
-  #][, -'values'
+    )))
 ]
 ```
 
@@ -151,14 +182,15 @@ Now we actually request the individual-level data for the desired variables with
 ```{r}
 do_query <- \(varnames) bdc.newQuery(session) |> addClause(keys=varnames, type='ANYOF') |> runQuery(resultType='DATA_FRAME') |> setDT()
 
-mesa_query    <- do_query(   mesa_vars$name)
-mesa_id_query <- do_query(mesa_id_vars$name)
-fhs_query     <- do_query(    fhs_vars$name)
-topmed_query  <- do_query( topmed_vars$name)
+phs000007_query <- do_query(phs000007_vars$name)
+mesa_query      <- do_query(     mesa_vars$name)
+mesa_id_query   <- do_query(  mesa_id_vars$name)
+fhs_query       <- do_query(      fhs_vars$name)
+topmed_query    <- do_query(   topmed_vars$name)
 ```
 
 
-# Dealing with duplicate columns in FHS
+# Dealing with duplicate columns in FHS (phs000974)
 FHS has many columns with duplicate names and their distinction is not clear from the PIC-SURE `variable_description`s. We must manually [look up their phv #s in dbGap](https://dbgap.ncbi.nlm.nih.gov/beta/search/) or in some cases infer by exploring the data ourselves. \
 Strategy: I subset to sets of same-name columns, manually explored the data in VisiData, and then added R snippets after the fact to demonstrate any interesting properties/differences I discovered.
 
@@ -168,11 +200,11 @@ The 3 columns are identical, except the 2nd one has 8 NAs in it, and the 3rd one
 In short, the 1st column has the most complete information and is in fact a superset of the other two, so just use that one (phv00252386).
 ```{r}
 tmp <- fhs_query[, .SD, .SDcols=patterns('SUBJECT_ID')
-] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # Then, manually explored in VisiData
+] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # For manual viewing
 
 tmp[, sapply(.SD,\(x)sum(is.na(x)))] # Count NAs
 
-# Showing the ids in col2&3 are identical to the complete col1.
+# Showing the non-NA ids in cols 2&3 are identical to the complete col 1.
 tmp[complete.cases(tmp[,c(1,2)]), identical(.SD[[1]],.SD[[2]])] # TRUE
 tmp[complete.cases(tmp[,c(1,3)]), identical(.SD[[1]],.SD[[3]])] # FALSE!?
 tmp[complete.cases(tmp[,c(1,3)]), identical(.SD[[1]],as.integer(.SD[[3]]))] # Oh, just integer vs. numeric
@@ -184,7 +216,7 @@ They all have missing data in diffierent places. Probably refer to different omi
 But nothing is a tumor sample anyway, so forget about it.
 ```{r}
 tmp <- fhs_query[, .SD, .SDcols=patterns('IS_TUMOR')
-] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # Then, manually explored in VisiData
+] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # For manual viewing
 
 tmp[, sapply(.SD,table)] # Always "no" or NA.
 ```
@@ -195,7 +227,7 @@ A dbGaP search reveals [phv00543910](https://dbgap.ncbi.nlm.nih.gov/beta/search/
 Why are there two metabolomics ones? Dunno. But the two columns do not have any conflicts, we can can coalesce them.
 ```{r}
 tmp <- fhs_query[, .SD, .SDcols=patterns('Collection_visit')
-] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # Then, manually explored in VisiData
+] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # For manual viewing
 
 # All 4 cols are almost perfectly coalesce-able, except 12 people with a mismatching visit "1" and "2".
 # The phv00543910 and phv00543919 are the metabolomics ones. Thankfully no mismatches b/t those two.
@@ -210,7 +242,7 @@ These containers must refer to different omics. If you search up the dbGaP phv #
 The 1st col ("RAMA___ containers") is [phv00500015](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00500015), methylomics. The 2nd col (plain-numbered) is [phv00543928](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543928), metabolomics.
 ```{r}
 tmp <- fhs_query[, .SD, .SDcols=patterns('Sample_container_ID|Sample_well_ID')
-] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # Then, manually explored in VisiData
+] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # For manual viewing
 
 tmp[sample(1:.N,9)] # 9 random rows
 ```
@@ -228,21 +260,21 @@ Below simply confirms that the ages of the two metabolomics columns have no conf
 ```{r}
 tmp <- fhs_query[, .SD, .SDcols=patterns('AGE_OF_COLLECTION|Age_at_collection')
 ] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm))
-# (Manually confirmed there are no conflicts between the two metabolomics columns externally in VisiData.)
+# (Manually confirmed there are no conflicts between the two metabolomics columns externally in VisiData and I'm lazy to add demonstrative code here.)
 ```
 
 ### `SAMPLE_ID`
 There are 6 `SAMPLE_ID` columns. \
-The first is simplly all the other columns concatenated with tabs. The others are NWD (phv00252391), TOE (phv00499999), TOR (phv00500017), TOM(phv00543907), and TOM(phv00543916) (—yes, there are two TOM ones). \
+The first column is simplly all the other columns concatenated with tabs. The others are NWD (phv00252391), TOE (phv00499999), TOR (phv00500017), TOM(phv00543907), and TOM(phv00543916) (—yes, there are two TOM ones). \
 The two TOM ones have no conflicts, so I will just coalesce them, I guess. \
 
-There are also 9 people with 2 or more tab-separated NWD ids. It is not clear which is the preferred one, so I will arbitrarily take the first. It is not enough people to warrant the merging complications that would arise from trying to consider them all.
+There are also 9 people with 2 or more tab-separated NWD ids. It is not clear which is the preferred one, so I will arbitrarily take the first. It is not enough samples to warrant the merging complications that would arise from trying to consider them all.
 ```{r}
 tmp <- fhs_query[, .SD, .SDcols=patterns('SAMPLE_ID')
 ][, names(.SD) := lapply(.SD, \(x) gsub('\t',' ',x))
-] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # Then, manually explored in VisiData
+] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # For manual viewing
 
-tmp[, .SD[[2]][grepl(' ',.SD[[2]])]] # Multiple NWD ids
+tmp[, .SD[[2]][grepl(' ',.SD[[2]])]] # Those with multiple NWD ids
 
 tmp[sample(1:.N,9)] # 9 random rows
 ```
@@ -287,7 +319,7 @@ fhs_full <- topmed_query[
          patient_id,
          annotated_sex_1=SEX)
   ][, -'_consents'
-  ][, .SD, .SDcols=!patterns('^unit_')
+  ][, .SD, .SDcols=!patterns('^unit_') # Don't need the "unit_..." cols
 ]
 ```
 
@@ -295,8 +327,9 @@ fhs_full <- topmed_query[
 # Write
 ```{r}
 dir.create('data/derived/phenotypes', rec=T)
-#fwrite(mesa_query, 'mesa_picsure_variables.csv')
-#fwrite(mesa_id_query, 'mesa_id_picsure_variables.csv')
-fwrite(fhs_full, 'data/derived/phenotypes/fhs_picsure_variables.csv')
-#fwrite(topmed_query, 'topmed_picsure_variables.csv')
+fwrite(phs000007_query, 'data/derived/phenotypes/phs000007_picsure_variables.csv')
+fwrite(mesa_query,      'data/derived/phenotypes/mesa_picsure_variables.csv')
+fwrite(mesa_id_query,   'data/derived_phenotypes/mesa_id_picsure_variables.csv')
+fwrite(fhs_full,        'data/derived/phenotypes/fhs_picsure_variables.csv')
+fwrite(topmed_query,    'data/derived/phenotypes/topmed_picsure_variables.csv')
 ```
