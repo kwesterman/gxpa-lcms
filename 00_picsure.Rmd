@@ -3,7 +3,7 @@ output:
   html_document:
     toc: true
     toc_float: true
-    toc_collapsed: true-
+    toc_collapsed: true
 ---
 ```{css echo=F}
 pre { overflow-x: scroll; }
@@ -252,10 +252,12 @@ There's also `PlateId` ([phv00498670](https://dbgap.ncbi.nlm.nih.gov/beta/search
 
 ### `Age_at_collection` & `AGE_OF_COLLECTION`
 There are 4 of these columns total. \
-* [phv00500009](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00500015) — Methylomics
-* [phv00543906](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543906) — RNASeq
-* [phv00543908](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543908) — Metabolomics
-* [phv00543917](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543917) — Metabolomics also
+
+* [phv00500009](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00500015) -- Methylomics
+* [phv00543906](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543906) -- RNASeq
+* [phv00543908](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543908) -- Metabolomics
+* [phv00543917](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543917) -- Metabolomics also
+
 Below simply confirms that the ages of the two metabolomics columns have no conflicts.
 ```{r}
 tmp <- fhs_query[, .SD, .SDcols=patterns('AGE_OF_COLLECTION|Age_at_collection')
@@ -265,7 +267,7 @@ tmp <- fhs_query[, .SD, .SDcols=patterns('AGE_OF_COLLECTION|Age_at_collection')
 
 ### `SAMPLE_ID`
 There are 6 `SAMPLE_ID` columns. \
-The first column is simplly all the other columns concatenated with tabs. The others are NWD (phv00252391), TOE (phv00499999), TOR (phv00500017), TOM(phv00543907), and TOM(phv00543916) (—yes, there are two TOM ones). \
+The first column is simplly all the other columns concatenated with tabs. The others are NWD (phv00252391), TOE (phv00499999), TOR (phv00500017), TOM(phv00543907), and TOM(phv00543916) (--yes, there are two TOM ones). \
 The two TOM ones have no conflicts, so I will just coalesce them, I guess. \
 
 There are also 9 people with 2 or more tab-separated NWD ids. It is not clear which is the preferred one, so I will arbitrarily take the first. It is not enough samples to warrant the merging complications that would arise from trying to consider them all.
@@ -281,6 +283,7 @@ tmp[sample(1:.N,9)] # 9 random rows
 
 ## Putting all of this together to tidy the FHS variables
 In conclusion since we are only interested in metabolomics this is what we'll do: \
+
 * `SEX`: Keep
 * `SUBJECT_ID`: Keep only the phv00252386 one
 * `IS_TUMOR` & `PlateId` & `Batch`: Drop
