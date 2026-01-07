@@ -42,9 +42,11 @@ mesa_ids_search <- picsure::bdc.searchPicsure(session, 'phs001416',             
   topmed_search <- picsure::bdc.searchPicsure(session, 'DCC Harmonized data set', limit=  500) |> setDT()
 
 # I don't have access to phs000007 (Kenny has to do it for me), so I don't know how small I can set `limit` before variables start getting dropped.
-search_results <- picsure::bdc.searchPicsure(session)
-saveRDS(search_results, 'search_results.rds')
-phs000007_search <- readRDS('search_results.rds') |> setDT() # (I don't know how many phs00007 varaibles there are because I don't have access, so just assume Kenny has an RDS of full search results.)
+#search_results <- picsure::bdc.searchPicsure(session)
+#saveRDS(search_results, 'search_results.rds')
+system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/notebooks/search_results.rds .')
+phs000007_search <- readRDS('search_results.rds') |> setDT()
+# Update: Kenny provided query results in 'phs000007_query.rds', accessed below.
 
 Sys.time() - t0
 ```
@@ -78,6 +80,8 @@ topmed_vars <- topmed_search[
 
 ### FHS (phs000007) search
 ```{r}
+tmp <- phs000007_search[,-'name'][study_id=='phs000007'] # For manual viewing
+
 phs000007_vars <- phs000007_search[
   ][study_id=='phs000007'
   ][grepl(
@@ -89,7 +93,8 @@ phs000007_vars <- phs000007_search[
         'smoking',
         'mvpa',
         'hdl',
-        'lipid_med'
+        'lipid_med',
+        'race'
     )))
 ]
 ```
@@ -183,6 +188,8 @@ Now we actually request the individual-level data for the desired variables with
 do_query <- \(varnames) bdc.newQuery(session) |> addClause(keys=varnames, type='ANYOF') |> runQuery(resultType='DATA_FRAME') |> setDT()
 
 phs000007_query <- do_query(phs000007_vars$name)
+#system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/notebooks/phs000007_query.rds .')
+#phs000007_query <- readRDS('phs000007_query.rds')
 mesa_query      <- do_query(     mesa_vars$name)
 mesa_id_query   <- do_query(  mesa_id_vars$name)
 fhs_query       <- do_query(      fhs_vars$name)
