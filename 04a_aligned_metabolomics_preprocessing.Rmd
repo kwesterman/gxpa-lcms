@@ -191,9 +191,9 @@ data$AN <- data$AN |> as.matrix(rownames='unique_met_id') |> `mode<-`('numeric')
 ## Other LC-MS files, and write
 The other non-amide methods are more well-behaved.
 ```{r extract-measurements, results='hide', warning=F, message=F}
-data$CP <- fread(aligned_csvs$CP, drop=1:9, colClasses='double') |> t() |> `colnames<-`(fread(aligned_csvs$CP, select=2)$Compound_ID)
-data$CN <- fread(aligned_csvs$CN, drop=1:9, colClasses='double') |> t() |> `colnames<-`(fread(aligned_csvs$CN, select=2)$Compound_ID)
-data$HP <- fread(aligned_csvs$HP, drop=1:9, colClasses='double') |> t() |> `colnames<-`(fread(aligned_csvs$HP, select=2)$Compound_ID)
+data$CP <- fread(aligned_csvs$CP, drop=1:9, colClasses='double') |> t() |> `colnames<-`(paste0(fread(aligned_csvs$CP, select=2)$Compound_ID, '_C8'   ))
+data$CN <- fread(aligned_csvs$CN, drop=1:9, colClasses='double') |> t() |> `colnames<-`(paste0(fread(aligned_csvs$CN, select=2)$Compound_ID, '_C18'  ))
+data$HP <- fread(aligned_csvs$HP, drop=1:9, colClasses='double') |> t() |> `colnames<-`(paste0(fread(aligned_csvs$HP, select=2)$Compound_ID, '_HILIC'))
 
 data <- lapply(data, \(m) m[grepl('TOM',rownames(m)),] ) # Rm QC samples
 
