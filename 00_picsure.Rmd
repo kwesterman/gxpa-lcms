@@ -87,6 +87,7 @@ phs000007_vars <- phs000007_search[
   ][grepl(
       x   = tolower(paste(var_id, var_name, var_description)),
       pat = paste(collapse='|', c(
+        'shareid',
         'sex',
         'age',
         'bmi',
@@ -187,9 +188,10 @@ Now we actually request the individual-level data for the desired variables with
 ```{r}
 do_query <- \(varnames) bdc.newQuery(session) |> addClause(keys=varnames, type='ANYOF') |> runQuery(resultType='DATA_FRAME') |> setDT()
 
-phs000007_query <- do_query(phs000007_vars$name)
-#system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/notebooks/phs000007_query.rds .')
-#phs000007_query <- readRDS('phs000007_query.rds')
+fwrite(phs000007_query, 'test.csv')
+#phs000007_query <- do_query(phs000007_vars$name)
+system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/notebooks/phs000007_query.rds .')
+phs000007_query <- readRDS('phs000007_query.rds')
 mesa_query      <- do_query(     mesa_vars$name)
 mesa_id_query   <- do_query(  mesa_id_vars$name)
 fhs_query       <- do_query(      fhs_vars$name)
@@ -197,7 +199,33 @@ topmed_query    <- do_query(   topmed_vars$name)
 ```
 
 
-# Dealing with duplicate columns in FHS (phs000974)
+# Format phs000007 query results
+For some reason, there is no `RACE_CODE` in the query result object despite Kenny pulling all variables. But anyway, FHS is mostly white, so we will skip that covariate. \
+There is no site/center/location variable, so we will skip that as well. \
+There are many "drinks per week"-ish variables, but they don't exactly match ("drinks per week" vs. "times drank per week"), so I will omit this covariate to save time harmonizing.
+```{r}
+phs000007_query[phs000007_query==''] <- NA # Otherwise '' will mess with fcoalesce
+phs000007_query <- phs000007_query[
+  ][, age := fcoalesce(
+        `\\phs000007\\pht006026\\phv00277020\\AGE1\\`, # Gen3
+        `\\phs000007\\pht009761\\phv00544734\\age5\\`) # Offspring
+  ][, SEX := fcoalesce(
+        `\\phs000007\\pht006026\\phv00277017\\SEX\\`, # Gen3
+        `\\phs000007\\pht009761\\phv00423870\\SEX\\`) # Offspring
+  ][, HDL := fcoalesce(
+        `\\phs000007\\pht006026\\phv00277040\\HDL1\\`, # Gen3
+        `\\phs000007\\pht009761\\phv00544810\\HDL5\\`) # Offspring
+  ][, smoking := fcoalesce(
+        `\\phs000007\\pht006026\\phv00277032\\CURRSMK1\\`, # Gen3
+        `\\phs000007\\pht009761\\phv00544778\\currsmk5\\`) # Offspring
+  ][, .SD, .SDcols = patterns(paste(collapse='|', c(
+      '^age$', '^SEX$', '^HDL$', '^smoking$',
+      'patient_id', 'Study Accession')))
+] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm))
+```
+
+
+# Deal with duplicate columns in FHS (phs000974)
 FHS has many columns with duplicate names and their distinction is not clear from the PIC-SURE `variable_description`s. We must manually [look up their phv #s in dbGap](https://dbgap.ncbi.nlm.nih.gov/beta/search/) or in some cases infer by exploring the data ourselves. \
 Strategy: I subset to sets of same-name columns, manually explored the data in VisiData, and then added R snippets after the fact to demonstrate any interesting properties/differences I discovered.
 
@@ -322,24 +350,43 @@ fhs_query <- fhs_query[
 topmed_query |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm))
 tmp <- topmed_query[grepl('FHS',subcohort_1)]
 
-fhs_full <- topmed_query[
+fhs_full <- phs000007_query[
   ][fhs_query,
     on=.(`_Topmed Study Accession with Subject ID`,
          `_Parent Study Accession with Subject ID`,
-         patient_id,
-         annotated_sex_1=SEX)
-  ][, -'_consents'
-  ][, .SD, .SDcols=!patterns('^unit_') # Don't need the "unit_..." cols
+         patient_id, SEX)
 ]
+
+# To compare with TOPMed-harmonized variables if desired:
+#fhs_full <- topmed_query[
+#  ][, .SD, .SDcols=!patterns('^unit_|_consents') # Don't need these cols...
+#  ][phs000007_query,
+#    on=.(`_Topmed Study Accession with Subject ID`,
+#         `_Parent Study Accession with Subject ID`,
+#         patient_id,
+#         annotated_sex_1=SEX)
+#  ][fhs_query,
+#    on=.(`_Topmed Study Accession with Subject ID`,
+#         `_Parent Study Accession with Subject ID`,
+#         patient_id,
+#         annotated_sex_1=SEX)
+#]
 ```
 
 
 # Write
 ```{r}
 dir.create('data/derived/phenotypes', rec=T)
-fwrite(phs000007_query, 'data/derived/phenotypes/phs000007_picsure_variables.csv')
+#fwrite(phs000007_query, 'data/derived/phenotypes/phs000007_picsure_variables.csv')
 fwrite(mesa_query,      'data/derived/phenotypes/mesa_picsure_variables.csv')
 fwrite(mesa_id_query,   'data/derived_phenotypes/mesa_id_picsure_variables.csv')
 fwrite(fhs_full,        'data/derived/phenotypes/fhs_picsure_variables.csv')
 fwrite(topmed_query,    'data/derived/phenotypes/topmed_picsure_variables.csv')
+```
+
+
+```{r}
+nwds <- fhs_query[!is.na(TOM_Id) & !is.na(NWD_Id), NWD_Id]
+sum(nwds %in% dosages$NWD_Id)
+dosages[dosages$NWD_Id %in% nwds, table(chr14_88305056_G_A)]
 ```
