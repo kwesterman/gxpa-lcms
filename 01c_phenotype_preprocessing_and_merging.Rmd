@@ -102,7 +102,7 @@ coalesce_samenames <- \(dt, force_coalesce=F) {
 data <-
 mergecoalesce(by='mesa_id', all=T, force_coalesce=T,
   fread('data/raw/phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')[, mesa_id := sidno],
-  fread('data/raw/phenotypes/MESA_HDL_PA_covars_12345.csv')     [, mesa_id := `\\phs000209\\pht001116\\phv00084441\\sidno\\`]
+  fread('data/derived/phenotypes/mesa_picsure_variables.csv')   [, mesa_id := `\\phs000209\\pht001116\\phv00084441\\sidno\\`]
   )[,mesa_id:=as.character(mesa_id)][,NONE:=NA]      |> # Add an NA "NONE" column, useful to fill variables with no measurements for a particular MESA exam.
   setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) |> # Fixes some names e.g. '\phs000209\phv00084442\age1c\' -> 'age1c'
   coalesce_samenames(force_coalesce=T)               |>
@@ -124,6 +124,8 @@ mergecoalesce(by='mesa_id', all=T, force_coalesce=T,
       bmi            =c(        'bmi1c',       'bmi2c',         'bmi3c',        'bmi4c',        'bmi5c'),
       smoking        =c(        'cig1c',       'cig2c',         'cig3c',        'cig4c',        'cig5c'),
       site           =c(       'site1c',      'site2c',        'site3c',       'site4c',       'site5c'),
+      hb             =c(         'NONE',      'hba1c2',          'NONE',         'NONE',       'hba1c5'),
+      fg             =c(     'glucos1c',    'glucos2c',      'glucos3c',     'glucos4c',     'glucose5'),
           pa         =c(     'exercm1c',    'exercm2c',      'exercm3c',         'NONE',     'exercm5c'),
       mod_pa         =c(      'pamcm1c',     'pamcm2c',       'pamcm3c',         'NONE',      'pamcm5c'),
         mvpa         =c(     'pamvcm1c',    'pamvcm2c',      'pamvcm3c',         'NONE',     'pamvcm5c'),
@@ -144,8 +146,8 @@ Reduce(\(x,l) mergecoalesce(x, l$y, by=l$by, force_coalesce=T, all.x=T),
     list(by='mesa_id', y=fread('data/raw/phenotypes/SHARe_AncilMesaNMR_LP4_DS.txt')       [, mesa_id := as.character(subject_id)]                                                ),
     list(by= 'NWD_Id', y=fread('data/raw/genomics/dosages.csv')                                                                                                                  ),
     list(by= 'NWD_Id', y=fread('data/raw/phenotypes/freeze9_pcair_results.tsv')           [, NWD_Id := sample.id]                                                                ),
-    list(by= 'TOM_Id', y=fread('data/derived/metabolomics/sample_info.csv')               [, TOM_Id := sample_id]                                                                ),
-    list(by= 'TOM_Id', y=fread('data/derived/metabolomics/QCd/merged_QCd.csv')                                                                                                   )) # Merge metabolomics last b/c it adds tons of cols
+    list(by= 'TOM_Id', y=fread('data/derived/metabolomics/sample_info-mesa.csv')          [, TOM_Id := sample_id]                                                                ),
+    list(by= 'TOM_Id', y=fread('data/derived/metabolomics/QCd/merged_QCd-mesa.csv')                                                                                              )) # Merge metabolomics last b/c it adds tons of cols
 )
 ```
 
@@ -211,7 +213,7 @@ data <- data[
   ][ exam==1 & is.na(site)    |    site=='', site    := 'Unknown'
 
   # Carry-over-from-previous-exam imputation (this is why we setorder()'d by exam before)
-  ][, .SDcols=c('hdl', 'pa','mvpa','mod_pa','vig_pa',
+  ][, .SDcols=c('hdl','fg','hb', 'pa','mvpa','mod_pa','vig_pa',
                 'age','bmi','sex',
                 'ahei_score','dash_score','ses_score','drinks_per_week',
                 'smoking','income','site','month','season'),
@@ -220,7 +222,9 @@ data <- data[
 
   # Definitions
   ][, pa_bin    := pa > 3.75
-  ][, hdl_log   := log(hdl) 
+  ][, hdl_log   := log(hdl)
+  ][, fg_log    := log(fg)
+  ][, hb_log    := log(hb)
   ][, race      := fifelse(race1c==1, 'WHITE, CAUCASIAN',
                    fifelse(race1c==2, 'CHINESE AMERICAN',
                    fifelse(race1c==3, 'BLACK, AFRICAN-AMERICAN',
@@ -265,8 +269,8 @@ data <- data[
 We waited to calculate PCs until now because we only want to do PCA using samples we will use in the analysis; and now we are finally done filtering samples.\
 We performed half-minimum imputation in metabolomics QC, but NAs are reintroduced when merging the metabolomics methods CP/CN/HP/AN, since not all samples got profiled with all the LC-MS methods.\
 PCA is intolerant to missing values, so we remove samples who have any missing values. Perhaps a more sophisticated imputation strategy would be better, but the mPCs are only used for exploratory analysis anyways.
-```{r mPCA}
-met_nms <- names(fread('data/derived/metabolomics/QCd/merged_QCd.csv',nrows=0,drop=1))
+```{r mPCA, eval=F}
+met_nms <- names(fread('data/derived/metabolomics/QCd/merged_QCd-mesa.csv',nrows=0,drop=1))
 met_mtx <- data[
   ][ rowSums(is.na(data[,..met_nms]))==0 # Only samples with data for ALL metabolomics methods CP/CN/HP/AN, because PCA can't handle NAs
   ][ exam==1 # TODO consider a way to include all exams' met data into the PCs? mPCs only used for rough exploration to probably not important, but idk.
@@ -299,9 +303,9 @@ save(km, file='data/derived/genomics/mesa_km.RData')
 
 ## Write
 ```{r write}
-fwrite(data, 'data/derived/analysis_df.csv')
+fwrite(data, 'data/derived/analysis_df-mesa.csv')
 ```
 ```{r upload}
-system('gcloud storage cp data/derived/analysis_df.csv        gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/analysis_df.csv')
-system('gcloud storage cp data/derived/genomics/mesa_km.RData gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/genomics/mesa_km.RData')
+system('gcloud storage cp data/derived/analysis_df-mesa.csv        gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/')
+system('gcloud storage cp data/derived/genomics/mesa_km.RData gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/genomics/')
 ```
