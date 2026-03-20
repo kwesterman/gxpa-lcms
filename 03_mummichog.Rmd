@@ -9,21 +9,24 @@ dir.create('scratch/mummichog_output',recursive=T)
 ```
 
 ```{r data}
+tmp[snp=='chr14_88305056_G_A' & single_exam==F & model=='hdl~met*snp']
 tmp <- fread('runs.csv')
 tmp2 <- fread('data/derived/metabolomics/met_info.csv') 
-fread('data/derived/metabolomics/met_info.csv')[
+fread('data/derived/metabolomics/met_info-mesa.csv')[
   ][, .(unique_met_id,MZ,RT)
   ][fread('runs.csv')[
-      ][grepl(14,snp) & single_exam==F
-      ][, .(met, p, z=est/se)
+      ][snp=='chr14_88305056_G_A' & single_exam==F & model=='hdl~met*snp'
+      #][single_exam==F & model=='met~hdl'
+      ][, .(met, p, t)
     ], on=.(unique_met_id=met)
   ][!is.na(MZ) & !is.na(RT)
-    , .(MZ,RT,p,z) |> fwrite(paste0('scratch/mummichog_input/mummichog_input-chr14_variant.tsv'), sep='\t')
+    , .(MZ,RT,p,t,unique_met_id) |> fwrite(paste0('scratch/mummichog_input/mummichog_input-chr14_variant-v2.tsv'), sep='\t')
 ]
 ```
 
 ```{r mummichog}
 fs <- list.files('scratch/mummichog_input/',full.names=T)
+fs <- 'scratch/mummichog_input/mummichog_input-chr14_variant-v2.tsv'
 t0 <- Sys.time()
 lapply(fs, \(f) {
   print(f)
