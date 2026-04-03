@@ -102,7 +102,7 @@ coalesce_samenames <- \(dt, force_coalesce=F) {
 data <-
 mergecoalesce(by='mesa_id', all=T, force_coalesce=T,
   fread('data/raw/phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')[, mesa_id := sidno],
-  fread('data/derived/phenotypes/mesa_picsure_variables.csv')   [, mesa_id := `\\phs000209\\pht001116\\phv00084441\\sidno\\`]
+  fread('data/raw/phenotypes/MESA_HDL_PA_covars_12345.csv')        [, mesa_id := `\\phs000209\\pht001116\\phv00084441\\sidno\\`]
   )[,mesa_id:=as.character(mesa_id)][,NONE:=NA]      |> # Add an NA "NONE" column, useful to fill variables with no measurements for a particular MESA exam.
   setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) |> # Fixes some names e.g. '\phs000209\phv00084442\age1c\' -> 'age1c'
   coalesce_samenames(force_coalesce=T)               |>
@@ -124,8 +124,8 @@ mergecoalesce(by='mesa_id', all=T, force_coalesce=T,
       bmi            =c(        'bmi1c',       'bmi2c',         'bmi3c',        'bmi4c',        'bmi5c'),
       smoking        =c(        'cig1c',       'cig2c',         'cig3c',        'cig4c',        'cig5c'),
       site           =c(       'site1c',      'site2c',        'site3c',       'site4c',       'site5c'),
-      hb             =c(         'NONE',      'hba1c2',          'NONE',         'NONE',       'hba1c5'),
-      fg             =c(     'glucos1c',    'glucos2c',      'glucos3c',     'glucos4c',     'glucose5'),
+      #hb             =c(         'NONE',      'hba1c2',          'NONE',         'NONE',       'hba1c5'),
+      #fg             =c(     'glucos1c',    'glucos2c',      'glucos3c',     'glucos4c',     'glucose5'),
           pa         =c(     'exercm1c',    'exercm2c',      'exercm3c',         'NONE',     'exercm5c'),
       mod_pa         =c(      'pamcm1c',     'pamcm2c',       'pamcm3c',         'NONE',      'pamcm5c'),
         mvpa         =c(     'pamvcm1c',    'pamvcm2c',      'pamvcm3c',         'NONE',     'pamvcm5c'),
@@ -213,7 +213,7 @@ data <- data[
   ][ exam==1 & is.na(site)    |    site=='', site    := 'Unknown'
 
   # Carry-over-from-previous-exam imputation (this is why we setorder()'d by exam before)
-  ][, .SDcols=c('hdl','fg','hb', 'pa','mvpa','mod_pa','vig_pa',
+  ][, .SDcols=c('hdl', 'pa','mvpa','mod_pa','vig_pa',
                 'age','bmi','sex',
                 'ahei_score','dash_score','ses_score','drinks_per_week',
                 'smoking','income','site','month','season'),
@@ -223,8 +223,6 @@ data <- data[
   # Definitions
   ][, pa_bin    := pa > 3.75
   ][, hdl_log   := log(hdl)
-  ][, fg_log    := log(fg)
-  ][, hb_log    := log(hb)
   ][, race      := fifelse(race1c==1, 'WHITE, CAUCASIAN',
                    fifelse(race1c==2, 'CHINESE AMERICAN',
                    fifelse(race1c==3, 'BLACK, AFRICAN-AMERICAN',
