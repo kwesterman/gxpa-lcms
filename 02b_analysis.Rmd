@@ -14,6 +14,11 @@ knitr::opts_chunk$set(eval=F)
 #load('medmod-251014-lms2lmms.RData')
 #load('260409-μ2.RData') # Fixed avg'd LMs
 load('260501-μ-chr2_too.RData') # checking chr2 snp again
+
+
+
+#load('paglyc_allexam_done.RData')
+#tmp <- runs[model=='y~pa*snp']
 ```
 
 # Setup
@@ -1071,7 +1076,7 @@ runs[signif_funnel==T, table(model,lm_or_lmm,exam)]
 runs[signif_mwis  ==T, table(model,lm_or_lmm,exam)]
 
 d <- runs[
-  #][grepl(2,snp)
+  ][grepl(2,snp)
   ][model %in% c('met~pa', 'y~met', 'y~met*snp')
     , .(met, model, exam, lm_or_lmm, est, se, p)
 ] |>
@@ -1079,82 +1084,25 @@ d <- runs[
     met + model ~ exam + lm_or_lmm,
     value.var=c('est','se','p')
 )
-d[, signif_mwis := met %in% runs[signif_mwis==T & lm_or_lmm=='LMM' & exam=='all',met]]
-#d[, signif_mwis := met %in% runs[grepl(2,snp) & signif_mwis==T & lm_or_lmm=='LMM' & exam=='all',met]]
+d[, signif_mwis := met %in% runs[grepl(2,snp) & signif_mwis==T & lm_or_lmm=='LMM' & exam=='all',met]]
 sum(d$signif_mwis)
-
-# Can't easily set scales for facets... https://forum.posit.co/t/plot-facet-wrap-with-free-scales-but-with-same-limits/147088/4
-# So just plot the y~met*snp separate b/c the SE of the interactions is on a much bigger scale.
-
-# Compare SE between exam-1-only and all-exam LM.
-# Expecting slope of sqrt(N_bl/N_full), theoretical decrease in SE expected from increased N.
-ggplot(d[model!='y~met*snp'], aes(x=se_bl_LM, y=se_full_LM)) +
-  geom_point(alpha=0.1) + coord_fixed() +
-  geom_textabline(slope=sqrt(3134/11333), linetype='dashed', label='Slope: sqrt(N_BL/N_Full)') +
-  geom_textabline(linetype='dashed',color='red',label='Slope = 1', offset=unit(-0.2,'lines')) +
-  facet_wrap(vars(model))
-ggplot(d[model=='y~met*snp'], aes(x=se_bl_LM, y=se_full_LM)) +
-  geom_point(alpha=0.1) + coord_fixed() +
-  geom_textabline(slope=sqrt(3134/11333), linetype='dashed', label='Slope: sqrt(N_BL/N_Full)') +
-  geom_textabline(linetype='dashed',color='red',label='Slope = 1', offset=unit(-0.2,'lines')) +
-  facet_wrap(vars(model))
-
-# Compare SE between all-exam LM and all-exam LMM.
-# Comparing against slope of 1, because there is no sample size increase between the models,
-# it's just that the LMM takes into account the longitudinal-ness.
-ggplot(d[model!='y~met*snp'], aes(x=se_full_LM, y=se_full_LMM)) +
-  geom_point(alpha=0.1) + coord_fixed() +
-  geom_textabline(linetype='dashed',color='red',label='Slope = 1', offset=unit(-0.2,'lines')) +
-  facet_wrap(vars(model))
-ggplot(d[model=='y~met*snp'], aes(x=se_full_LM, y=se_full_LMM)) +
-  geom_point(alpha=0.1) + coord_fixed() +
-  geom_textabline(linetype='dashed',color='red',label='Slope = 1', offset=unit(-0.2,'lines')) +
-  facet_wrap(vars(model))
-
-# Same as ^ but comparint β's.
-ggplot(d, aes(x=est_full_LM, y=est_full_LMM)) +
-  geom_point(alpha=0.1) + coord_fixed() +
-  geom_textabline(linetype='dashed',color='red',label='Slope = 1', offset=unit(-0.2,'lines')) +
-  facet_wrap(vars(model))
 
 # Now comparing decomposed model stuff.
 d2 <- runs[
-  #][grepl(2,snp)
+  ][grepl(2,snp)
   ][model=='y~Δmet*snp'
     , .(met, Δ_or_μ = fifelse(grepl('Δ',term_pat),'Δ','μ'), est, se, p)
-  #][, signif_mwis := met %in% runs[grepl(2,snp) & model=='y~met*snp' & lm_or_lmm=='LMM' & exam=='all' & signif_mwis==T, met]
-  ][, signif_mwis := met %in% runs[model=='y~met*snp' & lm_or_lmm=='LMM' & exam=='all' & signif_mwis==T, met]
+  ][, signif_mwis := met %in% runs[grepl(2,snp) & model=='y~met*snp' & lm_or_lmm=='LMM' & exam=='all' & signif_mwis==T, met]
 ] |>
   dcast(
     met + signif_mwis ~ Δ_or_μ,
     value.var=c('est','se','p')
 )
 
-lines1 <- data.table(
-  label='x=y',
-  slope=1,
-  color='black')
-lines2 <- data.table(
-  label=c('x=y','x=blah'),
-  slope=c(1,sqrt(3134/11333)),
-  color=c('black','red'))
-line2 <- data.table(
-  label=c('x=blah'),
-  slope=c(sqrt(3134/11333)),
-  color=c('red'))
-
 d[, cor(est_avg_LM,est_all_LMM)]
-d
-#d[, cor(se_μ ,se_Δ )]
-
 d2[, cor(est_μ,est_Δ)]
 d2[, cor(se_μ ,se_Δ )]
 d2[met %in% runs[signif_mwis==T,met], cor(est_μ,est_Δ)]
-
-ggplot(d2, aes(x=est_μ, y=est_Δ)) +
-  geom_point(alpha=0.1) + coord_fixed(ratio=1.2) +
-  geom_textabline(linetype='dashed',color='red',label='Slope = 1', offset=unit(-0.2,'lines')) +
-  ggtitle(paste('β correlation:',d2[,cor(est_bl,est_Δ) |> signif(3)]))
 
 se1v2 <- ggplot(d[model=='y~met*snp'], aes(x=se_1_LM, y=se_avg_LM, color=signif_mwis)) +
   geom_point(data=d[model=='y~met*snp' & signif_mwis==F]) +
@@ -1172,41 +1120,21 @@ se1v3 <- ggplot(d[model=='y~met*snp'], aes(x=se_1_LM, y=se_all_LM, color=signif_
   geom_point(data=d[model=='y~met*snp' & signif_mwis==T]) +
   scale_color_manual(name='',
     values=c(`TRUE`=rgb(0,0,1,0.5),    `FALSE`=rgb(0,0,0,0.1)    ),
-    #labels=c(`TRUE`='MWIS-significant',`FALSE`='Not significant' )
   ) +
   geom_textabline(linetype='dashed',label='', gap=F, offset=unit(-1,'lines'), hjust=0.8) +
-  #geom_textabline(linetype='dashed',slope=sqrt(3134/11333), gap=F, vjust=-0.2, hjust=0.75, parse=T, color='grey40',
-  #  label = as.character(expression(paste(
-  #    'Slope = ', sqrt('N'['Baseline']/N['Total'])
-  #)))) +
   geom_abline(linetype='dashed',slope=sqrt(3134/11333), color='orange3') +
-  #scale_color_manual(
-  #  values = c(`x=y`="red", `x=blah`="blue")
-  #) +
   xlab('Baseline-only OLS Std. Error') + ylab('Pooled OLS Std. Error') +
-  coord_fixed(xlim=c(0.03,0.25),ylim=c(0.03,0.25)) +
-  #coord_cartesian(xlim = c(0, NA), ylim = c(0, NA)) +
+  #coord_fixed(xlim=c(0.03,0.25),ylim=c(0.03,0.25)) + # Scale for chr14 SNP
+  coord_fixed(xlim=c(0.01,0.035),ylim=c(0.01,0.035)) + # Scale for chr2 SNP
   scale_x_continuous(expand = expansion(mult = 0)) +
   scale_y_continuous(expand = expansion(mult = 0)) +
   theme_bw() +
-  annotate('text', color='black',  label=paste('---  Slope = 1'), x=.045,y=.21, size=4, hjust=0) +
-  annotate('text', color='orange3', label=expression('---  Slope = '*sqrt(N[BL]/N[Total])), x=.045,y=.19, size=4,hjust=0) +
+  #annotate('text', color='black',  label=paste('---  Slope = 1'), x=.045,y=.21, size=4, hjust=0) + # Scale for chr14 snp
+  #annotate('text', color='orange3', label=expression('---  Slope = '*sqrt(N[BL]/N[Total])), x=.045,y=.19, size=4,hjust=0) + # Scale for chr14 snp
+  annotate('text', color='black',  label=paste('---  Slope = 1'), x=.017,y=.026, size=4, hjust=0) +
+  annotate('text', color='orange3', label=expression('---  Slope = '*sqrt(N[BL]/N[Total])), x=.017,y=.024, size=4,hjust=0) +
   guides(color='none')
-  #geom_abline(data=lines2, linetype='dashed', aes(color=label, slope=slope, intercept=0)) +
-  #scale_color_manual(name='',
-  #  values=c(`TRUE`=rgb(0,0,1,0.5),    `FALSE`=rgb(0,0,0,0.1),    `x=y`=rgb(0,0,0,1), `x=blah`=rgb(1,0,0,1)  ),
-  #  labels=c(`TRUE`='MWIS-significant',`FALSE`='Not significant', `x=y`='Slope: 1',   `x=blah`=expression('Slope: '*sqrt(N[BL]/N[Total])) )
-  #)
 se1v3
-
-df<-as.data.frame(cbind(seq(1:10), seq(from=2, to=20, 2)))
-ggplot(data=df, aes(V1, V2)) +
-   geom_point() +
-   geom_abline(aes(color="whatever", intercept=0, slope=1)) +
-   scale_color_manual(values = "red") +
-   labs(color=NULL)
-
-
 se2v3 <- ggplot(d[model=='y~met*snp'], aes(x=se_avg_LM, y=se_all_LM, color=signif_mwis)) +
   geom_point(data=d[model=='y~met*snp' & signif_mwis==F]) +
   geom_point(data=d[model=='y~met*snp' & signif_mwis==T]) +
@@ -1215,15 +1143,8 @@ se2v3 <- ggplot(d[model=='y~met*snp'], aes(x=se_avg_LM, y=se_all_LM, color=signi
     labels=c(`TRUE`='MWIS-significant',`FALSE`='Not significant')) +
   geom_textabline(linetype='dashed',label='', gap=F, offset=unit(-1,'lines'), hjust=0.8) +
   geom_abline(linetype='dashed',slope=sqrt(3134/11333), color='orange3') +
-  coord_fixed(xlim=c(0.03,0.37),ylim=c(0.03,0.37)) +
-  #scale_x_continuous(expand = expansion(mult = 0)) +
-  #scale_y_continuous(expand = expansion(mult = 0)) +
-  #geom_textabline(linetype='dashed',color='red',label='Slope = 1', gap=F, vjust=-0.1, hjust=0.8) +
-  #geom_textabline(linetype='dashed',slope=sqrt(3134/11333),        gap=F, vjust=-0.2, hjust=0.8, parse=T,
-  #  label = as.character(expression(paste(
-  #    'Slope = 0.526 = ', sqrt('N'['Baseline']/N['Total'])
-  #)))) +
-  #annotate('text', label=paste('Observed slope:',d[,coef(lm(se_all_LM ~ se_avg_LM + 0))['se_avg_LM']]|>signif(3)), x=Inf,y=-Inf, vjust=-1, hjust=1.8) +
+  #coord_fixed(xlim=c(0.03,0.37),ylim=c(0.03,0.37)) + # Scale for chr14 snp
+  coord_fixed(xlim=c(0.00,0.1),ylim=c(0.,0.1)) + # Scale for chr2 snp
   annotate('text', color='black',  label=paste('---  Slope = 1'), x=.045,y=.26, size=4, hjust=0) +
   annotate('text', color='orange3', label=expression('---  Slope = '*sqrt(N[BL]/N[Total])), x=.045,y=.24, size=4,hjust=0) +
   labs(x='Averaged OLS Std. Error', y='Pooled OLS Std. Error') +
@@ -1239,9 +1160,8 @@ se3v4 <- ggplot(d[model=='y~met*snp'], aes(x=se_all_LM, y=se_all_LMM, color=sign
   geom_textabline(linetype='dashed',label='', gap=F, offset=unit(-1,'lines'), hjust=0.8) +
   labs(x='Pooled OLS Std. Error', y='Pooled LMM Std. Error') +
   guides(color="none") +
-  coord_fixed(xlim=c(0.02,0.14),ylim=c(0.02,0.14)) +
-  #coord_cartesian(xlim = c(0, NA), ylim = c(0, NA)) +
-  #coord_fixed(xlim=c(0.03,0.25),ylim=c(0.03,0.25)) +
+  #coord_fixed(xlim=c(0.02,0.14),ylim=c(0.02,0.14)) + # Scale for chr14 SNP
+  coord_fixed(xlim=c(0.0,0.02),ylim=c(0.0,0.02)) + # Scale for chr2
   scale_x_continuous(expand = expansion(mult = 0)) +
   scale_y_continuous(expand = expansion(mult = 0)) +
   theme_bw()
@@ -1254,7 +1174,8 @@ b1v3 <- ggplot(d[model=='y~met*snp'], aes(x=est_1_LM, y=est_all_LM, color=signif
   scale_color_manual(name='',
     values=c(`TRUE`=rgb(0,0,1,0.5),    `FALSE`=rgb(0,0,0,0.1)),
     labels=c(`TRUE`='MWIS-significant',`FALSE`='Not significant')) +
-  coord_fixed(xlim=c(-.5,.5),ylim=c(-.5,.5)) +
+  #coord_fixed(xlim=c(-.5,.5),ylim=c(-.5,.5)) + # chr14
+  coord_fixed(xlim=c(-.2,.2),ylim=c(-.2,.2)) + # chr2
   geom_textabline(linetype='dashed',label='', gap=F, offset=unit(-1,'lines'), hjust=0.8) +
   labs(x='Baseline-only OLS β', y='Pooled OLS β') +
   guides(color="none") +
@@ -1267,7 +1188,8 @@ b2v3 <- ggplot(d[model=='y~met*snp'], aes(x=est_avg_LM, y=est_all_LM, color=sign
     values=c(`TRUE`=rgb(0,0,1,0.5),    `FALSE`=rgb(0,0,0,0.1)),
     labels=c(`TRUE`='MWIS-significant',`FALSE`='Not significant')) +
   geom_textabline(linetype='dashed',label='', gap=F, offset=unit(-1,'lines'), hjust=0.8) +
-  coord_fixed(xlim=c(-.8,0.6),ylim=c(-.8,0.6)) +
+  #coord_fixed(xlim=c(-.8,0.6),ylim=c(-.8,0.6)) + # chr14
+  coord_fixed(xlim=c(-.3,0.2),ylim=c(-.3,0.2)) +
   labs(x='Averaged OLS β', y='Pooled OLS β') +
   guides(color="none") +
   theme_bw()
@@ -1279,7 +1201,8 @@ b3v4 <- ggplot(d[model=='y~met*snp'], aes(x=est_all_LM, y=est_all_LMM, color=sig
     values=c(`TRUE`=rgb(0,0,1,0.5),    `FALSE`=rgb(0,0,0,0.1)),
     labels=c(`TRUE`='MWIS-significant',`FALSE`='Not significant')) +
   geom_textabline(linetype='dashed',label='', gap=F, offset=unit(-1,'lines'), hjust=0.8) +
-  coord_fixed(xlim=c(-.3,.3),ylim=c(-.3,.3)) +
+  #coord_fixed(xlim=c(-.3,.3),ylim=c(-.3,.3)) + chr14
+  coord_fixed(xlim=c(-.1,.1),ylim=c(-.1,.1)) +
   xlab('Pooled OLS β') + ylab('Pooled LMM β') +
   guides(color="none") +
   theme_bw()
@@ -1294,7 +1217,8 @@ bμvΔ <- ggplot(d2, aes(x=est_μ, y=est_Δ, color=signif_mwis)) +
     values=c(`TRUE`=rgb(0,0,1,0.8),    `FALSE`=rgb(0,0,0,0.1)),
     labels=c(`TRUE`='MWIS-significant',`FALSE`='Not significant')) +
   geom_textabline(linetype='dashed',label='', gap=F, offset=unit(0,'lines')) +
-  coord_fixed(xlim=c(-.75,.55),ylim=c(-.75,.55)) +
+  #coord_fixed(xlim=c(-.75,.55),ylim=c(-.75,.55)) + chr14
+  coord_fixed(xlim=c(-.2,.2),ylim=c(-.2,.2)) +
   #annotate('text', label=paste('R:',d2[              ,cor(se_μ,se_Δ)|>signif(3)]),x=Inf,y=-Inf, vjust=-3, hjust=1.8) +
   #annotate('text', label=paste('R:',d2[signif_mwis==T,cor(se_μ,se_Δ)|>signif(3)]),x=Inf,y=-Inf, vjust=-5, hjust=1.5, color='blue') +
   #annotate('text', label=paste('Slope:',d2[, coef(lm(se_Δ ~ se_μ + 0))['se_μ']]|>signif(3)), x=Inf,y=-Inf, vjust=-1, hjust=1.8) +
@@ -1302,123 +1226,6 @@ bμvΔ <- ggplot(d2, aes(x=est_μ, y=est_Δ, color=signif_mwis)) +
   guides(color="none") +
   theme_bw()
 bμvΔ
-
-d[, lm(est_all_LMM~est_all_LM)]
-d[, lm(est_all_LM~est_1_LM)]
-
-lab <- expression(paste("y = ", frac(1, sigma*sqrt(2*pi)), " ",
-                            plain(e)^{frac(-(x-mu)^2, 2*sigma^2)}))
-
-df <- data.frame(x = seq(-2, 0, len = 100),
-                 y = dnorm(seq(-2, 0, len = 100)),
-                 z = as.character(lab))
-
-ggplot(df, aes(x, y)) + 
-  geom_textpath(label=as.character(lab), vjust = -0.2, hjust = 0.1, size = 8, parse = TRUE)
-
-se1v2 + se2v3 /
-plot_layout()
-
-
-# Plot for paper: panels of just the y~met*snp plots.
-library(patchwork)
-A <- ggplot(d[model=='y~met*snp'], aes(x=se_1_LM, y=se_all_LM, color=signif_mwis)) +
-  geom_point(data=d[model=='y~met*snp' & signif_mwis==F]) +
-  geom_point(data=d[model=='y~met*snp' & signif_mwis==T]) +
-  scale_color_manual(name='',
-    values=c(`TRUE`=rgb(0,0,1,0.5),    `FALSE`=rgb(0,0,0,0.1)),
-    labels=c(`TRUE`='MWIS-significant',`FALSE`='Not significant')) +
-  geom_textabline(slope=sqrt(3134/11333), linetype='dashed', label='Slope:\nsqrt(N_Baseline / N_Full)', gap=F, offset=unit(-1,'lines'), hjust=0.8) +
-  geom_textabline(linetype='dashed',color='red',label='Slope = 1', gap=F, offset=unit(-1,'lines'), hjust=0.8) +
-  #geom_textabline(linetype='dashed',color='red',label=expression(sqrt(1+2)), parse=T, gap=F, offset=unit(-1,'lines'), hjust=0.8) +
-  #annotate('text', label=expression(sqrt(1+2)),x=Inf,y=-Inf, vjust=-5, hjust=1.5, color='red') +
-  xlab('Baseline LM Std. Error') + ylab('Full LM Std. Error') +
-  guides(color="none") +
-  theme_bw()
-B <- ggplot(d[model=='y~met*snp'], aes(x=se_all_LM, y=se_all_LMM, color=signif_mwis)) +
-  geom_point(data=d[model=='y~met*snp' & signif_mwis==F]) +
-  geom_point(data=d[model=='y~met*snp' & signif_mwis==T]) +
-  coord_fixed() +
-  scale_color_manual(name='',
-    values=c(`TRUE`=rgb(0,0,1,0.8),    `FALSE`=rgb(0,0,0,0.1)),
-    labels=c(`TRUE`='MWIS-significant',`FALSE`='Not significant')) +
-  geom_textabline(linetype='dashed',color='red',label='Slope = 1', gap=F, offset=unit(-1,'lines'), hjust=0.9) +
-  xlab('Full LM Std. Error') + ylab('Full LMM Std. Error') +
-  guides(color="none") +
-  theme_bw()
-C <- ggplot(d[model=='y~met*snp'], aes(x=est_all_LM, y=est_all_LMM, color=signif_mwis)) +
-  geom_point(data=d[model=='y~met*snp' & signif_mwis==F]) +
-  geom_point(data=d[model=='y~met*snp' & signif_mwis==T]) +
-  coord_fixed() +
-  scale_color_manual(name='',
-    values=c(`TRUE`=rgb(0,0,1,0.8),    `FALSE`=rgb(0,0,0,0.1)),
-    labels=c(`TRUE`='MWIS-significant',`FALSE`='Not significant')) +
-  geom_textabline(linetype='dashed',color='red',label='', gap=F, offset=unit(-1,'lines'), hjust=0.9) +
-  annotate('text', label=paste('Slope:',d[, coef(lm(est_all_LMM ~ est_all_LM + 0))['est_all_LM']]|>signif(3)), x=Inf,y=-Inf, vjust=-3, hjust=1.8) +
-  xlab('Full LM β') + ylab('Full LMM β') +
-  guides(color="none") +
-  theme_bw()
-#d[, coef(lm(est_all_LMM ~ est_all_LM + 0))] |> signif(3)
-D <- ggplot(d2, aes(x=est_μ, y=est_Δ, color=signif_mwis)) +
-  geom_point(data=d2[signif_mwis==F]) +
-  geom_point(data=d2[signif_mwis==T]) +
-  #coord_fixed(ratio=1.2) +
-  coord_cartesian(xlim=c(-0.75,0.75),ylim=c(-0.75,0.75)) +
-  scale_color_manual(name='',
-    values=c(`TRUE`=rgb(0,0,1,0.8),    `FALSE`=rgb(0,0,0,0.1)),
-    labels=c(`TRUE`='MWIS-significant',`FALSE`='Not significant')) +
-  geom_textabline(linetype='dashed',color='red',label='', gap=F, offset=unit(0,'lines')) +
-  annotate('text', label=paste('R:',d2[              ,cor(est_μ,est_Δ)|>signif(3)]),x=Inf,y=-Inf, vjust=-3, hjust=1.8) +
-  annotate('text', label=paste('R:',d2[signif_mwis==T,cor(est_μ,est_Δ)|>signif(3)]),x=Inf,y=-Inf, vjust=-5, hjust=1.5, color='blue') +
-  annotate('text', label=paste('Slope:',d2[, coef(lm(est_Δ ~ est_μ + 0))['est_μ']]|>signif(3)), x=Inf,y=-Inf, vjust=-1, hjust=1.8) +
-  xlab('Mean Term β') + ylab('Delta term β') +
-  #guides(color="none") +
-  theme_bw()
-D
-D2 <- ggplot(d2, aes(x=se_μ, y=se_Δ, color=signif_mwis)) +
-  geom_point(data=d2[signif_mwis==F]) +
-  geom_point(data=d2[signif_mwis==T]) +
-  coord_fixed() +
-  scale_color_manual(name='',
-    values=c(`TRUE`=rgb(0,0,1,0.8),    `FALSE`=rgb(0,0,0,0.1)),
-    labels=c(`TRUE`='MWIS-significant',`FALSE`='Not significant')) +
-  geom_textabline(linetype='dashed',color='red',label='', gap=F, offset=unit(0,'lines')) +
-  annotate('text', label=paste('R:',d2[              ,cor(se_μ,se_Δ)|>signif(3)]),x=Inf,y=-Inf, vjust=-3, hjust=1.8) +
-  annotate('text', label=paste('R:',d2[signif_mwis==T,cor(se_μ,se_Δ)|>signif(3)]),x=Inf,y=-Inf, vjust=-5, hjust=1.5, color='blue') +
-  annotate('text', label=paste('Slope:',d2[, coef(lm(se_Δ ~ se_μ + 0))['se_μ']]|>signif(3)), x=Inf,y=-Inf, vjust=-1, hjust=1.8) +
-  xlab('Mean Term β') + ylab('Delta term β') +
-  #guides(color="none") +
-  theme_bw()
-D2
-E <- ggplot(d[model=='y~met*snp'], aes(x=se_all_LMM, y=se_avg_LM, color=signif_mwis)) +
-  geom_point(data=d[model=='y~met*snp' & signif_mwis==F]) +
-  geom_point(data=d[model=='y~met*snp' & signif_mwis==T]) +
-  scale_color_manual(name='',
-    values=c(`TRUE`=rgb(0,0,1,0.5),    `FALSE`=rgb(0,0,0,0.1)),
-    labels=c(`TRUE`='MWIS-significant',`FALSE`='Not significant')) +
-  geom_textabline(linetype='dashed',color='red',label='Slope = 1', gap=F, offset=unit(-1,'lines'), hjust=0.8) +
-  xlab('Full LMM Std. Error') + ylab('Averaged LM Std. Error') +
-  guides(color="none") +
-  theme_bw()
-E2 <- ggplot(d[model=='y~met*snp'], aes(x=se_all_LMM, y=se_avg_LMM, color=signif_mwis)) +
-  geom_point(data=d[model=='y~met*snp' & signif_mwis==F]) +
-  geom_point(data=d[model=='y~met*snp' & signif_mwis==T]) +
-  scale_color_manual(name='',
-    values=c(`TRUE`=rgb(0,0,1,0.5),    `FALSE`=rgb(0,0,0,0.1)),
-    labels=c(`TRUE`='MWIS-significant',`FALSE`='Not significant')) +
-  geom_textabline(linetype='dashed',color='red',label='Slope = 1', gap=F, offset=unit(-1,'lines'), hjust=0.8) +
-  xlab('Full LMM Std. Error') + ylab('Averaged LMM Std. Error') +
-  guides(color="none") +
-  theme_bw()
-E
-
-#ggplot(d2[signif_mwis==T]) + geom_point(aes(x=est_μ,y=est_Δ))
-#d2[signif_mwis==T, cor(est_μ,est_Δ)]
-
-(A + B) /
-(C + D) /
-plot_layout() +
-plot_annotation(tag_levels="A") & theme(plot.tag=element_text(size=24,face='bold'))
 
 
 n_signif_tbl <- runs[model=='met~pa',    .(`met~pa`            =sum(signif_funnel,na.rm=T)), by=.(exam,lm_or_lmm)
@@ -1429,7 +1236,8 @@ n_signif_tbl <- runs[model=='met~pa',    .(`met~pa`            =sum(signif_funne
    ][on=.(exam,lm_or_lmm,snp),
      runs[model=='y~met*snp', .(`y~met*snp (MWIS)`  =sum(signif_mwis,  na.rm=T)), by=.(exam,lm_or_lmm,snp)]
    ][order(snp,-exam,lm_or_lmm)
-   ][grepl('chr14_88305056_G_A',snp)][,snp:=NULL
+   #][grepl('chr14_88305056_G_A',snp)][,snp:=NULL
+   ][grepl('chr2_',snp)][,snp:=NULL
    ][, `:=`(Model=fcase(exam=='1','Baseline',exam=='all','Longitudinal',exam=='avg','Average'), exam=NULL)
    ][order(-Model)
    ][(Model=='Longitudinal' & lm_or_lmm=='LMM') | (Model=='Baseline' & lm_or_lmm=='LM')
