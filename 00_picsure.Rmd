@@ -36,10 +36,10 @@ This is analogous to exploring variables in the PIC-SURE web UI.
 # For some reason, query wait time scales with `limit`, so set as low as possible while still getting all variables.
 t0 <- Sys.time()
 
-mesa_ids_search <- picsure::bdc.searchPicsure(session, 'phs001416',               limit=  200) |> setDT()
-    mesa_search <- picsure::bdc.searchPicsure(session, 'phs000209',               limit=25000) |> setDT()
-     fhs_search <- picsure::bdc.searchPicsure(session, 'phs000974',               limit= 2000) |> setDT()
-  topmed_search <- picsure::bdc.searchPicsure(session, 'DCC Harmonized data set', limit=  500) |> setDT()
+mesa_ids_search <- picsure::bdc.searchPicsure(session, 'phs001416',  limit=  200) |> setDT()
+    mesa_search <- picsure::bdc.searchPicsure(session, 'phs000209',  limit=25000) |> setDT()
+     fhs_search <- picsure::bdc.searchPicsure(session, 'phs000974',  limit= 2000) |> setDT()
+  topmed_search <- picsure::bdc.searchPicsure(session, 'DCC Harmon', limit=  500) |> setDT()
 
 # I don't have access to phs000007 (Kenny has to do it for me), so I don't know how small I can set `limit` before variables start getting dropped.
 #search_results <- picsure::bdc.searchPicsure(session)
@@ -154,7 +154,7 @@ mesa_vars <- mesa_search[
         'hba',
         'hdl[0-9]$',
         'income',
-        'ins[0-9]c',
+        'insln[0-9]c',
         'lipid',
         'month',
         'nac',
@@ -162,6 +162,7 @@ mesa_vars <- mesa_search[
         'race1c',
         'season',
         'site[0-9]c',
+        'trig[0-9]',
         'exercm[0-9]c', 'pamcm[0-9]c', 'pavcm[0-9]c', 'pamvcm[0-9]c'
     )))
   #][, unique(group_name)
@@ -188,7 +189,7 @@ Now we actually request the individual-level data for the desired variables with
 ```{r}
 do_query <- \(varnames) bdc.newQuery(session) |> addClause(keys=varnames, type='ANYOF') |> runQuery(resultType='DATA_FRAME') |> setDT()
 
-fwrite(phs000007_query, 'test.csv')
+#fwrite(phs000007_query, 'test.csv')
 #phs000007_query <- do_query(phs000007_vars$name)
 system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/notebooks/phs000007_query.rds .')
 phs000007_query <- readRDS('phs000007_query.rds')
@@ -379,14 +380,7 @@ fhs_full <- phs000007_query[
 dir.create('data/derived/phenotypes', rec=T)
 #fwrite(phs000007_query, 'data/derived/phenotypes/phs000007_picsure_variables.csv')
 fwrite(mesa_query,      'data/derived/phenotypes/mesa_picsure_variables.csv')
-fwrite(mesa_id_query,   'data/derived_phenotypes/mesa_id_picsure_variables.csv')
+fwrite(mesa_id_query,   'data/derived/phenotypes/mesa_id_picsure_variables.csv')
 fwrite(fhs_full,        'data/derived/phenotypes/fhs_picsure_variables.csv')
 fwrite(topmed_query,    'data/derived/phenotypes/topmed_picsure_variables.csv')
-```
-
-
-```{r}
-nwds <- fhs_query[!is.na(TOM_Id) & !is.na(NWD_Id), NWD_Id]
-sum(nwds %in% dosages$NWD_Id)
-dosages[dosages$NWD_Id %in% nwds, table(chr14_88305056_G_A)]
 ```
