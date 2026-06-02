@@ -33,22 +33,17 @@ session <- picsure::bdc.initializeSession(picsure_url, token) |> picsure::bdc.se
 ## Get search objects
 This is analogous to exploring variables in the PIC-SURE web UI.
 ```{r}
-# For some reason, query wait time scales with `limit`, so set as low as possible while still getting all variables.
-t0 <- Sys.time()
-
-mesa_ids_search <- picsure::bdc.searchPicsure(session, 'phs001416',  limit=  200) |> setDT()
-    mesa_search <- picsure::bdc.searchPicsure(session, 'phs000209',  limit=25000) |> setDT()
-     fhs_search <- picsure::bdc.searchPicsure(session, 'phs000974',  limit= 2000) |> setDT()
-  topmed_search <- picsure::bdc.searchPicsure(session, 'DCC Harmon', limit=  500) |> setDT()
-
-# I don't have access to phs000007 (Kenny has to do it for me), so I don't know how small I can set `limit` before variables start getting dropped.
-#search_results <- picsure::bdc.searchPicsure(session)
-#saveRDS(search_results, 'search_results.rds')
-system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/notebooks/search_results.rds .')
-phs000007_search <- readRDS('search_results.rds') |> setDT()
-# Update: Kenny provided query results in 'phs000007_query.rds', accessed below.
-
-Sys.time() - t0
+if(!file.exists('picsure_searches.rds')) {
+  # For some reason, query wait time scales with `limit`, so set it as low as possible while still getting all variables.
+  t0 <- Sys.time()
+   mesa_ids_search <- picsure::bdc.searchPicsure(session, 'phs001416',  limit=  200) |> setDT()
+       mesa_search <- picsure::bdc.searchPicsure(session, 'phs000209',  limit=25000) |> setDT()
+       fhs1_search <- picsure::bdc.searchPicsure(session, 'phs000007',  limit=60000) |> setDT()
+       fhs2_search <- picsure::bdc.searchPicsure(session, 'phs000974',  limit= 2000) |> setDT()
+     topmed_search <- picsure::bdc.searchPicsure(session, 'DCC Harmon', limit=  500) |> setDT()
+  Sys.time() - t0
+  save(mesa_ids_search, mesa_search, fhs1_search, fhs2_search, topmed_search, file='picsure_searches.rds')
+} else { load('picsure_searches.rds') }
 ```
 
 ## Narrow down desired variables
@@ -80,10 +75,13 @@ topmed_vars <- topmed_search[
 
 ### FHS (phs000007) search
 ```{r}
-tmp <- phs000007_search[,-'name'][study_id=='phs000007'] # For manual viewing
+tmp <- fhs1_search[,-'name'][study_id=='phs000007'] # For manual viewing
 
-phs000007_vars <- phs000007_search[
+fhs1_vars <- fhs1_search[
   ][study_id=='phs000007'
+    # We only care about Offspring exam 5 & Gen3 exam 1,
+    #   the only ones with metabolomics timepoints.
+  ][grepl('pht006026|pht009761',name)
   ][grepl(
       x   = tolower(paste(var_id, var_name, var_description)),
       pat = paste(collapse='|', c(
@@ -93,7 +91,11 @@ phs000007_vars <- phs000007_search[
         'bmi',
         'smoking',
         'mvpa',
+        'glucose',
+        'a1c',
+        'insulin',
         'hdl',
+        'triglyceride',
         'lipid_med',
         'race'
     )))
@@ -103,9 +105,9 @@ phs000007_vars <- phs000007_search[
 
 ### FHS (phs000974) search
 ```{r}
-tmp <- fhs_search[,-'name'][, var_description := gsub('\n',' ',var_description)] # For manual viewing
+tmp <- fhs2_search[,-'name'][, var_description := gsub('\n',' ',var_description)] # For manual viewing
 
-fhs_vars <- fhs_search[
+fhs2_vars <- fhs2_search[
   ][grepl(
       x   = var_name,
       pat = paste(collapse='|', c(
@@ -189,38 +191,51 @@ Now we actually request the individual-level data for the desired variables with
 ```{r}
 do_query <- \(varnames) bdc.newQuery(session) |> addClause(keys=varnames, type='ANYOF') |> runQuery(resultType='DATA_FRAME') |> setDT()
 
-#fwrite(phs000007_query, 'test.csv')
-#phs000007_query <- do_query(phs000007_vars$name)
-system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/notebooks/phs000007_query.rds .')
-phs000007_query <- readRDS('phs000007_query.rds')
-mesa_query      <- do_query(     mesa_vars$name)
-mesa_id_query   <- do_query(  mesa_id_vars$name)
-fhs_query       <- do_query(      fhs_vars$name)
-topmed_query    <- do_query(   topmed_vars$name)
+if(!file.exists('picsure_queries.rds')) {
+  t0 <- Sys.time()
+  mesa_id_query <- do_query(mesa_id_vars$name)
+     mesa_query <- do_query(   mesa_vars$name)
+     fhs1_query <- do_query(   fhs1_vars$name)
+     fhs2_query <- do_query(   fhs2_vars$name)
+   topmed_query <- do_query( topmed_vars$name)
+  Sys.time() - t0
+  save(mesa_id_query,mesa_query,fhs1_query,fhs2_query,topmed_query,file='picsure_queries.rds')
+} else { load('picsure_queries.rds') }
 ```
 
 
 # Format phs000007 query results
+We only care about Offspring exam 5 & Gen3 exam 1, because they are the only ones with metabolomics timepoints.
+
 For some reason, there is no `RACE_CODE` in the query result object despite Kenny pulling all variables. But anyway, FHS is mostly white, so we will skip that covariate. \
 There is no site/center/location variable, so we will skip that as well. \
 There are many "drinks per week"-ish variables, but they don't exactly match ("drinks per week" vs. "times drank per week"), so I will omit this covariate to save time harmonizing.
 ```{r}
-phs000007_query[phs000007_query==''] <- NA # Otherwise '' will mess with fcoalesce
-phs000007_query <- phs000007_query[
+fhs1_query[fhs1_query==''] <- NA # Otherwise '' will mess with fcoalesce
+fhs1_query <- fhs1_query[
   ][, age := fcoalesce(
         `\\phs000007\\pht006026\\phv00277020\\AGE1\\`, # Gen3
         `\\phs000007\\pht009761\\phv00544734\\age5\\`) # Offspring
+  ][, bmi := fcoalesce(
+        `\\phs000007\\pht006026\\phv00277024\\BMI1\\`, # Gen3
+        `\\phs000007\\pht009761\\phv00544754\\bmi5\\`) # Offspring
   ][, SEX := fcoalesce(
         `\\phs000007\\pht006026\\phv00277017\\SEX\\`, # Gen3
         `\\phs000007\\pht009761\\phv00423870\\SEX\\`) # Offspring
-  ][, HDL := fcoalesce(
+  ][, hdl := fcoalesce(
         `\\phs000007\\pht006026\\phv00277040\\HDL1\\`, # Gen3
         `\\phs000007\\pht009761\\phv00544810\\HDL5\\`) # Offspring
+  ][, tg  := fcoalesce(
+        `\\phs000007\\pht006026\\phv00277049\\TRIG1\\`, # Gen3
+        `\\phs000007\\pht009761\\phv00544856\\TRIG5\\`) # Offspring
+  ][, fg  := fcoalesce(
+        `\\phs000007\\pht006026\\phv00277038\\FASTING_BG1\\`, # Gen3
+        `\\phs000007\\pht009761\\phv00544804\\FASTING_BG5\\`) # Offspring
   ][, smoking := fcoalesce(
         `\\phs000007\\pht006026\\phv00277032\\CURRSMK1\\`, # Gen3
         `\\phs000007\\pht009761\\phv00544778\\currsmk5\\`) # Offspring
   ][, .SD, .SDcols = patterns(paste(collapse='|', c(
-      '^age$', '^SEX$', '^HDL$', '^smoking$',
+      '^age$', '^bmi$', '^SEX$', '^hdl$', '^tg$', '^fg$', '^smoking$',
       'patient_id', 'Study Accession')))
 ] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm))
 ```
@@ -235,7 +250,7 @@ There are 3 `SUBJECT_ID` cols. A dbGaP search of their phv #s reveals no useful 
 The 3 columns are identical, except the 2nd one has 8 NAs in it, and the 3rd one has 6407 NAs in it. \
 In short, the 1st column has the most complete information and is in fact a superset of the other two, so just use that one (phv00252386).
 ```{r}
-tmp <- fhs_query[, .SD, .SDcols=patterns('SUBJECT_ID')
+tmp <- fhs2_query[, .SD, .SDcols=patterns('SUBJECT_ID')
 ] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # For manual viewing
 
 tmp[, sapply(.SD,\(x)sum(is.na(x)))] # Count NAs
@@ -251,7 +266,7 @@ There are 4 `IS_TUMOR` columns. \
 They all have missing data in diffierent places. Probably refer to different omics. \
 But nothing is a tumor sample anyway, so forget about it.
 ```{r}
-tmp <- fhs_query[, .SD, .SDcols=patterns('IS_TUMOR')
+tmp <- fhs2_query[, .SD, .SDcols=patterns('IS_TUMOR')
 ] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # For manual viewing
 
 tmp[, sapply(.SD,table)] # Always "no" or NA.
@@ -262,7 +277,7 @@ There are 4 Collection_visit columns. \
 A dbGaP search reveals [phv00543910](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543910) and [phv00543919](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543919) are the metabolomics ones we want. \
 Why are there two metabolomics ones? Dunno. But the two columns do not have any conflicts, we can can coalesce them.
 ```{r}
-tmp <- fhs_query[, .SD, .SDcols=patterns('Collection_visit')
+tmp <- fhs2_query[, .SD, .SDcols=patterns('Collection_visit')
 ] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # For manual viewing
 
 # All 4 cols are almost perfectly coalesce-able, except 12 people with a mismatching visit "1" and "2".
@@ -277,7 +292,7 @@ There are 2 of each. \
 These containers must refer to different omics. If you search up the dbGaP phv #s, you can see. \
 The 1st col ("RAMA___ containers") is [phv00500015](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00500015), methylomics. The 2nd col (plain-numbered) is [phv00543928](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543928), metabolomics.
 ```{r}
-tmp <- fhs_query[, .SD, .SDcols=patterns('Sample_container_ID|Sample_well_ID')
+tmp <- fhs2_query[, .SD, .SDcols=patterns('Sample_container_ID|Sample_well_ID')
 ] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # For manual viewing
 
 tmp[sample(1:.N,9)] # 9 random rows
@@ -296,7 +311,7 @@ There are 4 of these columns total. \
 
 Below simply confirms that the ages of the two metabolomics columns have no conflicts.
 ```{r}
-tmp <- fhs_query[, .SD, .SDcols=patterns('AGE_OF_COLLECTION|Age_at_collection')
+tmp <- fhs2_query[, .SD, .SDcols=patterns('AGE_OF_COLLECTION|Age_at_collection')
 ] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm))
 # (Manually confirmed there are no conflicts between the two metabolomics columns externally in VisiData and I'm lazy to add demonstrative code here.)
 ```
@@ -308,7 +323,7 @@ The two TOM ones have no conflicts, so I will just coalesce them, I guess. \
 
 There are also 9 people with 2 or more tab-separated NWD ids. It is not clear which is the preferred one, so I will arbitrarily take the first. It is not enough samples to warrant the merging complications that would arise from trying to consider them all.
 ```{r}
-tmp <- fhs_query[, .SD, .SDcols=patterns('SAMPLE_ID')
+tmp <- fhs2_query[, .SD, .SDcols=patterns('SAMPLE_ID')
 ][, names(.SD) := lapply(.SD, \(x) gsub('\t',' ',x))
 ] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) # For manual viewing
 
@@ -327,8 +342,8 @@ In conclusion since we are only interested in metabolomics this is what we'll do
 * `Age_at_collection`: Coalesce [phv00543908](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543908) & [phv00543917](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543917)
 * `SAMPLE_ID`: Coalesce [phv00543907](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543907) & [phv00543916](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543916)
 ```{r}
-fhs_query[fhs_query==''] <- NA # Otherwise '' will mess with fcoalesce
-fhs_query <- fhs_query[
+fhs2_query[fhs2_query==''] <- NA # Otherwise '' will mess with fcoalesce
+fhs2_query <- fhs2_query[
   ][, metabolomics_age := fcoalesce(
         `\\phs000974\\pht015035\\phv00543908\\Age_at_collection\\`, 
         `\\phs000974\\pht015036\\phv00543917\\Age_at_collection\\`)
@@ -351,8 +366,8 @@ fhs_query <- fhs_query[
 topmed_query |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm))
 tmp <- topmed_query[grepl('FHS',subcohort_1)]
 
-fhs_full <- phs000007_query[
-  ][fhs_query,
+fhs_full <- fhs1_query[
+  ][fhs2_query,
     on=.(`_Topmed Study Accession with Subject ID`,
          `_Parent Study Accession with Subject ID`,
          patient_id, SEX)
@@ -361,12 +376,12 @@ fhs_full <- phs000007_query[
 # To compare with TOPMed-harmonized variables if desired:
 #fhs_full <- topmed_query[
 #  ][, .SD, .SDcols=!patterns('^unit_|_consents') # Don't need these cols...
-#  ][phs000007_query,
+#  ][fhs1_query,
 #    on=.(`_Topmed Study Accession with Subject ID`,
 #         `_Parent Study Accession with Subject ID`,
 #         patient_id,
 #         annotated_sex_1=SEX)
-#  ][fhs_query,
+#  ][fhs2_query,
 #    on=.(`_Topmed Study Accession with Subject ID`,
 #         `_Parent Study Accession with Subject ID`,
 #         patient_id,
@@ -378,7 +393,6 @@ fhs_full <- phs000007_query[
 # Write
 ```{r}
 dir.create('data/derived/phenotypes', rec=T)
-#fwrite(phs000007_query, 'data/derived/phenotypes/phs000007_picsure_variables.csv')
 fwrite(mesa_query,      'data/derived/phenotypes/mesa_picsure_variables.csv')
 fwrite(mesa_id_query,   'data/derived/phenotypes/mesa_id_picsure_variables.csv')
 fwrite(fhs_full,        'data/derived/phenotypes/fhs_picsure_variables.csv')
