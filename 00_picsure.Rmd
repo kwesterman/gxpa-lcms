@@ -5,10 +5,6 @@ output:
     toc_float: true
     toc_collapsed: true
 ---
-```{css echo=F}
-pre { overflow-x: scroll; }
-pre code { white-space: pre; }
-```
 
 # Setup
 ```{r}
@@ -21,8 +17,12 @@ if (!require('picsure', quiet=T)) {
     repo = 'hms-dbmi/pic-sure-r-adapter-hpds',
     ref  = 'main', force=T
   )
+  library(picsure)
 }
 ```
+
+# MANUAL STEP:
+You must go to the PIC-SURE website, get an API token, and copy it into a file named `picsure_token.txt` in the current folder.
 ```{r}
 picsure_url = 'https://picsure.biodatacatalyst.nhlbi.nih.gov/picsure'
 token <- scan('picsure_token.txt', what='character', quiet=T)
@@ -48,8 +48,9 @@ if(!file.exists('picsure_searches.rds')) {
 
 ## Narrow down desired variables
 ### TOPMed harmonized variables
+We don't actually use these, we prefer the MESA- and FHS-specific ones. But, I leave this code here in case it is useful.
 ```{r}
-tmp <- topmed_search[,-'name'][, var_description := gsub('\n',' ',var_description)] # For manual viewing in VisiData
+tmp <- topmed_search[,-'name'][, var_description := gsub('\n',' ',var_description)] # For manual exploration if desired.
 
 topmed_vars <- topmed_search[
   ][grepl(
@@ -75,7 +76,7 @@ topmed_vars <- topmed_search[
 
 ### FHS (phs000007) search
 ```{r}
-tmp <- fhs1_search[,-'name'][study_id=='phs000007'] # For manual viewing
+tmp <- fhs1_search[,-'name'][study_id=='phs000007'] # For manual exploration.
 
 fhs1_vars <- fhs1_search[
   ][study_id=='phs000007'
@@ -105,7 +106,7 @@ fhs1_vars <- fhs1_search[
 
 ### FHS (phs000974) search
 ```{r}
-tmp <- fhs2_search[,-'name'][, var_description := gsub('\n',' ',var_description)] # For manual viewing
+tmp <- fhs2_search[,-'name'][, var_description := gsub('\n',' ',var_description)] # For manual exploration.
 
 fhs2_vars <- fhs2_search[
   ][grepl(
@@ -127,7 +128,7 @@ fhs2_vars <- fhs2_search[
 
 ### MESA search
 ```{r}
-tmp <- mesa_search[,-'name'][, var_description := gsub('\n',' ',var_description)] # For manual viewing
+tmp <- mesa_search[,-'name'][, var_description := gsub('\n',' ',var_description)] # For manual exploration.
 
 mesa_vars <- mesa_search[
   ][grepl(
@@ -207,8 +208,7 @@ if(!file.exists('picsure_queries.rds')) {
 # Format phs000007 query results
 We only care about Offspring exam 5 & Gen3 exam 1, because they are the only ones with metabolomics timepoints.
 
-For some reason, there is no `RACE_CODE` in the query result object despite Kenny pulling all variables. But anyway, FHS is mostly white, so we will skip that covariate. \
-There is no site/center/location variable, so we will skip that as well. \
+There is no site/center/location variable, so we will skip that. \
 There are many "drinks per week"-ish variables, but they don't exactly match ("drinks per week" vs. "times drank per week"), so I will omit this covariate to save time harmonizing.
 ```{r}
 fhs1_query[fhs1_query==''] <- NA # Otherwise '' will mess with fcoalesce
@@ -274,7 +274,7 @@ tmp[, sapply(.SD,table)] # Always "no" or NA.
 
 ### `Collection_visit`
 There are 4 Collection_visit columns. \
-A dbGaP search reveals [phv00543910](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543910) and [phv00543919](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543919) are the metabolomics ones we want. \
+A dbGaP search reveals [phv00543910](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543910) and [phv00543919](https://dbgap.ncbi.nlm.nih.gov/beta/search/?OBJ=variable&TERM=phv00543919) are the ones relevant to metabolomics which we want. \
 Why are there two metabolomics ones? Dunno. But the two columns do not have any conflicts, we can can coalesce them.
 ```{r}
 tmp <- fhs2_query[, .SD, .SDcols=patterns('Collection_visit')
@@ -318,7 +318,7 @@ tmp <- fhs2_query[, .SD, .SDcols=patterns('AGE_OF_COLLECTION|Age_at_collection')
 
 ### `SAMPLE_ID`
 There are 6 `SAMPLE_ID` columns. \
-The first column is simplly all the other columns concatenated with tabs. The others are NWD (phv00252391), TOE (phv00499999), TOR (phv00500017), TOM(phv00543907), and TOM(phv00543916) (--yes, there are two TOM ones). \
+The first column is simply all the other columns concatenated with tabs. The others are NWD (phv00252391), TOE (phv00499999), TOR (phv00500017), TOM(phv00543907), and TOM(phv00543916) (--yes, there are two TOM ones). \
 The two TOM ones have no conflicts, so I will just coalesce them, I guess. \
 
 There are also 9 people with 2 or more tab-separated NWD ids. It is not clear which is the preferred one, so I will arbitrarily take the first. It is not enough samples to warrant the merging complications that would arise from trying to consider them all.
@@ -361,32 +361,14 @@ fhs2_query <- fhs2_query[
 ] |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm))
 ```
 
-# Merge with TOPMed-wide variables
+# Merge the two FHS datasets together
 ```{r}
-topmed_query |> setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm))
-tmp <- topmed_query[grepl('FHS',subcohort_1)]
-
 fhs_full <- fhs1_query[
   ][fhs2_query,
     on=.(`_Topmed Study Accession with Subject ID`,
          `_Parent Study Accession with Subject ID`,
          patient_id, SEX)
 ]
-
-# To compare with TOPMed-harmonized variables if desired:
-#fhs_full <- topmed_query[
-#  ][, .SD, .SDcols=!patterns('^unit_|_consents') # Don't need these cols...
-#  ][fhs1_query,
-#    on=.(`_Topmed Study Accession with Subject ID`,
-#         `_Parent Study Accession with Subject ID`,
-#         patient_id,
-#         annotated_sex_1=SEX)
-#  ][fhs2_query,
-#    on=.(`_Topmed Study Accession with Subject ID`,
-#         `_Parent Study Accession with Subject ID`,
-#         patient_id,
-#         annotated_sex_1=SEX)
-#]
 ```
 
 
