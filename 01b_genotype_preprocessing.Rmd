@@ -1,8 +1,3 @@
-```{css echo=F}
-pre { overflow-x: scroll; }
-pre code { white-space: pre; }
-```
-
 __Prerequisites:__
 
 * Running on Terra, as access to the TOPMed genotype data requires the `tnu` command.
@@ -14,9 +9,10 @@ if(!file.exists("bcftools/bcftools")) system("git clone --recurse-submodules htt
 
 vs  <- fread(cmd='gcloud storage cat gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/variants_of_interest.csv')
 drs <- fread(cmd='gcloud storage cat gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/geno_files_drs.csv')
-dt  <- drs[vs,on='chr']
+dt  <- drs[vs,on='chr', allow.cartesian=T]
 ```
 
+# Extract dosages
 ```{r}
 get_dosage <- \(vcf_url, idx_fnm, chr) {
   fread(cmd = paste0(
@@ -28,7 +24,6 @@ get_dosage <- \(vcf_url, idx_fnm, chr) {
     "bcftools/bcftools +bcftools/plugins/dosage.so"
 ))}
 
-# Extract genotypes
 dosages <- dt[, by=chr, {
   writeLines(paste0(chr,'\t',pos), paste0(chr[1],'_var_regions.txt'))
   writeLines(rsid,                 paste0(chr[1],'_var_ids.txt'    ))
@@ -37,19 +32,38 @@ dosages <- dt[, by=chr, {
   Map(unique(vcf_drs), unique(csi_drs), f=\(vcf_drs,csi_drs) {
     vcf_url <- system(paste('tnu drs access', vcf_drs), intern=T)
     csi_url <- system(paste('tnu drs access', csi_drs), intern=T)
-    system(paste0("curl '",csi_url,"' -o idx.csi")) # Download VCF index files to allow fast random access.
-    dosage_hmb <- get_dosage(vcf_url,   'idx.csi', chr[1])
+    system(paste0("curl '",csi_url,"' -o idx.csi")) # Download VCF index files for fast random access.
+    dos <- get_dosage(vcf_url,   'idx.csi', chr[1])
+    dos[, names(.SD) := lapply(.SD,as.character)] # CHROM,POS,REF,ALT to character. Because if no variants are found they will be of type logical, causing merge errors.
   }) |> Reduce(f=\(x,y) merge(x,y,all=T))
 }]
+```
 
-dosages <- vs[
-  ][dosages, on=c(chr='#[1]CHROM', pos='[2]POS', ref='[3]REF', alt='[4]ALT')
+# Format
+```{r}
+dosages2 <- vs[
+  ][, pos := as.character(pos)
+  ][dosages, on=c(chr='#[1]CHROM', pos='[2]POS')
+  ][, names(.SD) := lapply(.SD,as.numeric), .SDcols=patterns('NWD')
   ][, cpaid := paste(chr, pos, ref, alt, sep='_')
-  ][, .SD, .SDcols=patterns('cpaid|^\\[[0-9]+\\]')
-] |> transpose(make.names='cpaid', keep.names='NWD_Id')
-dosages[, NWD_Id := sub('^\\[[0-9]+\\]', '', NWD_Id) ] # "[123]NWD987" -> "NWD987"
 
+  # If alt is blank, sum dosage across all alt alleles.
+  #][alt=='', by=cpaid, .SDcols=patterns('NWD')
+  #  , names(.SD) := as.list(colSums(.SD,na.rm=T))
+  # Nevermind, leads to a dosage of 3. chr8_19982830_G_ is just weird then.
+
+  ][!duplicated(cpaid)
+  ][, .SD, .SDcols=patterns('cpaid|NWD')
+] |> transpose(make.names='cpaid', keep.names='NWD_Id')
+dosages2[, NWD_Id := sub('^\\[[0-9]+\\]', '', NWD_Id) ] # "[123]NWD987" -> "NWD987"
+```
+```{r}
+head(dosages2)
+```
+
+# Write
+```{r}
 dir.create('data/raw/genomics',rec=T)
-fwrite(dosages, 'data/raw/genomics/dosages.csv')
+fwrite(dosages2, 'data/raw/genomics/dosages.csv')
 system('gcloud storage cp data/raw/genomics/dosages.csv $WORKSPACE_BUCKET/data/raw/genomics/dosages.csv')
 ```
