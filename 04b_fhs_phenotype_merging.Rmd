@@ -26,6 +26,7 @@ Reduce(\(x,l) merge(x, l$y, by=l$by, all.x=T),
 # Rename columns
 ```{r rename}
 data <- data |> setnames(\(nm)  sub('^PC','gPC', nm))# 'PC#' -> 'gPC#' To distinguish genetic PCs from metabolite PCs we'll add later
+data <- data |> setnames('SEX','sex')
 ```
 
 ## Winsorization, imputation, transformation
@@ -37,12 +38,16 @@ nafill2 <- \(x) c(NA,x[!is.na(x)])[cumsum(!is.na(x))+1] # nafill(type='locf') bu
 data <- data[
   # (Median) imputation of covariates if not present in any exam (i.e. not present in exam 1)
   # (Making sure to take the median of the original set of non-missing values, NOT recalculating the median after each imputation!)
-  ][, {  age_median <<- median(            age, na.rm=T); .SD }
+  ][, {age_median <<- median(age, na.rm=T);
+       bmi_median <<- median(bmi, na.rm=T);
+       .SD}
 
-  ][ is.na(            age),             age :=   age_median
+  ][ is.na(age), age := age_median
+  ][ is.na(bmi), bmi := bmi_median
 
   # Definitions
-  ][, hdl_log   := log(HDL) 
+  ][, hdl_log   := log(hdl)
+  ][,  tg_log   := log(tg )
 ]
 ```
 
