@@ -1,8 +1,3 @@
-```{css echo=F}
-pre { overflow-x: scroll; }
-pre code { white-space: pre; }
-```
-
 __Prerequisites:__
 
 * Access to the [`bdcmsg22/QC_metabolomics`](https://app.terra.bio/#workspaces/bdcmsg22/QC_metabolomics) workspace where the "`PhenoUsmanSIDNO`" file is stored.
@@ -12,12 +7,14 @@ __Prerequisites:__
 # Setup
 ```{r setup, message=F}
 library(data.table)
+library(Matrix)
+if(!require(readxl)) { install.packages('readxl') }
 library(readxl)
 
 options(datatable.na.strings=c('NA',''))
 
-dir.create('data/raw/phenotypes',rec=T)
 if(!file.exists('data/raw/phenotypes/')) {
+  dir.create('data/raw/phenotypes',rec=T)
   system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/raw/phenotypes/* data/raw/phenotypes')
   system('gcloud storage cp gs://fc-secure-4b3e979d-ba8b-43c4-a5ec-b41ab42ce606/MesaMetabolomics_PilotX01_2023_02_16/MESA_PhenoUsmanSIDNO_20230214.txt data/raw/phenotypes')
 }
@@ -64,6 +61,7 @@ mergecoalesce <- \(x,y, by=NULL, by.x=NULL, by.y=NULL, ..., force_coalesce=F) {
   merged
 }
 
+# Detects cols with duplicated names in dt, and coalesces them.
 coalesce_samenames <- \(dt, force_coalesce=F) {
   nms <- unique(colnames(dt)[duplicated(colnames(dt))])
   ns  <- sapply(nms,\(nm) sum(nm==colnames(dt)))
@@ -96,13 +94,12 @@ coalesce_samenames <- \(dt, force_coalesce=F) {
 
 # Join all datasets
 ```{r join}
-# Create one dt containing all the IDs we could want.
+# Frist, create a "base" dt containing all the usable sample IDs.
 # That is, TOM_Ids with metabolomics info, and mesa_ids with PA info. Note that one mesa_id may correspond to multiple TOM_Ids.
-# Then, can merge with impunity using all.x=T for everything, without fear of losing any info.
+# Then, we can repeatedly merge into that base with impunity (using all.x=T), without fear of accidently dropping any info.
 data <-
 mergecoalesce(by='mesa_id', all=T, force_coalesce=T,
   fread('data/raw/phenotypes/MESA_PhenoUsmanSIDNO_20230214.txt')[, mesa_id := sidno],
-  #fread('data/raw/phenotypes/MESA_HDL_PA_covars_12345.csv')     [, mesa_id := `\\phs000209\\pht001116\\phv00084441\\sidno\\`]
   fread('data/derived/phenotypes/mesa_picsure_variables.csv')   [, mesa_id := `\\phs000209\\pht001116\\phv00084441\\sidno\\`]
   )[,mesa_id:=as.character(mesa_id)][,NONE:=NA]      |> # Add an NA "NONE" column, useful to fill variables with no measurements for a particular MESA exam.
   setnames(\(nm)  sub('.*\\\\(.*)\\\\$', '\\1', nm)) |> # Fixes some names e.g. '\phs000209\phv00084442\age1c\' -> 'age1c'
@@ -308,6 +305,6 @@ save(km, file='data/derived/genomics/mesa_km.RData')
 fwrite(data, 'data/derived/analysis_df-mesa.csv')
 ```
 ```{r upload}
-system('gcloud storage cp data/derived/analysis_df-mesa.csv        gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/')
+system('gcloud storage cp data/derived/analysis_df-mesa.csv   gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/')
 system('gcloud storage cp data/derived/genomics/mesa_km.RData gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/genomics/')
 ```
