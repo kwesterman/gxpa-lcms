@@ -6,10 +6,8 @@ __Prerequisites:__
 
 # Setup
 ```{r setup, message=F}
-library(data.table)
-library(Matrix)
-if(!require(readxl)) { install.packages('readxl') }
-library(readxl)
+pkgs <- c('data.table','Matrix','readxl')
+lapply(pkgs, \(pkg) { if(!require(pkg, character.only=T)) {install.packages(pkg);require(pkg)}}) |> invisible()
 
 options(datatable.na.strings=c('NA',''))
 

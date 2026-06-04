@@ -1,15 +1,8 @@
 # Setup
 ```{r setup, message=F, cache=T, cache.depends=file.mtime('data/derived/analysis_df.csv')}
-if(!require(circlize)) { install.packages('circlize') }
-library(circlize)
-if(!require(ComplexHeatmap)) { BiocManager::install('ComplexHeatmap') }
-library(ComplexHeatmap)
-library(data.table)
-library(ggplot2)
-if(!require(gtsummary)) { install.packages('gtsummary') }
-library(gtsummary)
-if(!require(gt)) { install.packages('gt') }
-library(gt)
+pkgs <- c('circlize','ComplexHeatmap','data.table','ggplot2','gtsummary','gt')
+if(!require(ComplexHeatmap)) { BiocManager::install('ComplexHeatmap') } # Special install
+lapply(pkgs, \(pkg) { if(!require(pkg, character.only=T)) {install.packages(pkg);require(pkg)}}) |> invisible()
 
 options(datatable.na.strings=c('NA',''))
 

@@ -1,38 +1,12 @@
 ---
 output: html_document
 ---
-```{css, eval=T, echo=F}
-pre code { overflow-x: scroll; white-space: pre; }
-```
-```{r setup, include=F}
-# Uncomment to cheat and load pre-computed results to avoid waiting hours to regenerate an html render.
-knitr::opts_chunk$set(eval=F)
-```
-```{r cheat, eval=T, cache=T, include=F}
-#load('runs2_w_lms2lmms_251012.RData') # Changed LMs to baseline-only km-adjusted LMMs.
-#load('251217-batch_adj.RData')
-#load('medmod-251014-lms2lmms.RData')
-#load('260409-μ2.RData') # Fixed avg'd LMs
-#load('260501-μ-chr2_too.RData') # checking chr2 snp again
-#load('paglyc_allexam_done.RData')
-#tmp <- runs2[model=='Y~G*E']
-```
 
 # Setup
 ```{r lib, eval=T, message=F}
-#remotes::install_github("variani/lme4qtl")
-library(data.table)
-library(ggplot2)
-library(ggrepel)
-library(gtExtras)
-library(lme4)
-library(lme4qtl)
-library(lmerTest)
-library(lmtest)
-library(mediation)
-library(parallel)
-library(patchwork)
-library(geomtextpath)
+pkgs <- c('data.table','ggplot2','ggrepel','gtExtras','lme4','lme4qtl','lmerTest','lmtest','mediation','parallel','patchwork','geomtextpath')
+if(!require(lme4qtl)) { remotes::install_github("variani/lme4qtl") } # Special install
+lapply(pkgs, \(pkg) { if(!require(pkg, character.only=T)) {install.packages(pkg);require(pkg)}}) |> invisible()
 
 options(datatable.na.strings=c('NA',''))
 
