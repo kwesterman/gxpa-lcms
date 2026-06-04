@@ -41,21 +41,21 @@ dosages <- dt[, by=chr, {
 
 # Format
 ```{r}
-dosages2 <- vs[
-  ][, pos := as.character(pos)
-  ][dosages, on=c(chr='#[1]CHROM', pos='[2]POS')
+dosages2 <- dosages[
+  ][vs[,pos:=as.character(pos)], on=c(`#[1]CHROM`='chr', `[2]POS`='pos')
+  ][, `:=`(chr=`#[1]CHROM`, pos=`[2]POS`)
   ][, names(.SD) := lapply(.SD,as.numeric), .SDcols=patterns('NWD')
   ][, cpaid := paste(chr, pos, ref, alt, sep='_')
 
-  # If alt is blank, sum dosage across all alt alleles.
-  #][alt=='', by=cpaid, .SDcols=patterns('NWD')
-  #  , names(.SD) := as.list(colSums(.SD,na.rm=T))
-  # Nevermind, leads to a dosage of 3. chr8_19982830_G_ is just weird then.
+  # If alt is blank, allow whatever alelle. But if not, make sure alt/ref match (allowing flips).
+  ][alt=='' | ((ref==`[3]REF` & alt==`[4]ALT`) |
+               (ref==`[4]ALT` & alt==`[3]REF`))
 
   ][!duplicated(cpaid)
   ][, .SD, .SDcols=patterns('cpaid|NWD')
 ] |> transpose(make.names='cpaid', keep.names='NWD_Id')
 dosages2[, NWD_Id := sub('^\\[[0-9]+\\]', '', NWD_Id) ] # "[123]NWD987" -> "NWD987"
+dosages2[, names(dosages2)[sapply(dosages2, \(col) all(is.na(col)))] := NULL] # Rm all-NA SNPs.
 ```
 ```{r}
 head(dosages2)
