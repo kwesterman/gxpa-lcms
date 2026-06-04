@@ -1,20 +1,20 @@
-```{css echo=F}
-pre { overflow-x: scroll; }
-pre code { white-space: pre; }
-```
-
 # Setup
 ```{r setup, message=F, cache=T, cache.depends=file.mtime('data/derived/analysis_df.csv')}
+if(!require(circlize)) { install.packages('circlize') }
 library(circlize)
+if(!require(ComplexHeatmap)) { BiocManager::install('ComplexHeatmap') }
 library(ComplexHeatmap)
 library(data.table)
 library(ggplot2)
+if(!require(gtsummary)) { install.packages('gtsummary') }
 library(gtsummary)
+if(!require(gt)) { install.packages('gt') }
+library(gt)
 
 options(datatable.na.strings=c('NA',''))
 
 if(!file.exists('data/derived/analysis_df.csv')) system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/analysis_df.csv')
-data <- fread('data/derived/analysis_df.csv')[,exam:=as.factor(exam)]
+data <- fread('data/derived/analysis_df-mesa.csv')[,exam:=as.factor(exam)]
 ```
 
 # Summary table of relevant variables
@@ -31,7 +31,7 @@ data[
       all_continuous()  ~ c("{mean} ± {sd}"),
       all_categorical() ~ c("{n} ({p}%)"   )
   )) |>
-  add_overall() |> add_n()
+    add_overall() |> add_n() |> as_gt() |> gt:::as.tags.gt_tbl()
 ```
 ```{r summary-tbl-chr14, cache=T, cache.depend=digest::digest(data)}
 # With the power of hindsight: cleaner table showing only individuals with metabolomics & the chr14 variant.
@@ -47,7 +47,7 @@ data[
       all_continuous()  ~ c("{mean} ± {sd}"),
       all_categorical() ~ c("{n} ({p}%)"   )
   )) |>
-  add_overall()# |> add_n()
+  add_overall() |> as_gt() |> gt:::as.tags.gt_tbl()
 
 # Effective samples per exam:
 data[!is.na(data$TOM_Id) & !is.na(gPC1) & !is.na(hdl_log) & !is.na(chr14_88305056_G_A), table(exam)] #|> sum()
