@@ -10,14 +10,21 @@ lapply(pkgs, \(pkg) { if(!require(pkg, character.only=T)) {install.packages(pkg)
 
 options(datatable.na.strings=c('NA',''))
 
-if(!file.exists('data/derived/analysis_df-mesa.csv')) system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/analysis_df-mesa.csv data/derived/')
-
 # Workaround so that lmerTest accepts lme4qtl model objects, so we can get lmerTest Satterthwaite p-values.
 myLmer <- \(formula, data, relmat) {
   model <- relmatLmer(formula, data, relmat=relmat)
   lmerTest:::as_lmerModLT(model, as.function(model))
 }
 ```
+```{r}
+ws_bucket <- Sys.getenv('WORKSPACE_BUCKET')
+system('mkdir -p data/derived/genomics')
+system('mkdir -p data/derived/metabolomics/QCd/')
+if(!file.exists('data/derived/analysis_df-mesa.csv')) system(paste0('gcloud storage cp ', ws_bucket, '/data/derived/analysis_df-mesa.csv data/derived/'))
+if(!file.exists('data/derived/genomics/mesa_km.RData')) system(paste0('gcloud storage cp ', ws_bucket, '/data/derived/genomics/mesa_km.RData data/derived/genomics/'))
+if(!file.exists('data/derived/metabolomics/QCd/merged_QCd-mesa.csv')) system(paste0('gcloud storage cp ', ws_bucket, '/data/derived/metabolomics/QCd/merged_QCd-mesa.csv data/
+```
+
 ```{r data, cache=T, cache.inval=file.mtime('data/derived/analysis_df-mesa.csv')}
 data <- fread('data/derived/analysis_df-mesa.csv')
 variants_of_interest <- fread(cmd='gcloud storage cat gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/variants_of_interest.csv')
