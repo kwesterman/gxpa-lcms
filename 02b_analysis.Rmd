@@ -335,7 +335,7 @@ fwrite(signif_GxM_tbl, 'mesa_signif_GxMs.csv')
 
 signif_GxM_tbl |>
   dplyr::group_by(G,rsid,analysis) |>
-  gt(caption='GxMs')# |>
+  gt(caption='GxMs') |>
   gt:::as.tags.gt_tbl()
 ```
 
@@ -441,6 +441,6 @@ fread('data/derived/metabolomics/met_info-mesa.csv')[
   ][order(p)
 ] |>
   dplyr::group_by(G,rsid,analysis) |>
-  gt(caption='GxMs (sensitivity analysis, with +GxCovars)')# |>
+  gt(caption='GxMs (sensitivity analysis, with +GxCovars)') |>
   gt:::as.tags.gt_tbl()
 ```
