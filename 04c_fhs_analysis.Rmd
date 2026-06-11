@@ -1,34 +1,31 @@
 ---
 output: html_document
 ---
-```{css, eval=T, echo=F}
-pre code { overflow-x: scroll; white-space: pre; }
-```
 
 # Setup
+## Libraries and functions
 ```{r lib, eval=T, message=F}
-#remotes::install_github("variani/lme4qtl")
-library(data.table)
-library(ggplot2)
-library(ggrepel)
-library(gtExtras)
-library(gtsummary)
-library(lme4)
-library(lme4qtl)
-library(lmerTest)
-library(lmtest)
-library(mediation)
-library(parallel)
+pkgs <- c('data.table','ggplot2','ggrepel','gtExtras','lme4','lme4qtl','lmerTest','lmtest','mediation','parallel','patchwork','geomtextpath')
+if(!require(lme4qtl)) { remotes::install_github("variani/lme4qtl") } # Special install
+lapply(pkgs, \(pkg) { if(!require(pkg, character.only=T)) {install.packages(pkg);require(pkg)}}) |> invisible()
 
 options(datatable.na.strings=c('NA',''))
 
-if(!file.exists('data/derived/analysis_df-fhs.csv')) system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/analysis_df-fhs.csv data/derived/')
-
-# Workaround so that lmerTest works on lme4qtl model objects, so we can get lmerTest Satterthwaite p-values.
+# Workaround so that lmerTest accepts lme4qtl model objects, so we can get lmerTest Satterthwaite p-values.
 myLmer <- \(formula, data, relmat) {
   model <- relmatLmer(formula, data, relmat=relmat)
   lmerTest:::as_lmerModLT(model, as.function(model))
 }
+```
+```{r import}
+ws_bucket <- Sys.getenv('WORKSPACE_BUCKET')
+system('mkdir -p data/derived/genomics')
+system('mkdir -p data/derived/metabolomics/QCd/')
+grab_file_if_not_extant <- \(f) if(!file.exists(f)) system(paste0('gcloud storage cp', ws_bucket,'/',f))
+grab_file_if_not_extant('data/derived/analysis_df-fhs.csv')
+grab_file_if_not_extant('data/derived/genomics/fhs_km.RData')
+grab_file_if_not_extant('data/derived/metabolomics/QCd/merged_QCd-aligned.csv')
+grab_file_if_not_extant('data/derived/metabolomics/met_info-aligned.csv')
 ```
 ```{r data}
 data <- fread('data/derived/analysis_df-fhs.csv')
@@ -45,22 +42,10 @@ data <- fread('data/derived/analysis_df-fhs.csv')[
 
 load('data/derived/genomics/fhs_km.RData') # Kinship (with ids remapped in script 01c)
 data <- data[NWD_Id %in% colnames(km)]
-unsuitable_snps <- data[, names(.SD)[sapply(.SD, \(x) all(is.na(x)) | sum(x,na.rm=T)<10)], .SDcols=patterns('^chr')]
-data <- data[, .SD, .SDcols=!unsuitable_snps]
-cpaids <- setdiff(cpaids,unsuitable_snps)
-
-data[ # dosages
-  ][, .SD, .SDcols=variants_of_interest[cpaid %in% cpaids & grepl('KEW 2022',analysis),cpaid]
-  ] |>
-  tbl_summary(
-    missing='no',
-    statistic = list(
-      all_continuous()  ~ c("{mean} ± {sd}"),
-      all_categorical() ~ c("{n} ({p}%)"   )
-  )) |> add_n()
 
 met_nms <- names(fread('data/derived/metabolomics/QCd/merged_QCd-aligned.csv',nrows=0,drop=1))
-covars <- c('sex', 'age', 'smoking', 'metabolomics_visit', paste0('gPC',1:5))
+# Note: FHS does not have batch_cp/_cn/_hp/_an covars like MESA, only `metabolomics_visit`.
+covars <- c('sex', 'age', 'smoking', 'metabolomics_visit', paste0('gPC',1:9))
 outcomes <- c('hdl_log', 'tg_log', 'fg')
 exposures <- c('bmi','sex')
 
@@ -73,646 +58,92 @@ calc_eff_n_metabolites <- \(met_nms) {
 ```
 
 # Map aligned vs. MESA-specific metabolites
-This code was used to map MESA -> FHS metabolites, so that we only rerun the metabolites that were already significant in MESA. But now, we want to run FHS from scratch regardless of what we found in MESA. Hence why this piece is now commented out.
+We only need to rerun the metabolites that were already significant in MESA.
 
-Not all can be mapped, but we try our best.
+First, a sanity check that the QI ids to indeed correspond between the MESA & align metabolomics datasets.
 ```{r}
-#met_info_mesa  <- fread('data/derived/metabolomics/met_info-mesa.csv'   )
-#met_info_align <- fread('data/derived/metabolomics/met_info-aligned.csv')
-#
-## Fixing differences in the formats I made for these two files:
-## * "_pos"/"_neg" at the end of the unique_met_ids
-## * "Amide-neg" vs. "Amide-Negative-sMRM" Method name
-#met_info_align[Method=='Amide-Negative-sMRM', Method := 'Amide-neg']
-#met_info_mesa [, unique_met_id := sub('_pos','',sub('_neg','',unique_met_id))]
-#
-#signif_in_mesa <- fread('runs.csv')[grepl('chr14',snp) & !single_exam & (signif_funnel | signif_mwis), met]
-#signif_in_mesa <- sub('_pos','',sub('_neg','',signif_in_mesa)) # "_pos"/"_neg" at the end of ids fix (messy)
-#signif_in_mesa <- met_info_mesa[unique_met_id %in% signif_in_mesa]
-#
-#met_info_align$unique_met_id %in% signif_in_mesa$unique_met_id |> sum() # Aw that's only like half :(
-#tmp1 <- met_info_align[Method!='Amide-neg'][signif_in_mesa[Method!='Amide-neg'], on=.(unique_met_id)]
-#tmp2 <- met_info_align[Method=='Amide-neg'][signif_in_mesa[Method=='Amide-neg'], on=.(  Metabolite )][, unique_met_id := i.unique_met_id] # I manually generated the unique ids for the amines arbitrarily. Must match on name instead.
-#tmp <- rbind(tmp1,tmp2,fill=T)
-#
-## Sanity check that the QI ids do correspond between datasets, its just that not all the MESA metabolites are in the aligned dataset.
-#tmp[, all(      Compound_ID==      i.Compound_ID | is.na(      Compound_ID))]
-#tmp[, all(Pilot_Compound_ID==i.Pilot_Compound_ID | is.na(Pilot_Compound_ID))]
-#
-#met_nms <- tmp[Method=='Amide-neg' | !is.na(Compound_ID), unique_met_id]
-#
-#met_nms <- met_nms[met_nms %in% names(data)] # To account for metabolites lost during QC for high missingness.
+met_info_mesa  <- fread('data/derived/metabolomics/met_info-mesa.csv'   )
+met_info_align <- fread('data/derived/metabolomics/met_info-aligned.csv')
+
+# Sanity check that the QI ids do correspond between the MESA & aligned metabolomics datasets
+tmp1 <- met_info_align[Method!='Amide-neg'][met_info_mesa[Method!='Amide-neg'], on=.(unique_met_id)]
+tmp2 <- met_info_align[Method=='Amide-neg'][met_info_mesa[Method=='Amide-neg'], on=.(  Metabolite )][, unique_met_id := i.unique_met_id] # I manually generated the unique ids for the amines arbitrarily. Must match on name instead.
+tmp <- rbind(tmp1,tmp2,fill=T)
+tmp[, all(      Compound_ID==      i.Compound_ID | is.na(      Compound_ID))] # [1] TRUE
+tmp[, all(Pilot_Compound_ID==i.Pilot_Compound_ID | is.na(Pilot_Compound_ID))] # [1] TRUE
 ```
 
-# Confirm known associations, choose SNPs to pursue
-## Define formulas
-```{r one-offs}
-runs1 <- CJ(sorted=F,
-  Y = outcomes,
-  E = exposures,
-  M = NA,
-  G = transpose(variants_of_interest[cpaid %in% cpaids, .(cpaid,analysis,exposure,outcome)]),
-  model=c('Y~E', 'E~G', 'Y~G', 'Y~G*E', 'Y~G*E_no_G*sex'),
-  exam='all', lm_or_lmm='LMM'
-)[
-
-  ][, c('G','G_analysis','G_exposure','G_outcome') := transpose(G)
-
-  # Rm per-snp/per-outcome rows for models w/o a snp/outcome term
-  ][!grepl('Y', model), `:=`(Y=NA)
-  ][!grepl('G', model), `:=`(G=NA, G_analysis=NA, G_exposure=NA, G_outcome=NA) 
-  ][!grepl('E', model), `:=`(E=NA)
-  ][!duplicated(paste(model,Y,E,G))
-
-  # Filter all the possible combinations of models, down to the ones we want.
-  ## For each row, if model has G term, only keep if the Y & E are relevant to that SNP.
-  ][mapply(model,Y,E,G_outcome,G_exposure, FUN=\(model,Y,E,G_outcome,G_exposure) {
-      fifelse(!grepl('G',model), T,
-        fifelse(!grepl('Y',model), T, Y %in% strsplit(G_outcome ,' ')[[1]]) &
-        fifelse(!grepl('E',model), T, E %in% strsplit(G_exposure,' ')[[1]])
-      )
-    })
-  ][is.na(E) | !(model=='Y~G*E_no_G*sex' & E=='sex')
-  ][is.na(E) | E != 'smoking' # Categorical variable adds complication. Not worth it for just 1 SNP.
-
-  ][model=='Y~E',            fmla := paste0('<Y> ~ <E>')
-  ][model=='E~G',            fmla := paste0('<E> ~ <G>')
-  ][model=='Y~G',            fmla := paste0('<Y> ~ <G>')
-  ][model=='Y~G*E',          fmla := paste0('<Y> ~ <G>*<E> + <G>*sex')
-  ][model=='Y~G*E_no_G*sex', fmla := paste0('<Y> ~ <G>*<E>')
-
-  # Finalize
-  ][, fmla := paste(fmla, '+', paste(covars,collapse='+'))   # Add covars common to all models.
-  ][model=='E~G', fmla := gsub('\\*<E>','',fmla)             # E~G shouldn't have E itself in the covariates.
-  ][model=='Y~G', fmla := gsub('\\*<E>','',fmla)             # Y~G shouldn't have E        in the covariates.
-  ][grepl('Y~G\\*E',model), fmla := paste(fmla, '+',         # Add gPC*E term for models w/ G*E focal term.
-     paste(collapse='+', paste0('gPC',1:5,'*<E>')))
-  ][, fmla := Map(Y,fmla, f=\(Y,fmla) gsub('<Y>',Y,fmla))    # Replace placeholders.
-  ][, fmla := Map(G,fmla, f=\(G,fmla) gsub('<G>',G,fmla))    #
-  ][, fmla := Map(E,fmla, f=\(E,fmla) gsub('<E>',E,fmla))    #
-  ][, fmla := paste(fmla, '+', '(1|NWD_Id)')                 # Add random intercept.
-
-  # Specify the term of interest whose stats will be extracted by specifying a pattern to grep.
-  #   Interaction terms may be named either "X:Y" or "Y:X", need to account for both....
-  ][model %in% c('Y~E'),    term_pat := paste0('^',E,'$')
-  ][model %in% c('E~G'),    term_pat := paste0('^',G,'$')
-  ][model %in% c('Y~G'),    term_pat := paste0('^',G,'$')
-  ][grepl('Y~G\\*E',model), term_pat := paste0(G,':',E,'|',E,':',G)
-  ][is.na(term_pat),        term_pat := 'NONE' # (grepping by NA would cause problems.)
-]
-```
-
-## Confirm Y ~ E assocations
-Model: `Y ~ E + covariates + (1|ID)`
-Only top 10 model terms are shown. E is highlighted.
-```{r confirm-y-e, eval=T, echo=F, results='asis', cache=T}
-tbls <- runs1[model=='Y~E', .(Map(fmla,Y,E, f=\(fmla,Y,E) {
-  myLmer(fmla, data, list(mesa_id=km)) |> # TMP mesa_id instead of NWD_Id still s.t. doesn't take so long
-  summary() |> coef() |>
-  as.data.table(keep.rownames='term') |>
-  (\(dt) dt[order(`Pr(>|t|)`)])() |>
-  head(10) |> gt(caption=paste(Y,'~',E)) |>
-  gt_highlight_rows(rows=grepl(E,term))
-}))]
-
-lapply(tbls$V1,print)
-```
-
-## Confirm Y ~ G associations
-```{r confirm-y-g, eval=T, cache=T, message=F}
-options(mc.cores=4L)
-i <- 0
-runs1[
-  ][model=='Y~G' & exam=='all'
-    , c('est','se','df','t','p','n') := transpose(mcMap(fmla,term_pat, f=\(fmla,pat) {
-        message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\r',appendLF=F) # Progress bar
-        model <- myLmer(fmla,data,list(mesa_id=km))
-        coefs <- summary(model)$coefficients
-        c(coefs[grepl(pat,rownames(coefs)),],
-          nrow(model@frame)                 )
-      }))
-]
-```
-```{r, eval=T}
-# Display
-variants_of_interest[
-  ][runs1, on=.(cpaid=G)
-  ][model=='Y~G' & exam=='all'
-  ][order(p)
-  ][, .(Y,G=cpaid,E,Gene=gene,rsID=rsid,analysis,Annotation=annotation,G_p=signif(p,3), G_β=signif(est,3),`N (all timepoints)`=n)
-] |> gt(caption='G main effects with p<0.05 are highlighted') |> gt_highlight_rows(rows=G_p<0.05)
-```
-
-## Confirm Y ~ GxE associations
-Model: `Y ~ G*E + G*sex + covars + (1|ID)`
-```{r confirm-y-gxe, eval=T, cache=T, message=F}
-options(mc.cores=4L)
-i <- 0
-runs1[
-  ][model=='Y~G*E' & exam=='all'
-    , c('est','se','df','t','p','n') := transpose(mcMap(fmla,term_pat, f=\(fmla,pat) {
-        message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\r',appendLF=F) # Progress bar
-        model <- myLmer(fmla,data,list(NWD_Id=km))
-        coefs <- summary(model)$coefficients
-        c(coefs[grepl(pat,rownames(coefs)),],
-          nrow(model@frame)                 )
-      }))
-]
-```
-```{r, eval=T}
-# Display
-variants_of_interest[
-  ][runs1, on=.(cpaid=G)
-  ][model=='Y~G*E' & exam=='all'
-  ][order(p)
-  ][, .(Y,G=cpaid,E,Gene=gene,rsID=rsid,analysis,Annotation=annotation,GxE_p=signif(p,3), GxE_β=signif(est,3),`N (all timepoints)`=n)
-] |> gt(caption='GxEs with p<0.05 are highlighted') |> gt_highlight_rows(rows=GxE_p<0.05)
-```
-
-# Define formulas
-Main models of interest:
-
-* __Metabolome-wide PA association analysis (MWAS)__: \
-  `met ~ mvpa_wins + covars` \
-* __HDL association analysis__: \
-  `met ~ hdl_log + covars` \
-* __Interaction Model__: \
-  `hdl_log ~ met*SNP + sex*SNP + covars`
-
-```{r fmlas}
-#runs <- CJ(met=met_nms, snp=c('chr14_88305056_G_A','chr14_88298493_G_C','chr14_88300842_AGTTTT_A'),
-runs <- CJ(met=met_nms, snp=c('chr14_88194651_C_G','chr14_88183142_C_A','chr14_88300843_G_A'),
-  model=c(         #'met~hdl','met~snp',
-          #'hdl~met^2','hdl~met_RESET',
-          'hdl~met*snp'))[
-
-  # Exceptions
-  ][!grepl('met',model), met  := NA # Rm per-met/per-snp rows for models w/o a met/snp term
-  ][!grepl('snp',model), snp  := NA
-  ][!duplicated(paste(model,met,snp))
-
-  # Basic associations
-  ][model=='met~hdl', fmla := paste0(    met,    ' ~ ', 'hdl_log' )
-  ][model=='met~snp', fmla := paste0(    met,    ' ~ ',    snp    )
-
-  # Nonlinearity
-  ][model=='hdl~met^2',     fmla := paste0('hdl_log',' ~ ',    met,' + I(',met,'^2)')
-  ][model=='hdl~met_RESET', fmla := paste0('hdl_log',' ~ ',    met                  )
-
-  # Interaction
-  ][model=='hdl~met*snp',           fmla := paste0('hdl_log',' ~ ',    met,    '*',snp,' + ','sex','*',snp)
-
-  # Finalize
-  ][, fmla := paste(fmla, '+', paste(covars,collapse='+'))        # Add covars common to all models
-
-  ][!grepl('RESET',model), fmla := paste(fmla, '+', '(1|NWD_Id)') # Add random intercept to all non-RESET models
-
-  # Specify the term of interest whose stats will be extracted...
-  # ...by specifying a pattern to grep (b/c interaction terms could be named either "met:snp" OR "snp:met").
-  ][model %in% c('met~hdl'),                            term_pat := '^hdl_log$'
-  ][model %in% c('met~snp'),                            term_pat := paste0('^',snp,'$')
-  ][model %in% c('hdl~met^2'),                          term_pat := paste0('I\\(',met,'\\^2\\)')
-  ][model %in% c('hdl~met*snp'),                        term_pat := paste0(met,':',snp,'|',snp,':',met)
-  ][is.na(term_pat), term_pat := 'NONE' # (grepping by NA would cause problems.)
-
-  ][model=='hdl~met*snp' # psych these take too long to run so I'll just do the bare minimum GxM
-
-] |> merge(by.x='met', by.y='unique_met_id', all=T, # Merge to metabolite metadata (M/Z, RT, common name, etc.)
-           fread('data/derived/metabolomics/met_info-aligned.csv')[unique_met_id %in% met_nms, .(unique_met_id,Method,MZ,RT,HMDB_ID,Metabolite)])
-```
-
-# Time to compute!
-## Run all basic models
-```{r run-all-basic-models, message=F}
-# These models are quite memory intensive, and that multiplies when they're run in parallel.
-
-#data <- data[NWD_Id %in% colnames(km)]
-#
-#tmp  <- myLmer(runs[1,fmla], data, relmat=list(NWD_Id=km))
-#tmp2 <- myLmer(runs[2,fmla], data, relmat=list(NWD_Id=km))
-#summary(tmp2)
-#s <- summary(tmp)
-#c(s$coefficients[grepl(runs[1,term_pat],rownames(s$coefficients)),],              # Extract results
-#  any(grepl('singular', s$optinfo$conv$lme4$messages)), # Extract singular fit warning msgs
-#  as.numeric(sub('.*([0-9]+).*','\\1',s$fitMsgs))     )              
-#  
-#coefs <- s$coefficients[grepl(runs[1,term_pat],rownames(s$coefficients)),]
-#if(length(coefs)==0) 'beans'
-#
-#data[, lapply(.SD[,1:10], \(x) sum(is.na(x)))]
-#data[!is.na(hdl_log) & !is.na(TOM_Id), table(chr14_88305056_G_A)]
-#data[!is.na(hdl_log) & !is.na(TOM_Id), sapply(.SD,table), .SDcols=unique(runs$snp)]
-#data[!is.na(TOM_Id), table(chr14_88305056_G_A)]
-#library(gt)
-#library(gtsummary)
-#library(gtExtras)
-#data[
-#  #][!is.na(data$TOM_Id) & !is.na(gPC1) & !is.na(hdl_log) & !is.na(chr14_88305056_G_A)
-#  #][!is.na(data$TOM_Id) & !is.na(hdl_log) & !is.na(chr14_88305056_G_A)
-#  #][!is.na(data$TOM_Id)
-#  ][, .SD, .SDcols=patterns('^age$|SEX|HDL$|^chr14')
-#  ][, .(Age=age, SEX, `HDL (mg/dL)`=HDL, rs10146950=as.factor(chr14_88305056_G_A))
-#  ] |>
-#  tbl_summary(
-#    by=SEX,
-#    missing='no', # TODO more elegant way to display # of missing?
-#    statistic = list(
-#      all_continuous()  ~ c("{mean} ± {sd}"),
-#      all_categorical() ~ c("{n} ({p}%)"   )
-#  )) |>
-#  add_overall()# |> add_n()
-#
-#save.image('tmp.RData')
-## TODO check
-
-options(mc.cores=5L)
-i <- 0
-runs <- runs[
-  , c('est','se','df','t','p','singular_fit') := transpose(mcMap(fmla,term_pat, f=\(fmla,pat) {
-      message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\r',appendLF=F) # Progress bar
-      s <- summary( myLmer(fmla, data, relmat=list(NWD_Id=km)) )           # Run model
-      c(s$coefficients[grepl(pat,rownames(s$coefficients)),],              # Extract results for desired model term matched by term_pat (estimate, SE, degrees of freedom, t-score, p-value from model object's coefficient matrix)
-        any(grepl('singular', s$optinfo$conv$lme4$messages)))              # Extract singular fit warning msgs
-}))]
-#fwrite(runs,'fhs_2_other_chr14_snps_runs.csv')
-fwrite(runs,'fhs_eQTL_snps_runs.csv')
-
-# Requires a trivial amount of memory.
-options(mc.cores=5L)
-i <- 0
-runs <- runs[grepl('RESET',model)
-  , p := transpose(mclapply(fmla, FUN=\(fmla) {
-      message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\r',appendLF=F) # Progress bar
-      resettest(as.formula(fmla), data=data_exam1)$p.value                 # Run model & extract p
-}))]
-```
-
-# TMP
-Compare the MESA results with these new SNPs ones
+Not all metabolites in the MESA dataset are present in the aligned dataset. We use the best-correlated metabolite as proxy.
 ```{r}
-runs[, cohort := 'FHS']
-signif_GxM_runs_mesa <- fread('runs.csv')[
-  ][, cohort := 'MESA'
-  ][, met := sub('_...$','',met) # In MESA metabolomics, I left the _pos/_neg suffix on the methods, in the aligned metabolomics, I did not. So need this to make the naming consistent.
-  ][met %in% runs$met &
-    snp %in% c('chr14_88305056_G_A','chr14_88298493_G_C','chr14_88300842_AGTTTT_A') &
-    model=='hdl~met*snp' &
-    single_exam==F
+mesa_met_data <- fread('data/derived/metabolomics/QCd/merged_QCd-mesa.csv')[,-'TOM_Id']
+met_corrs <- cor(mesa_met_data, use='complete.obs')
+met_corrs <- met_corrs_cpy
+met_corrs <- met_corrs[,colnames(met_corrs) %in% met_info_align$unique_met_id]
+
+mesa_signif_GxMs <- fread('mesa_signif_GxMs.csv')
+met_mapping <- data.table(mesa_met_id = mesa_signif_GxMs$M)
+met_mapping[, aligned_met_id := sapply(mesa_met_id, \(m) colnames(met_corrs)[  which.max(met_corrs[m,])])]
+met_mapping[, corr           := sapply(mesa_met_id, \(m)          met_corrs [m,which.max(met_corrs[m,])])]
+met_mapping
+```
+
+# Rerun GxMs which were signif in MESA
+## Construct formulas
+Model: `Y ~ G*M + G*E + covariates + gPCs*M + (1|ID)` \
+Except, we do not have an mvpa variable in FHS, so in this case GxE is excluded.
+```{r}
+GxMpGxE_models <-
+CJ(Y=mesa_signif_GxMs$Y, E=mesa_signif_GxMs$E, G=mesa_signif_GxMs$G, M=mesa_signif_GxMs$M)[
+  ][,unique(.SD)
+  ][mapply(Y,E,G,M, FUN=\(Y,E,G,M) # Only keep signif GxMs from the regular analysis.
+      any(Y==mesa_signif_GxMs$Y & E==mesa_signif_GxMs$E & G==mesa_signif_GxMs$G & M==mesa_signif_GxMs$M))
+  ][met_mapping, on=.(M=mesa_met_id)
+  ][, M := aligned_met_id
+  ][, fmla := paste0('<Y> ~ <G>*<M>+<G>*<E>')            # Construct formulas.
+  ][E=='mvpa_wins', fmla := paste0('<Y> ~ <G>*<M>')      #   Except we don't have an MVPA variable for FHS, so exclude <E> in that case.
+  ][, fmla := paste(fmla,'+',paste(covars,collapse='+')) # Add covars.
+  ][, fmla := paste(fmla,'+',                            # Add G*covars.
+        paste(paste0('<G>*',covars),collapse=' + '))     #
+  ][, fmla := gsub('\\+ <G>\\*gPC[0-9]','',fmla)         #   Rm <G>*gPC terms though.
+  ][, fmla := paste(fmla,'+',                            # Add gPC*M covars.
+        paste(collapse='+', paste0('gPC',1:9,'*<M>')))
+  ][, fmla := mapply(Y,E,G,M,fmla, FUN=\(Y,E,G,M,fmla) { # Replace placeholders.
+        fmla <- gsub('<Y>',Y,fmla)
+        fmla <- gsub('<E>',E,fmla)
+        fmla <- gsub('<G>',G,fmla)
+        fmla <- gsub('<M>',M,fmla) })
+  ][, fmla := paste(fmla,'+ (1|NWD_Id)')                # Add random intercept.
+  ][, term_pat := paste0(G,':',M,'|',M,':',G)            # Term whose β to extract.
 ]
-
-tmp <- rbind(runs,signif_GxM_runs_mesa, fill=T) |>
-  dcast(value.var=c('est','p'), met ~ cohort + snp)
-
-tmp[, sapply(.SD, \(x) cor(x,est_MESA_chr14_88305056_G_A)), .SDcols=patterns('est')]
-tmp[, cor(est_MESA_chr14_88300842_AGTTTT_A, est_FHS_chr14_88300842_AGTTTT_A)]
-tmp[, cor(est_MESA_chr14_88298493_G_C,      est_FHS_chr14_88298493_G_C)]
-tmp[, cor(est_FHS_chr14_88300842_AGTTTT_A,      est_FHS_chr14_88298493_G_C)]
-
-
 ```
-
-# Results summary
-## Calculate p-value thresholds, mark metabolites which pass
-```{r p-thresholds, eval=T, echo=F}
-`p_thresh_mwas` <- 0.05/calc_eff_n_metabolites( unique(runs$met) )
-
-runs[model=='met~pa' &
-     p < p_thresh_mwas
-     , signif_funnel := T] |> invisible()
-
-`p_thresh_after_met~pa` <-
-  runs[model=='met~pa' & signif_funnel==T,
-       by=single_exam
-       , .(thresh=0.05/calc_eff_n_metabolites(met))]
-
-runs[by=single_exam,
-     , runs[model=='met~hdl' &
-            single_exam==.BY &
-            p < `p_thresh_after_met~pa`[single_exam==.BY,thresh] &   # < p-val thresh for this step
-            met %in% .SD[model=='met~pa' & signif_funnel==T, met] # Signif in previous step
-            , signif_funnel := T
-]] |> invisible()
-
-`p_thresh_after_met~pa->met~hdl` <-
-  runs[model=='met~hdl' & signif_funnel==T,
-       by=single_exam
-       , .(thresh=0.05/calc_eff_n_metabolites(met))]
-
-runs[by=.(single_exam,snp),
-     , runs[model=='hdl~met*snp' &
-            single_exam==.BY['single_exam'] & snp==.BY['snp'] &
-            p < `p_thresh_after_met~pa->met~hdl`[single_exam==.BY['single_exam'],thresh] & # < p-val thresh for this step
-            met %in% runs[single_exam==.BY['single_exam'] & model=='met~hdl' & signif_funnel==T, met] # Signif in previous step
-            , signif_funnel := T
-]] |> invisible()
-
-`p_thresh_after_met~pa->met~hdl->hdl~met*snp` <-
-  runs[model=='hdl~met*snp' & signif_funnel==T,
-       by=.(single_exam,snp)
-       , .(thresh=tryCatch(expr=0.05/calc_eff_n_metabolites(met), error=\(e)0.05))]
-
-# MWIS
-runs[model=='hdl~met*snp' &
-     p < p_thresh_mwas
-     , signif_mwis := T] |> invisible()
-
-`p_thresh_after_hdl~met*snp` <-
-  runs[model=='hdl~met*snp' & signif_mwis==T,
-       by=.(single_exam,snp)
-       , .(thresh=tryCatch(expr=0.05/calc_eff_n_metabolites(met), error=\(e)0.05))]
-```
-```{r checkpoint-main, eval=F, include=F}
-#save.image('runs_w_lms2lmms_251012.RData')
-save.image('251217-batch_adj.RData')
-```
-
-```{r n-signif, include=F, eval=T}
-# Because the variable names need backticks, hard to display in markdown. So defining new names here.
-n_signif_met_pa         <- runs[single_exam==F & model=='met~pa',  sum(signif_funnel,na.rm=T)]
-n_signif_met_pa_met_hdl <- runs[single_exam==F & model=='met~hdl', sum(signif_funnel,na.rm=T)]
-n_eff_mets_met_pa_met_hdl <- signif(0.05/`p_thresh_after_met~pa->met~hdl`[single_exam==F,thresh],3)
-```
-
-Legend:
-
-| Abbreviation | Result comes from which term in which model? | Description |
-|:-------|:----------------------------------------|:-----------------|
-| `hdl~met*snp`  | `hdl_log ~ `__`SNP*mvpa_wins`__` + SNP*sex + covars`                             | GxM interaction
-| `hdl~Δmet*snp` | `hdl_log ~ `__`SNP*(met_exam1-met_examN)`__` + SNP*met_exam1 + SNP*sex + covars` | GxM interaction (decomposed)
-| `met~snp`      | `met ~ `__`SNP`__` + covars`                                                     | Genetic main effect
-| `hdl~met^2`    | `hdl_log ~ met + `__`met^2`__` + covars`                                         | Nonlinear effect
-| `hdl~met_RESET`| `resettest(hdl_log ~ met_exam1 + covars)`                                        | RESET test p-value (exam1-only LM, not LMM)
-
-## Genotype-independent models:
-Total number of metabolites to start wtih: __`r length(met_nms)`__ (effective # of tests: `r signif(0.05/p_thresh_mwas,3)`).
-
-| Model | Significant Metabolites |
-|:------|:------------------------|
-| `met ~ PA` MWAS                                                                 | `r n_signif_met_pa`         |
-| `met ~ log(HDL)` (on `r n_signif_met_pa` significant metabolites from the MWAS) | `r n_signif_met_pa_met_hdl` |
-
-## GxPA (analysis funnel)
-Number of metabolites to start wtih: __`r n_signif_met_pa_met_hdl`__ (effective # of tests: `r n_eff_mets_met_pa_met_hdl`).
-
-```{r tbl-funnel, echo=F, eval=T}
-runs[
-  ][single_exam==F
-  ][!grepl('_0',term_pat)
-  ][, .(Metabolite,met,snp,model,p=signif(p,3))
-  ][runs[model=='hdl~met*snp' & single_exam==F & signif_funnel==T, .(met,snp)],
-    on=.(met,snp)
-  ][, dcast(.SD, value.var='p', Metabolite + met + snp ~ model)
-  ][order(snp,`hdl~met*snp`)
-  ][, `#` := 1:.N, by=snp
-] |> gt() |> tab_header('Metabolite*SNP P-values', 'for metabolites significant from GxPA LMM analysis funnel')
-
-runs[
-  ][single_exam==F | grepl('RESET',model)
-  ][, .(Metabolite,met,snp,model,signif_funnel,p=signif(p,3))
-  ][is.na(snp) & met %in% runs[model=='hdl~met*snp' & single_exam==F & signif_funnel==T, met]
-    , dcast(.SD, value.var='p', Metabolite + met ~ model)
-] |> gt() |> tab_header('SNP-independent P-values', 'for metabolites significant from GxPA LMM analysis funnel')
-```
-
-## GxPA (MWIS)
-Total number of metabolites to start wtih: __`r length(met_nms)`__ (effective # of tests: `r signif(0.05/p_thresh_mwas,3)`).
-
-```{r tbl-mwis, echo=F, eval=T}
-runs[
-  ][single_exam==F
-  ][!grepl('_0',term_pat)
-  ][, .(Metabolite,met,snp,model,signif_funnel,p=signif(p,3))
-  ][runs[model=='hdl~met*snp' & single_exam==F & signif_mwis==T, .(met,snp)],
-    on=.(met,snp)
-  ][, dcast(.SD, value.var='p', Metabolite + met + snp ~ model)
-  ][order(snp,`hdl~met*snp`)
-  ][, `#` := 1:.N, by=snp
-] |> gt() |> tab_header('Metabolite*SNP P-values', 'for metabolites significant from GxPA LMM MWIS')
-
-runs[
-  ][single_exam==F | grepl('RESET',model)
-  ][, .(Metabolite,met,snp,model,p=signif(p,3))
-  ][is.na(snp) & met %in% runs[model=='hdl~met*snp' & single_exam==F & signif_mwis==T, met]
-    , dcast(.SD, value.var='p', Metabolite + met ~ model)
-] |> gt() |> tab_header('SNP-independent P-values', 'for metabolites significant from GxPA LMM MWIS')
-```
-
-### More detail on the estimates for signif GxM metabolites
-Just for the significant metabolites, rerun the models to extract estimates for more terms.
-```{r gxm-detailed-estimates-models, eval=T}
-i<-0
-options(mc.cores=4L) # Fewer models, so the number of cores can be brought up with less risk of crashing.
-gxm_betas <- runs[
-  ][model=='hdl~met*snp' & (signif_mwis==T | signif_funnel==T) & single_exam==F
-  ][
-    , c('intercept',
-        'g_est',  'g_se',  'g_df',  'g_t',  'g_p',
-        'm_est',  'm_se',  'm_df',  'm_t',  'm_p',
-        'gxm_est','gxm_se','gxm_df','gxm_t','gxm_p'
-      ) := transpose(mcMap(fmla,term_pat,met,snp, f=\(fmla,pat,met,snp) {
-        message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\r',appendLF=F) # Progress bar
-        s <- summary( myLmer(fmla, data, relmat=list(NWD_Id=km)) )          # Run model
-        snp_pat <- paste0('^',snp,'$')
-        met_pat <- paste0('^',met,'$')
-        gxm_pat <- pat
-        c(s$coefficients['(Intercept)','Estimate'                ],
-          s$coefficients[grepl(snp_pat,rownames(s$coefficients)),], # Extract G   stuff
-          s$coefficients[grepl(met_pat,rownames(s$coefficients)),], # Extract   M stuff
-          s$coefficients[grepl(gxm_pat,rownames(s$coefficients)),]) # Extract GxM stuff
-}))]
-```
-```{r tbl-gxm-detailed, eval=T, echo=F}
-# Basic table
-#gxm_betas[
-#  ][single_exam==F & grepl(14,snp)
-#  ][, .(Metabolite,met,signif_funnel,signif_mwis,est_G=round(g_est,3),est_M=round(m_est,3),est_GxM=signif(gxm_est,3),P_g=signif(g_p,3),P_m=signif(m_p,3),P_GxM=signif(gxm_p,3))
-#] |> gt() |> tab_header('Metabolite*SNP P-values', 'for metabolites significant from GxPA LMM MWIS')
-
-`β(p)` <- \(β,p) paste0(round(β,3),' (',signif(p,3),')')
-
-# Fancy table
-gxm_betas[
-  ][single_exam==F & grepl(14,snp)
-  ][on=.(met,snp),
-    runs[single_exam==F & model=='met~snp' & met %in% gxm_betas$met
-         , .(met,snp,mg_est=est,mg_p=p)]
-  ][on=.(met),
-    runs[single_exam==F & model=='met~hdl' & met %in% gxm_betas$met
-         , .(met,my_est=est,my_p=p)]
-  ][on=.(met),
-    runs[single_exam==F & model=='met~pa' & met %in% gxm_betas$met
-         , .(met,me_est=est,me_p=p)]
-  ][order(gxm_p)
-  ][is.na(Metabolite), Metabolite := ''
-  ][, .(`Metabolite ID`=met,Identity=Metabolite,signif_funnel,signif_mwis,
-        βMG=`β(p)`(mg_est,mg_p),
-        βME=`β(p)`(me_est,me_p),
-        βMY=`β(p)`(my_est,my_p),
-        #βG=`β(p)`(g_est,g_p),
-        βM=`β(p)`(m_est,m_p),
-        βGxM=`β(p)`(gxm_est,gxm_p))
-  ][signif_funnel==T | signif_mwis==T
-] |> gt() |>
-  tab_header('Metabolite*SNP P-values', 'for metabolites significant from GxPA LMM MWIS') |>
-  tab_footnote(md('Genetic effect from the model: __Metabolite ~ SNP__'),
-    locations = cells_column_labels(columns = βMG)
-  ) |>
-  tab_footnote(md('log(HDL) effect from the model: __Metabolite ~ log(HDL)__'),
-    locations = cells_column_labels(columns = βMY)
-  ) |>
-  tab_footnote(md('MVPA effect from the model: __Metabolite ~ MVPA__'),
-    locations = cells_column_labels(columns = βME)
-  ) |>
-  #tab_footnote(md('Main genetic effect from the interaction model: __log(HDL) ~ Metabolite + SNP + Metabolite*SNP__'),
-  #  locations = cells_column_labels(columns = β_G)
-  #) |>
-  tab_footnote(md('Metabolite effect from the interaction model: __log(HDL) ~ Metabolite + SNP + Metabolite*SNP__'),
-    locations = cells_column_labels(columns = βM)
-  ) |>
-  tab_footnote(md('Interaction effect from the interaction model'),
-    locations = cells_column_labels(columns = βGxM)
-  ) |>
-  tab_footnote(md('Format: β (p-value)')) |>
-  tab_footnote(md('Interpretation: if β = 1, the outcome increases by one SD per SD of the indepdendent variable.')) |>
-  tab_footnote(md('(If the SNP is the independent variable, β = 1 represents that the outcome increases by 1 SD if the SNP is present).'))
-```
-
-## Write
-```{r write-main, eval=F}
-fwrite(runs,'runs.csv')
-```
-
-# Mediated moderation
-```{r meMO}
+## Run models
+```{r}
+options(mc.cores=6L)
 i <- 0
-options(mc.cores=1L) # Really memory-hungry, probably only run one at a time.
-meMO <- runs[model=='hdl~met*snp' & (signif_funnel==T | signif_mwis==T), .(met,snp,single_exam)][
-  # Calculate the minimum number of sims needed to pass the p-value threshold, plus a little 20% extra.
-  ][, by=c(snp2='snp')
-    #, n_sims := `p_thresh_after_met~pa->met~hdl->hdl~met*snp`[snp==snp2, ceiling(1.2/p)]
-    #, n_sims := `p_thresh_after_hdl~met*snp`[snp==snp2, ceiling(1.2/p)]
-    , n_sims := 1000 # Nevermind, easier if we can just say p<1e-3
-
-  # mediate() errored when I used a*b interaction terms in these models.
-  # As a workaround I manually construct 'axb' product terms and use those instead.
-  # See LabArchives days 250827-28 for my troubleshooting, but I never got to the bottom of it.
-  ][, c('treat','mediator') := transpose(Map(snp,met, f=\(snp,met) {
-        treat    <- paste0(snp,'x','mvpa_wins')
-        mediator <- paste0(snp,'x',    met    )
-        data[, (treat)    := .SD[[1]]*.SD[[2]], .SDcols=c(snp,'mvpa_wins')]
-        data[, (mediator) := .SD[[1]]*.SD[[2]], .SDcols=c(snp,    met    )]
-        c(treat,mediator)
-      }))
-
-  # Since we're not using 'a*b' formula syntax, have to manually add + a and + b terms.
-  ][, fmla_mediator := paste0(snp,'x',met,' ~ ',snp,'x','mvpa_wins',' + ',met,' + ',snp,' + ','mvpa_wins'                  )
-  ][, fmla_outcome  := paste0( 'hdl_log' ,' ~ ',snp,'x','mvpa_wins',' + ',met,' + ',snp,' + ','mvpa_wins',' + ',snp,'x',met)
-
-  ## Finalize
-  ][, fmla_mediator := paste(fmla_mediator, '+', paste(covars,collapse='+')) # Add covars
-  ][, fmla_outcome  := paste(fmla_outcome,  '+', paste(covars,collapse='+'))
-  ][, fmla_mediator := paste(fmla_mediator, '+', '(1|NWD_Id)') # Add random intercept
-  ][, fmla_outcome  := paste(fmla_outcome,  '+', '(1|NWD_Id)')
-
-  ][, c('ACME_p','mediation_prop','N') := transpose(mcMap(fmla_mediator,fmla_outcome,treat,mediator,n_sims,single_exam, f=\(fmla_m,fmla_y,treat,mediator,n_sims,single_exam) {
-        message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\r',appendLF=F) # Progress bar
-        if(single_exam==F) {
-          model_m <- myLmer(fmla_m, data[!is.na(hdl_log)], relmat=list(NWD_Id=km)) |> `class<-`('lmerMod')
-          model_y <- myLmer(fmla_y, data                 , relmat=list(NWD_Id=km)) |> `class<-`('lmerMod')
-        } else {
-          model_m <- myLmer(fmla_m, data[exam==1 & !is.na(hdl_log)], relmat=list(NWD_Id=km)) |> `class<-`('lmerMod')
-          model_y <- myLmer(fmla_y, data[exam==1                  ], relmat=list(NWD_Id=km)) |> `class<-`('lmerMod')
-        }
-        mediate(
-          model_m, model_y,
-          treat=treat, mediator=mediator,
-          sims=n_sims
-        )[c('d0.p','n0','nobs')] # Extract only the ACME p-val, mediation proportion, and N.
+t0 <- Sys.time()
+GxMpGxE_models[
+  ][, c('est','se','df','t','p','n') := transpose(mcMap(fmla,term_pat, f=\(fmla,pat) {
+        message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\r',appendLF=F) # Progress bar.
+        model <- myLmer(fmla,data,list(NWD_Id=km))                           # Run LMM model.
+        coefs <- summary(model)$coefficients                                 # Extract coefs.
+        c( coefs[grepl(pat,rownames(coefs)),], nrow(model@frame) )
       }))
 ]
+Sys.time() - t0
 ```
-```{r checkpoint-meMO, eval=F, include=F}
-#save(meMO, file='medmod-251014-lms2lmms.RData')
-```
-
-```{r tbl-meMO, echo=F, eval=T}
-meMO[
-  ][on=.(met),
-    runs[met %in% meMO$met, .(met,Metabolite)][!duplicated(met)]
-  ][ACME_p < 0.023147 # TODO use `p_thresh_after_met~pa->met~hdl->hdl~met*snp` instead
-  ][single_exam==F
-  ][order(snp, as.numeric(ACME_p), as.numeric(mediation_prop))
-  ][order(snp, !met %in% runs[model=='hdl~met*snp' & signif_funnel, met]) # Order so that funnel metabolites are first
-  ][, `#` := 1:.N, by=snp
-  ][, .(`Metabolite ID`=met,Identity=Metabolite,snp,ACME_p,mediation_prop,N,`#`)
-  ][grepl(14,snp)][,-c('snp','#')
+## Display results
+```{r}
+fread('data/derived/metabolomics/met_info-aligned.csv')[
+  ][GxMpGxE_models, on=.(unique_met_id=M) # Merge in met metadata.
+  ][variants_of_interest, on=.(G=cpaid)   # Merge in SNP metadata.
+  ][!is.na(est)                           # Discard SNPs which weren't run.
+  ][, .(Y,G,rsid,analysis,β_GxM=est,se,p, # Keep only desired columns.
+        M=unique_met_id, Metabolite,proxy_pearson_corr=corr)
+  ][, names(.SD) := lapply(.SD,signif,3)      # Keep only 3 signif digits.
+    , .SDcols=is.numeric,               
+  ][order(p)
 ] |>
-  gt() |>
-  tab_header('chr14_88305056_G_A Longitudinal Mediated Moderation Results', 'for metabolites significant from either GxPA MWIS or analysis funnel (the funnel ones are highlighted)') |>
-  gt_highlight_rows(rows = `Metabolite ID` %in% runs[model=='hdl~met*snp' & signif_funnel, met]) |>
-  tab_footnote('Models run using 1000 simulations; p-values rounded to the nearest 0.001.',
-    locations = cells_column_labels(columns = ACME_p)
-  )
-```
-
-## Number of significant hits at each step
-Count the number of significant meMO metabolites:
-```{r n-signif-meMO, eval=T}
-meMO[by=.(single_exam,snp),
-     , meMO[single_exam==.BY['single_exam'] & snp==.BY['snp'] &
-            ACME_p < `p_thresh_after_met~pa->met~hdl->hdl~met*snp`[single_exam==.BY['single_exam'] & snp==.BY['snp'],thresh] &
-            met %in% runs[single_exam==.BY['single_exam'] & model=='hdl~met*snp' & signif_funnel==T, met]
-            , signif_funnel := T
-]] |> invisible()
-
-meMO[by=.(single_exam,snp),
-     , meMO[single_exam==.BY['single_exam'] & snp==.BY['snp'] &
-            ACME_p < `p_thresh_after_hdl~met*snp`[single_exam==.BY['single_exam'] & snp==.BY['snp'],thresh] &
-            met %in% runs[single_exam==.BY['single_exam'] & model=='hdl~met*snp' & signif_mwis==T, met]
-            , signif_mwis := T
-]] |> invisible()
-```
-```{r tbl-n-signif, eval=T}
-runs     [model=='met~pa',      .(`met~pa`              =sum(signif_funnel,na.rm=T)), by=.(single_exam)
-   ][on=.(single_exam),
-     runs[model=='met~hdl',     .(`met~hdl`             =sum(signif_funnel,na.rm=T)), by=.(single_exam)]
-   ][on=.(single_exam),
-     runs[model=='hdl~met*snp', .(`hdl~met*snp (funnel)`=sum(signif_funnel,na.rm=T)), by=.(single_exam,snp)]
-   ][on=.(single_exam,snp),
-     meMO[                    , .(`meMO (funnel)`       =sum(signif_funnel,na.rm=T)), by=.(single_exam,snp)]
-   ][on=.(single_exam,snp),
-     runs[model=='hdl~met*snp', .(`hdl~met*snp (MWIS)`  =sum(signif_mwis,  na.rm=T)), by=.(single_exam,snp)]
-   ][on=.(single_exam,snp),
-     meMO[                    , .(`meMO (MWIS)`         =sum(signif_mwis,  na.rm=T)), by=.(single_exam,snp)]
-   ][order(snp,-single_exam)
-   ][grepl('14',snp)][,snp:=NULL
-   ][, `:=`(Model=fifelse(single_exam,'Baseline','Longitudinal'), single_exam=NULL)
-   ][order(-Model)
-] |>
-  setcolorder(c('Model')) |>
-  gt() |>
-  tab_header('Number of significant metabolites after each step', 'with baseline vs. longitudinal comparison')
-```
-
-## Decomposed model bargraph
-```{r plot-decomposed, eval=T}
-df <-
-copy(runs[
-     model %in% c('hdl~met*snp', 'hdl~Δmet*snp') &
-     met %in% runs[model=='hdl~met*snp' & signif_funnel==T & single_exam==F & grepl('14',snp), met] &
-     snp == 'chr14_88305056_G_A'
-   ])[, z := est/se
-   ][, Source := factor(
-         fifelse(grepl('_Δ',term_pat), 'Decomposed LMM, delta',
-         fifelse(grepl('_0',term_pat), 'Decomposed LMM, baseline',
-         fifelse(single_exam==T,       'Baseline-only', 'Primary longitudinal model'))))
-   ][, .(met, Source, z, se)
-]
-
-ggplot(df, aes(x=met, y=z, fill=Source)) +
-  geom_bar(stat='identity', position='dodge') +
-  geom_errorbar(aes(ymin=z-1.96*se, ymax=z+1.96*se), position=position_dodge(0.9), width=0.3) +
-  theme(axis.text.x=element_text(angle=45, hjust=1)) +
-  xlab('Metabolite') + ylab('Z-score') +
-  ggtitle('Comparison of metabolite*SNP term Z-score in different models')
+  dplyr::group_by(G,rsid,analysis) |>
+  gt(caption='GxMs')# |>
+  gt:::as.tags.gt_tbl()
 ```

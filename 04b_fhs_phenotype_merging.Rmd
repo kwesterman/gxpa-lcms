@@ -1,14 +1,9 @@
-```{css echo=F}
-pre { overflow-x: scroll; }
-pre code { white-space: pre; }
-```
-
 # Setup
 ```{r setup, message=F}
 library(data.table)
 options(datatable.na.strings=c('NA',''))
 
-#dir.create('data/raw/phenotypes',rec=T)
+dir.create('data/raw/phenotypes',rec=T)
 system('gcloud storage cp gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/raw/genomics/dosages.csv data/raw/genomics')
 ```
 
@@ -69,6 +64,6 @@ save(km, file='data/derived/genomics/fhs_km.RData')
 fwrite(data, 'data/derived/analysis_df-fhs.csv')
 ```
 ```{r upload}
-system('gcloud storage cp data/derived/analysis_df-fhs.csv        gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/analysis_df-fhs.csv')
+system('gcloud storage cp data/derived/analysis_df-fhs.csv   gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/analysis_df-fhs.csv')
 system('gcloud storage cp data/derived/genomics/fhs_km.RData gs://fc-secure-4a392455-5587-4d6f-b8bd-01a1f834ae63/data/derived/genomics/fhs_km.RData')
 ```

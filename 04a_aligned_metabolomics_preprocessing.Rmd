@@ -1,8 +1,3 @@
-```{css echo=F}
-pre { overflow-x: scroll; }
-pre code { white-space: pre; }
-```
-
 __Prerequisites:__
 
 * Access to the [`bdcmsg22/QC_metabolomics`](https://app.terra.bio/#workspaces/bdcmsg22/QC_metabolomics) workspace where the raw metabolomics data is stored.
@@ -36,6 +31,7 @@ mesa_csvs    <- list(CP='data/raw/metabolomics/23_0207_MESA_Pilot_X01_Broad_C8-p
                      AN='data/raw/metabolomics/23_0210_MESA_Pilot_X01_BIDMC_Amide-neg.csv') # Amide-negative
 
 # Download original xlsx data and convert to csv, faster to work with.
+# It's extremely slow to read from xlsx, but this only needs to run once and then we can use the faster csv.
 if(!all(file.exists(unlist(mesa_csvs)))) {
   system("gcloud storage cp gs://fc-secure-4b3e979d-ba8b-43c4-a5ec-b41ab42ce606/MesaMetabolomics_PilotX01_2023_02_16/23_02* data/raw/metabolomics")
   mesa_xlsxs <- sub('.csv','.xlsx', mesa_csvs)
@@ -129,10 +125,14 @@ met_info <- rbindlist(fill=T, list(
   fread(aligned_csvs$AN, select=1:10)[is.na(Metabolite) | !duplicated(Metabolite)] # AM_data.csv has duplicated Metabolite. More details in the "Exctract measurements" code block.
 ))
 
+# For consistency with MESA met info, Amide-Negative-sMRM -> Amide-neg
+met_info[, Method := sub('Amide-Negative-sMRM','Amide-neg',Method)]
+
 # Compound IDs may be duplicated across CP/CN/HP/AN. A concatenated `<ID>_<Method>` variable ensures IDs are unique.
-met_info[,                      unique_met_id := paste0(Compound_ID,'_',gsub('-.*','',Method))] # R doesn't like '-' in names.
-met_info[grepl('Amide',Method), unique_met_id := paste0('met', .I,  '_',gsub('-.*','',Method))] # Amines have no Compound_ID, so generate them.
+met_info[,                      unique_met_id := paste0(Compound_ID,'_',gsub('-','_',Method))] # R doesn't like '-' in names.
+met_info[grepl('Amide',Method), unique_met_id := paste0('met', .I,  '_',gsub('-','_',Method))] # Amines have no Compound_ID, so generate them.
 #sum(duplicated(met_info$unique_id)) # No dup IDs!
+met_info
 
 fwrite(met_info, "data/derived/metabolomics/met_info-aligned.csv")
 gt(head(met_info))
@@ -176,7 +176,7 @@ data$AN <- data$AN[!duplicated(Metabolite) | is.na(Metabolite)] # Removing dupli
 # Assign the proper metabolite ids we generated in met info
 data$AN[
   ][, unique_met_id := met_info[
-    ][Method=='Amide-Negative-sMRM'
+    ][Method=='Amide-neg'
     ][match(fcoalesce(data$AN$Metabolite,  data$AN$HMDB_ID),
             fcoalesce(        Metabolite,          HMDB_ID))
       , unique_met_id ]
@@ -191,9 +191,9 @@ data$AN <- data$AN |> as.matrix(rownames='unique_met_id') |> `mode<-`('numeric')
 ## Other LC-MS files, and write
 The other non-amide methods are more well-behaved.
 ```{r extract-measurements, results='hide', warning=F, message=F}
-data$CP <- fread(aligned_csvs$CP, drop=1:9, colClasses='double') |> t() |> `colnames<-`(paste0(fread(aligned_csvs$CP, select=2)$Compound_ID, '_C8'   ))
-data$CN <- fread(aligned_csvs$CN, drop=1:9, colClasses='double') |> t() |> `colnames<-`(paste0(fread(aligned_csvs$CN, select=2)$Compound_ID, '_C18'  ))
-data$HP <- fread(aligned_csvs$HP, drop=1:9, colClasses='double') |> t() |> `colnames<-`(paste0(fread(aligned_csvs$HP, select=2)$Compound_ID, '_HILIC'))
+data$CP <- fread(aligned_csvs$CP, drop=1:9, colClasses='double') |> t() |> `colnames<-`(paste0(fread(aligned_csvs$CP, select=2)$Compound_ID, '_C8_pos'   ))
+data$CN <- fread(aligned_csvs$CN, drop=1:9, colClasses='double') |> t() |> `colnames<-`(paste0(fread(aligned_csvs$CN, select=2)$Compound_ID, '_C18_neg'  ))
+data$HP <- fread(aligned_csvs$HP, drop=1:9, colClasses='double') |> t() |> `colnames<-`(paste0(fread(aligned_csvs$HP, select=2)$Compound_ID, '_HILIC_pos'))
 
 data <- lapply(data, \(m) m[grepl('TOM',rownames(m)),] ) # Rm QC samples
 
