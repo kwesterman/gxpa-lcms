@@ -2,12 +2,14 @@
 output: html_document
 ---
 
+NOTE: The MWIS section of this notebook takes a long time to run (4000 models to run per SNP). It is recommended to switch to a VM with a high number of cores. 16 cores can complete this notebook in approximately 2-3 hours. HOWEVER, note that VMs with 32 cores or greater are unreliable and will cause mysterious errors in the sections parallelized with `parallel::mcMap()`.
+
 # Setup
 ## Libraries and functions
 ```{r lib, eval=T, message=F}
 pkgs <- c('data.table','ggplot2','ggrepel','gtExtras','lme4','lme4qtl','lmerTest','lmtest','mediation','parallel','patchwork','geomtextpath')
 if(!require(lme4qtl)) { remotes::install_github("variani/lme4qtl") } # Special install
-lapply(pkgs, \(pkg) { if(!require(pkg, character.only=T)) {install.packages(pkg);require(pkg)}}) |> invisible()
+lapply(pkgs, \(pkg) { if(!require(pkg, character.only=T)) {install.packages(pkg);require(pkg,character.only=T)}}) |> invisible()
 
 options(datatable.na.strings=c('NA',''))
 
@@ -140,7 +142,7 @@ tbls <- Y_G_models[
   gt:::as.tags.gt_tbl()
 ```
 ```{r}
-tbls$V1
+tbls
 ```
 
 ## E~G associations
@@ -292,7 +294,7 @@ GxMpGxE_models[
 Sys.time() - t0
 
 # All-exams LMs approximation (no longitudinal or kinship adjustment, but much faster)
-#GxM_models[
+#GxMpGxE_models[
 #  ][, c('est','se','t','p','n') := transpose(mcMap(fmla,term_pat, f=\(fmla,pat) {
 #        message('  ',(i<<-i+1)*getOption('mc.cores'),'/',.N,'\r',appendLF=F) # Progress bar.
 #        fmla <- gsub('+ (1|mesa_id)','',fmla, fixed=T)                       # Rm random intercept.
@@ -306,13 +308,16 @@ Sys.time() - t0
 ### Calculate p threshold
 ```{r}
 n_eff_metabolites <- calc_eff_n_metabolites(met_nms)
+print(n_eff_metabolites)
 p_thresh_mwas <- 0.05/n_eff_metabolites
 
 # Alternate threshold: only counting metaboilites available for replication.
-met_info_aligned <- fread('data/derived/metabolomics/met_info-aligned.csv')
-met_nms_aligned <- met_nms[met_nms %in% met_info_aligned$unique_met_id]
-n_eff_metabolites_aligned <- calc_eff_n_metabolites(met_nms_aligned)
-p_thresh_mwas_aligned <- 0.05/n_eff_metabolites_aligned
+# Requires running the 04* scripts first.
+# Does not actually make much difference though (number of effective metabolites: 68.7 -> 64.3)
+# met_info_aligned <- fread('data/derived/metabolomics/met_info-aligned.csv')
+# met_nms_aligned <- met_nms[met_nms %in% met_info_aligned$unique_met_id]
+# n_eff_metabolites_aligned <- calc_eff_n_metabolites(met_nms_aligned)
+# p_thresh_mwas_aligned <- 0.05/n_eff_metabolites_aligned
 ```
 ### Display results
 ```{r}
@@ -382,7 +387,7 @@ fread('data/derived/metabolomics/met_info-mesa.csv')[
   ][order(p)
 ] |>
   dplyr::group_by(E) |>
-  gt(caption='M~E associations') #|>
+  gt(caption='M~E associations') |>
   gt:::as.tags.gt_tbl()
 ```
 

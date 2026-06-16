@@ -1,5 +1,6 @@
 NOTE: this does not work out of the box. Mummichog is a bit annoying to run. The latest update introduced a bug so you have to use version 2.6.1. **It also only works on Python 3.8.**\
 If you have `pyenv` you can do `pyenv install 3.8 && pyenv global 3.8 && pip install mummichog==2.6.1`.
+Unfortunately Terra does not have Python 3.8 so this must be run locally.
 
 # Mummichog
 ## Install

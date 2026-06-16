@@ -144,6 +144,6 @@ fread('data/derived/metabolomics/met_info-aligned.csv')[
   ][order(p)
 ] |>
   dplyr::group_by(G,rsid,analysis) |>
-  gt(caption='GxMs')# |>
+  gt(caption='GxMs') |>
   gt:::as.tags.gt_tbl()
 ```

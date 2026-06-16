@@ -112,7 +112,7 @@ sample_info <- rbindlist(list(sample_info_mesa, sample_info_fhs, sample_info_whi
 sample_info[, is_qc_sample := !grepl("TOM",SAMPLE_ID)]
 
 fwrite(sample_info, "data/derived/metabolomics/sample_info-aligned.csv")
-gt(head(sample_info))
+gt(head(sample_info)) |> gt:::as.tags.gt_tbl()
 ```
 
 # Extract metabolite metadata
