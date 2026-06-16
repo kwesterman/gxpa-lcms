@@ -22,7 +22,10 @@ if (!require('picsure', quiet=T)) {
 ```
 
 # MANUAL STEP:
-You must go to the PIC-SURE website, get an API token, and copy it into a file named `picsure_token.txt` in the current folder.
+You must go to the PIC-SURE website, get an API token, and temporarily copy it into a file named `picsure_token.txt` in the workspace bucket.
+```{r}
+system('gcloud storage cp $WORKSPACE_BUCKET/picsure_token.txt .')
+```
 ```{r}
 picsure_url = 'https://picsure.biodatacatalyst.nhlbi.nih.gov/picsure'
 token <- scan('picsure_token.txt', what='character', quiet=T)
