@@ -1,7 +1,8 @@
 # Setup
 ```{r setup, message=F, cache=T, cache.depends=file.mtime('data/derived/analysis_df.csv')}
-pkgs <- c('circlize','ComplexHeatmap','data.table','ggplot2','gtsummary','gt')
-if(!require(ComplexHeatmap)) { BiocManager::install('ComplexHeatmap') } # Special install
+# ComplexHeatmap pkg installation no longer working...
+pkgs <- c('circlize','data.table','ggplot2','gtsummary','gt')#'ComplexHeatmap'
+#if(!require(ComplexHeatmap)) { devtools::install_github("jokergoo/ComplexHeatmap") } # Special install
 lapply(pkgs, \(pkg) { if(!require(pkg, character.only=T)) {install.packages(pkg);require(pkg)}}) |> invisible()
 
 options(datatable.na.strings=c('NA',''))
@@ -19,31 +20,12 @@ data[
   ] |>
   tbl_summary(
     by=sex,
-    missing='no', # TODO more elegant way to display # of missing?
+    missing='no',
     statistic = list(
       all_continuous()  ~ c("{mean} ± {sd}"),
       all_categorical() ~ c("{n} ({p}%)"   )
   )) |>
     add_overall() |> add_n() |> as_gt() |> gt:::as.tags.gt_tbl()
-```
-```{r summary-tbl-chr14, cache=T, cache.depend=digest::digest(data)}
-# With the power of hindsight: cleaner table showing only individuals with metabolomics & the chr14 variant.
-data[
-  ][exam==1 & !is.na(data$TOM_Id) & !is.na(gPC1) & !is.na(hdl_log) & !is.na(chr14_88305056_G_A)
-  ][, .SD, .SDcols=patterns('^age$|bmi$|^exam|sex|hdl$|pa$|ahei|ses|drinks|race$|^chr14')
-  ][, .(Age=age, `BMI (kg/m²)`=bmi, sex, `HDL (mg/dL)`=hdl, `MVPA (MET*min/week)`=mvpa, `AHEI score`=ahei_score, `SES score`=ses_score, `Drinks per week`=drinks_per_week, Race=race, rs10146950=as.factor(chr14_88305056_G_A))
-  ] |>
-  tbl_summary(
-    by=sex,
-    missing='no', # TODO more elegant way to display # of missing?
-    statistic = list(
-      all_continuous()  ~ c("{mean} ± {sd}"),
-      all_categorical() ~ c("{n} ({p}%)"   )
-  )) |>
-  add_overall() |> as_gt() |> gt:::as.tags.gt_tbl()
-
-# Effective samples per exam:
-data[!is.na(data$TOM_Id) & !is.na(gPC1) & !is.na(hdl_log) & !is.na(chr14_88305056_G_A), table(exam)] #|> sum()
 ```
 
 # Heatmap of mPCs vs. covars
@@ -64,12 +46,14 @@ runs <- CJ(heatmap_covars, mPC=paste0('mPC',1:20), sorted=F)[
 p_mtx <- as.matrix(dcast(runs, heatmap_covars~mPC, value.var='p'), rownames=1)
 p_mtx <- p_mtx[,paste0('mPC',1:20)]
 
-Heatmap(-log10(p_mtx),
-  cell_fun = \(j,i,x,y,w,h,col) if(p_mtx[i,j]<0.05) grid.text('*',x,y,gp=gpar(col='white')),
-  col = colorRamp2(c(0,10), c('black','steelblue')),
-  cluster_columns=F, cluster_rows=F,
-  heatmap_legend_param = list(title = 'log10(p)\nfrom lm')
-)
+# ComplexHeatmap install not working anymore in Terra, so commenting this out.
+#Heatmap(-log10(p_mtx),
+#  cell_fun = \(j,i,x,y,w,h,col) if(p_mtx[i,j]<0.05) grid.text('*',x,y,gp=gpar(col='white')),
+#  col = colorRamp2(c(0,10), c('black','steelblue')),
+#  cluster_columns=F, cluster_rows=F,
+#  heatmap_legend_param = list(title = 'log10(p)\nfrom lm')
+#)
+heatmap(-log10(p_mtx), Rowv=NA,Colv=NA)
 ```
 
 Define covariate sets to test.
