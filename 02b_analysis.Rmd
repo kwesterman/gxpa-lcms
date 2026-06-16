@@ -337,6 +337,8 @@ signif_GxM_tbl |>
   dplyr::group_by(G,rsid,analysis) |>
   gt(caption='GxMs') |>
   gt:::as.tags.gt_tbl()
+
+fwrite(GxMpGxE_models,'GxM_results.csv')
 ```
 
 ## Sensitivity analyses
